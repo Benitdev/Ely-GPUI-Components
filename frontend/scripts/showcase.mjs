@@ -1,12 +1,12 @@
 // Writes the showcase catalog for the site: the pinned commit, or the checkout ELY_SHOWCASE names.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Marked } from "marked";
 
-const REPO = "ZacharyZhang-NY/Ely-GPUI-Showcases";
+const REPO = "https://git.zacharyzhang.com/ZacharyZhang-NY/Ely-GPUI-Showcases";
 const site = fileURLToPath(new URL("..", import.meta.url));
 const pub = join(site, "public", "showcase");
 const out = join(site, "src", "showcase.json");
@@ -15,12 +15,14 @@ const stamp = join(pub, ".commit");
 /** The catalog at `commit`, unpacked with its validator's packages. */
 async function fetchCatalog(commit) {
   const work = mkdtempSync(join(tmpdir(), "ely-showcase-"));
-  const url = `https://codeload.github.com/${REPO}/tar.gz/${commit}`;
+  const url = `${REPO}/archive/${commit}.tar.gz`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`showcase: ${url} answered ${res.status}`);
   writeFileSync(join(work, "catalog.tar.gz"), Buffer.from(await res.arrayBuffer()));
   execFileSync("tar", ["-xzf", "catalog.tar.gz"], { cwd: work });
-  const root = join(work, `${REPO.split("/")[1]}-${commit}`);
+  const [top] = readdirSync(work, { withFileTypes: true }).filter((e) => e.isDirectory());
+  if (!top) throw new Error(`showcase: ${url} held no folder`);
+  const root = join(work, top.name);
   const pnpm = process.env.npm_execpath;
   if (!pnpm) throw new Error("showcase: run through pnpm, which installs the catalog's validator");
   execFileSync(process.execPath, [pnpm, "install", "--frozen-lockfile", "--ignore-scripts", "--silent"], { cwd: root, stdio: "inherit" });

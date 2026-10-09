@@ -26,11 +26,11 @@ fn about() -> AboutDialog {
         .description("A component library for GPUI, in light and dark.")
         .link(
             "Website",
-            "https://github.com/ZacharyZhang-NY/Ely-GPUI-Components",
+            "https://git.zacharyzhang.com/ZacharyZhang-NY/Ely-GPUI-Components",
         )
         .link(
             "License",
-            "https://github.com/ZacharyZhang-NY/Ely-GPUI-Components#license",
+            "https://git.zacharyzhang.com/ZacharyZhang-NY/Ely-GPUI-Components#license",
         )
         .copyright("© 2026 Ely contributors")
 }

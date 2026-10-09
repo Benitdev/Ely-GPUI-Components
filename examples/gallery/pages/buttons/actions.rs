@@ -114,7 +114,7 @@ pub fn small_buttons(cx: &App) -> impl IntoElement + use<> {
                     "share-button",
                     ShareButton::new("share-page")
                         .text("Ely, components for GPUI")
-                        .url("https://github.com/ZacharyZhang-NY/Ely-GPUI-Components"),
+                        .url("https://git.zacharyzhang.com/ZacharyZhang-NY/Ely-GPUI-Components"),
                 ),
                 cx,
             ))
