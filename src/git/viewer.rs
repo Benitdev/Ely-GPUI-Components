@@ -13,6 +13,7 @@ use super::{
 };
 use crate::{
     buttons::{Button, ButtonVariant, SegmentedControl},
+    forms::{Syntax, syntax_of},
     i18n,
     primitives::FocusRing,
     theme::{ActiveTheme, ControlSize, TextSize},
@@ -38,6 +39,8 @@ type OnLine = Rc<dyn Fn(Place, bool, &mut Window, &mut App)>;
 pub struct DiffViewer {
     id: ElementId,
     path: SharedString,
+    /// How its lines read, from the path.
+    pub(super) syntax: Option<&'static Syntax>,
     stretches: Rc<Vec<Stretch>>,
     stat: (usize, usize),
     layout: DiffLayout,
@@ -57,9 +60,11 @@ impl DiffViewer {
         old: &str,
         new: &str,
     ) -> Self {
+        let path: SharedString = path.into();
         Self {
             id: id.into(),
-            path: path.into(),
+            syntax: syntax_of(&path),
+            path,
             stretches: Rc::new(diff(old, new, CONTEXT)),
             stat: super::diff::stat(old, new),
             layout: DiffLayout::Unified,
@@ -194,7 +199,7 @@ impl RenderOnce for DiffViewer {
             .len()
             .max(2);
         let (id, on_open) = (self.id.clone(), self.on_open.clone());
-        let path = self.path.clone();
+        let syntax = self.syntax;
         let (button, button_height) = (
             self.hunk_action.is_some(),
             theme.control_height(ControlSize::Sm),
@@ -272,7 +277,7 @@ impl RenderOnce for DiffViewer {
                         .children(line.map(|(_, line)| {
                             div()
                                 .whitespace_nowrap()
-                                .child(code(line, &colors, &path, cx))
+                                .child(code(line, &colors, syntax, cx))
                         }));
                     match line {
                         Some((place, line)) => {
@@ -331,7 +336,7 @@ impl RenderOnce for DiffViewer {
                                             .flex_1()
                                             .min_w_0()
                                             .overflow_hidden()
-                                            .child(code(line, &colors, &path, cx)),
+                                            .child(code(line, &colors, syntax, cx)),
                                     )
                                     .into_any_element()
                             }

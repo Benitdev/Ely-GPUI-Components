@@ -5,7 +5,7 @@ use gpui::{
     prelude::*,
 };
 
-use super::{Highlight, Input, TextInput};
+use super::{Highlight, Input, TextInput, syntax::Syntax};
 use crate::theme::{ActiveTheme, ControlSize, TextSize};
 
 /// What a span of source is.
@@ -42,13 +42,21 @@ const CONSTANTS: &[&str] = &[
     "FALSE",
 ];
 
+/// Every language at once, for code of unknown kind.
+const GENERIC: Syntax = Syntax {
+    comment: "//",
+    word_comment: false,
+    keywords: KEYWORDS,
+    constants: CONSTANTS,
+};
+
 /// Splits source into spans; spaces fall between them.
 pub(crate) fn lex(source: &str) -> Vec<(Range<usize>, Kind)> {
-    lex_with(source, "//")
+    lex_with(source, &GENERIC)
 }
 
-/// Splits source whose line comments start with `comment`.
-pub(crate) fn lex_with(source: &str, comment: &str) -> Vec<(Range<usize>, Kind)> {
+/// Splits source as `syntax` reads it.
+pub(crate) fn lex_with(source: &str, syntax: &Syntax) -> Vec<(Range<usize>, Kind)> {
     let mut out = Vec::new();
     let mut chars = source.char_indices().peekable();
     while let Some((start, ch)) = chars.next() {
@@ -66,7 +74,13 @@ pub(crate) fn lex_with(source: &str, comment: &str) -> Vec<(Range<usize>, Kind)>
                 }
                 Kind::Text
             }
-            _ if source[start..].starts_with(comment) => {
+            _ if source[start..].starts_with(syntax.comment)
+                && (!syntax.word_comment
+                    || source[..start]
+                        .chars()
+                        .next_back()
+                        .is_none_or(char::is_whitespace)) =>
+            {
                 while chars.next_if(|(_, next)| *next != '\n').is_some() {}
                 Kind::Comment
             }
@@ -101,17 +115,17 @@ fn painted(spans: impl Iterator<Item = (Range<usize>, Hsla)>) -> Vec<(Range<usiz
 
 /// Colors for one line of code in most languages, from the syntax palette.
 pub fn code_highlights(source: &str, cx: &App) -> Vec<(Range<usize>, Highlight)> {
-    code_highlights_with(source, "//", cx)
+    code_highlights_with(source, &GENERIC, cx)
 }
 
-/// Colors for code whose line comments start with `comment`.
+/// Colors for code as `lang` reads it.
 pub(crate) fn code_highlights_with(
     source: &str,
-    comment: &str,
+    lang: &Syntax,
     cx: &App,
 ) -> Vec<(Range<usize>, Highlight)> {
     let syntax = &cx.theme().colors.syntax;
-    let spans = lex_with(source, comment);
+    let spans = lex_with(source, lang);
     let next_is = |ix: usize, mark: &str| {
         spans
             .get(ix + 1)
@@ -123,8 +137,8 @@ pub(crate) fn code_highlights_with(
             Kind::Comment => syntax.comment,
             Kind::Text => syntax.string,
             Kind::Number => syntax.number,
-            Kind::Word if KEYWORDS.contains(&text) => syntax.keyword,
-            Kind::Word if CONSTANTS.contains(&text) => syntax.constant,
+            Kind::Word if lang.keywords.contains(&text) => syntax.keyword,
+            Kind::Word if lang.constants.contains(&text) => syntax.constant,
             Kind::Word if next_is(ix, "(") => syntax.function,
             Kind::Word if text.starts_with(char::is_uppercase) => syntax.type_name,
             Kind::Word => syntax.variable,

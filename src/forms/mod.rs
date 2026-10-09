@@ -37,6 +37,7 @@ mod slider;
 mod stepper;
 mod structure;
 mod switch;
+mod syntax;
 mod tags;
 #[cfg(all(test, feature = "test-support"))]
 mod tests;
@@ -112,6 +113,7 @@ pub use structure::{
     DirtyIndicator, Form, FormError, FormField, FormLabel, FormSection, InlineForm,
 };
 pub use switch::Switch;
+pub(crate) use syntax::{Syntax, syntax_of};
 pub use tags::TagInput;
 pub(crate) use text::{
     Backspace, Copy, Cut, Delete, DeleteWordLeft, Down, Enter, Redo, Submit, Undo, Up, bind_keys,

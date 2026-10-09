@@ -3,7 +3,7 @@ use std::ops::Range;
 use gpui::{App, HighlightStyle};
 
 use super::buffer::Buffer;
-use crate::forms::{Kind, code_highlights_with, lex};
+use crate::forms::{Kind, Syntax, code_highlights_with, lex};
 
 /// Each line that opens a block, and the last line the block holds, read from indentation.
 pub(crate) fn folds(buffer: &Buffer) -> Vec<(usize, usize)> {
@@ -110,16 +110,23 @@ pub(crate) fn matched(brackets: &[Bracket], caret: usize) -> Option<(usize, usiz
 
 /// A line's syntax colors as highlight styles.
 pub(crate) fn colors(text: &str, cx: &App) -> Vec<(Range<usize>, HighlightStyle)> {
-    colors_with(text, "//", cx)
+    styles(crate::forms::code_highlights(text, cx))
 }
 
-/// Colors for a line whose comments start with `comment`.
+/// A line's colors as `lang` reads it.
 pub(crate) fn colors_with(
     text: &str,
-    comment: &str,
+    lang: &Syntax,
     cx: &App,
 ) -> Vec<(Range<usize>, HighlightStyle)> {
-    code_highlights_with(text, comment, cx)
+    styles(code_highlights_with(text, lang, cx))
+}
+
+/// Highlights as gpui styles.
+fn styles(
+    highlights: Vec<(Range<usize>, crate::forms::Highlight)>,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    highlights
         .into_iter()
         .map(|(range, highlight)| {
             (

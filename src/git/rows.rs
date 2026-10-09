@@ -10,6 +10,7 @@ use super::{
 };
 use crate::{
     editor::{code_colors_with, stack},
+    forms::Syntax,
     theme::Palette,
 };
 
@@ -78,77 +79,24 @@ pub(super) fn washes(kind: LineKind, colors: &Palette) -> (Option<Hsla>, Hsla) {
     }
 }
 
-/// Extensions of prose and plain text.
-const PROSE: [&str; 13] = [
-    "md", "markdown", "mdown", "mkd", "txt", "text", "rst", "adoc", "asciidoc", "org", "csv",
-    "tsv", "log",
-];
-
-/// Line comment marks by extension; others take `//`.
-const COMMENTS: [(&str, &[&str]); 4] = [
-    (
-        "#",
-        &[
-            "py",
-            "rb",
-            "sh",
-            "bash",
-            "zsh",
-            "fish",
-            "toml",
-            "yaml",
-            "yml",
-            "pl",
-            "r",
-            "conf",
-            "nix",
-            "ex",
-            "exs",
-            "cmake",
-            "mk",
-            "ps1",
-            "tcl",
-            "jl",
-            "cr",
-            "nim",
-            "gitignore",
-        ],
-    ),
-    ("--", &["sql", "lua", "hs", "elm", "ada"]),
-    (
-        ";",
-        &["ini", "clj", "cljs", "lisp", "el", "scm", "asm", "s"],
-    ),
-    ("%", &["tex", "sty", "erl", "m"]),
-];
-
-/// How `path` reads: none for prose, else its comment mark.
-pub(super) fn syntax(path: &str) -> Option<&'static str> {
-    let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
-    let ext = match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => ext.to_ascii_lowercase(),
-        Some(("", dotfile)) => dotfile.to_ascii_lowercase(),
-        _ if matches!(name, "Makefile" | "Dockerfile" | "CMakeLists.txt") => return Some("#"),
-        _ => return None,
-    };
-    if PROSE.contains(&ext.as_str()) {
-        return None;
-    }
-    let found = COMMENTS
-        .iter()
-        .find(|(_, exts)| exts.contains(&ext.as_str()));
-    Some(found.map_or("//", |(mark, _)| *mark))
-}
-
-/// A line's syntax colors as the file at `path` reads.
-pub(super) fn colors_of(text: &str, path: &str, cx: &App) -> Vec<(Range<usize>, HighlightStyle)> {
-    syntax(path).map_or_else(Vec::new, |comment| code_colors_with(text, comment, cx))
+/// A line's syntax colors; none for prose.
+pub(super) fn colors_of(
+    text: &str,
+    syntax: Option<&Syntax>,
+    cx: &App,
+) -> Vec<(Range<usize>, HighlightStyle)> {
+    syntax.map_or_else(Vec::new, |syntax| code_colors_with(text, syntax, cx))
 }
 
 /// A line colored as its file reads, changed words washed.
-pub(super) fn code(line: &DiffLine, colors: &Palette, path: &str, cx: &App) -> StyledText {
+pub(super) fn code(
+    line: &DiffLine,
+    colors: &Palette,
+    syntax: Option<&Syntax>,
+    cx: &App,
+) -> StyledText {
     let (_, word) = washes(line.kind, colors);
-    let mut styles = colors_of(&line.text, path, cx);
+    let mut styles = colors_of(&line.text, syntax, cx);
     styles.extend(line.words.iter().map(|range| {
         (
             range.clone(),
@@ -181,7 +129,8 @@ mod tests {
             crate::init_for_tests(cx);
             let syntax = crate::theme::ActiveTheme::theme(cx).colors.syntax.clone();
             let color = |text: &str, path: &str, cx: &gpui::App| {
-                super::colors_of(text, path, cx)
+                let syntax = crate::forms::syntax_of(path);
+                super::colors_of(text, syntax, cx)
                     .into_iter()
                     .map(|(range, style)| (range, style.color))
                     .collect::<Vec<_>>()
@@ -204,6 +153,8 @@ mod tests {
                 "run.sh",
                 ".gitignore",
                 "Makefile",
+                "CMakeLists.txt",
+                "build.cmake",
             ] {
                 assert_eq!(
                     color("# return 42", path, cx),
@@ -218,7 +169,45 @@ mod tests {
             let rust = color("return 42 // done", "src/main.rs", cx);
             assert_eq!(rust[0], (0..6, Some(syntax.keyword)), "{rust:?}");
             assert_eq!(rust.last(), Some(&(10..17, Some(syntax.comment))));
+            // Each language's own words.
+            let python = color("assert ready and True", "a.py", cx);
+            assert_eq!(
+                [python[0].1, python[2].1, python[3].1],
+                [
+                    Some(syntax.keyword),
+                    Some(syntax.keyword),
+                    Some(syntax.constant)
+                ]
+            );
+            assert_ne!(
+                color("return = 42", "config.toml", cx)[0].1,
+                Some(syntax.keyword),
+                "a TOML key"
+            );
+            // Shell comments start words only.
+            let shell = color("echo foo#bar 42", "run.sh", cx);
+            assert!(
+                shell.iter().all(|(_, c)| *c != Some(syntax.comment)),
+                "{shell:?}"
+            );
+            assert_eq!(
+                color("echo x # note", "run.sh", cx).last(),
+                Some(&(7..13, Some(syntax.comment)))
+            );
         });
+    }
+
+    #[test]
+    fn a_viewer_reads_its_file_once_built() {
+        let viewer = |path: &str| {
+            super::super::viewer::DiffViewer::new("d", path.to_string(), "a\n", "b\n").syntax
+        };
+        assert_eq!(viewer("notes.md"), None);
+        assert_eq!(viewer("a.py"), crate::forms::syntax_of("a.py"));
+        assert_eq!(
+            viewer("CMakeLists.txt"),
+            crate::forms::syntax_of("Makefile")
+        );
     }
 
     #[test]
