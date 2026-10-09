@@ -143,6 +143,18 @@ fn a_toast_folds_away_after_its_time(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_owner_reads_what_is_shown(cx: &mut TestAppContext) {
+    let (view, cx) = desk(cx);
+    let first = push(&view, Toast::new("Saved"), cx);
+    push(&view, Toast::new("Denied").severity(Severity::Danger), cx);
+    let toaster = view.read_with(cx, |desk, _| desk.toaster.clone());
+    let shown = |cx: &mut VisualTestContext| toaster.read_with(cx, |toaster, _| toaster.shown());
+    assert_eq!(shown(cx), [("Saved".into(), None), ("Denied".into(), Some(Severity::Danger))]);
+    toaster.update(cx, |toaster, cx| toaster.dismiss(first, cx));
+    assert_eq!(shown(cx), [("Denied".into(), Some(Severity::Danger))], "a leaving toast is not shown");
+}
+
+#[gpui::test]
 fn the_pointer_on_the_stack_holds_the_clock(cx: &mut TestAppContext) {
     let (view, cx) = desk(cx);
     let id = push(&view, Toast::new("Saved"), cx);
