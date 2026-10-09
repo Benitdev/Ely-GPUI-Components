@@ -78,10 +78,29 @@ pub(super) fn washes(kind: LineKind, colors: &Palette) -> (Option<Hsla>, Hsla) {
     }
 }
 
-/// A line's code, colored as code, its changed words washed.
-pub(super) fn code(line: &DiffLine, colors: &Palette, cx: &App) -> StyledText {
+/// Extensions of prose and plain text.
+const PROSE: [&str; 13] = [
+    "md", "markdown", "mdown", "mkd", "txt", "text", "rst", "adoc", "asciidoc", "org", "csv",
+    "tsv", "log",
+];
+
+/// Whether `path` holds prose, read plain rather than as code.
+pub(super) fn prose(path: &str) -> bool {
+    let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => PROSE.contains(&ext.to_ascii_lowercase().as_str()),
+        _ => true,
+    }
+}
+
+/// A line's text, colored as code unless prose, changed words washed.
+pub(super) fn code(line: &DiffLine, colors: &Palette, prose: bool, cx: &App) -> StyledText {
     let (_, word) = washes(line.kind, colors);
-    let mut styles: Vec<(Range<usize>, HighlightStyle)> = code_colors(&line.text, cx);
+    let mut styles: Vec<(Range<usize>, HighlightStyle)> = if prose {
+        Vec::new()
+    } else {
+        code_colors(&line.text, cx)
+    };
     styles.extend(line.words.iter().map(|range| {
         (
             range.clone(),
@@ -108,6 +127,23 @@ pub(super) fn spoken(line: &DiffLine) -> SharedString {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn prose_reads_plain_and_code_reads_as_code() {
+        for path in [
+            "docs/README.md",
+            "notes.MARKDOWN",
+            "LICENSE",
+            ".gitignore",
+            "a/b.txt",
+            "data.csv",
+        ] {
+            assert!(super::prose(path), "{path}");
+        }
+        for path in ["src/main.rs", "web/app.js", "a.md/b.py", "Cargo.toml"] {
+            assert!(!super::prose(path), "{path}");
+        }
+    }
+
     #[test]
     fn a_line_speaks_its_number_change_and_text() {
         let stretches = super::super::diff::diff("a\nb\n", "a\nc\n", 1);
