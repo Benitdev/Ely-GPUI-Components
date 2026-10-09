@@ -8,6 +8,7 @@ use gpui::{
 use super::{Hosted, open_hosted};
 use crate::{
     buttons::{Button, ButtonVariant, IconButton},
+    i18n::text,
     layout::ScrollArea,
     motion::ProgressBar,
     primitives::{Icon, IconName},
@@ -43,7 +44,7 @@ fn progress_line(state: UpdateState) -> Option<AnyElement> {
     }
 }
 
-fn buttons(state: UpdateState, actions: &Actions, size: ControlSize) -> Vec<Button> {
+fn buttons(state: UpdateState, actions: &Actions, size: ControlSize, cx: &App) -> Vec<Button> {
     let wire = |button: Button, action: &Option<Action>| {
         action.clone().map(|action| {
             button
@@ -52,17 +53,17 @@ fn buttons(state: UpdateState, actions: &Actions, size: ControlSize) -> Vec<Butt
         })
     };
     let later = wire(
-        Button::new("update-later", "Later").variant(ButtonVariant::Ghost),
+        Button::new("update-later", text(cx, "update.later", &[])).variant(ButtonVariant::Ghost),
         &actions.later,
     );
     let main = match state {
         UpdateState::Available => wire(
-            Button::new("update-download", "Download").primary(),
+            Button::new("update-download", text(cx, "update.download", &[])).primary(),
             &actions.download,
         ),
         UpdateState::Downloading(_) => None,
         UpdateState::Ready => wire(
-            Button::new("update-restart", "Restart to update").primary(),
+            Button::new("update-restart", text(cx, "update.restart", &[])).primary(),
             &actions.restart,
         ),
     };
@@ -118,14 +119,16 @@ impl UpdateBanner {
 
 impl RenderOnce for UpdateBanner {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = cx.theme();
+        let version = &self.version;
         let message = match self.state {
-            UpdateState::Available => format!("Version {} is available.", self.version),
+            UpdateState::Available => text(cx, "update.available", &[("version", version)]),
             UpdateState::Downloading(value) => {
-                format!("Downloading {}… {}%", self.version, (value * 100.0).round())
+                let percent = (value * 100.0).round().to_string();
+                text(cx, "update.downloading", &[("version", version), ("percent", &percent)])
             }
-            UpdateState::Ready => format!("Version {} is ready.", self.version),
+            UpdateState::Ready => text(cx, "update.ready", &[("version", version)]),
         };
+        let theme = cx.theme();
         let dismiss = self.actions.later.clone();
         div()
             .id(self.id)
@@ -153,6 +156,7 @@ impl RenderOnce for UpdateBanner {
                     ..self.actions.clone()
                 },
                 ControlSize::Sm,
+                cx,
             ))
             .when_some(dismiss, |banner, dismiss| {
                 banner.child(
@@ -210,18 +214,20 @@ impl UpdateDialog {
 
     pub fn open(self, cx: &mut App) -> anyhow::Result<WindowHandle<Hosted<UpdateDialog>>> {
         let size = cx.theme().dialog_window();
-        open_hosted("Software Update", size, self, cx)
+        open_hosted(text(cx, "update.title", &[]), size, self, cx)
     }
 }
 
 impl RenderOnce for UpdateDialog {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let args = [("name", self.name.as_ref()), ("version", self.version.as_ref())];
+        let headline = match self.state {
+            UpdateState::Ready => text(cx, "update.headline.ready", &args),
+            _ => text(cx, "update.headline.available", &args),
+        };
+        let current = text(cx, "update.current", &[("current", &self.current)]);
         let theme = cx.theme();
         let colors = &theme.colors;
-        let headline = match self.state {
-            UpdateState::Ready => format!("{} {} is ready", self.name, self.version),
-            _ => format!("{} {} is available", self.name, self.version),
-        };
         div()
             .flex_1()
             .min_h_0()
@@ -236,7 +242,7 @@ impl RenderOnce for UpdateDialog {
                     .flex_col()
                     .gap_1()
                     .child(Title::new(headline))
-                    .child(Caption::new(format!("You have {}.", self.current))),
+                    .child(Caption::new(current)),
             )
             .child(
                 div()
@@ -265,6 +271,7 @@ impl RenderOnce for UpdateDialog {
                 self.state,
                 &self.actions,
                 ControlSize::Md,
+                cx,
             )))
     }
 }
