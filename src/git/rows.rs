@@ -184,6 +184,34 @@ mod tests {
                 Some(syntax.keyword),
                 "a TOML key"
             );
+            // Words belong to their own language.
+            assert_ne!(
+                color("let from = 42;", "main.rs", cx)[1].1,
+                Some(syntax.keyword),
+                "Rust's from"
+            );
+            assert_eq!(
+                color("def hello", "a.rb", cx)[0].1,
+                Some(syntax.keyword),
+                "Ruby's def"
+            );
+            assert_eq!(
+                color("-- return 42", "Main.hs", cx),
+                [(0..12, Some(syntax.comment))]
+            );
+            assert_eq!(
+                color("% return 42", "main.erl", cx),
+                [(0..11, Some(syntax.comment))]
+            );
+            // A comment may follow code at once outside Shell.
+            assert_eq!(
+                color("answer = 42# return 99", "config.toml", cx).last(),
+                Some(&(11..22, Some(syntax.comment)))
+            );
+            assert_eq!(
+                color("set(x 1)# return 42", "CMakeLists.txt", cx).last(),
+                Some(&(8..19, Some(syntax.comment)))
+            );
             // Shell comments start words only.
             let shell = color("echo foo#bar 42", "run.sh", cx);
             assert!(
