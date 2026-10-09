@@ -60,6 +60,6 @@ pub use status::{
     LspStatus, NotificationBell,
 };
 pub use symbols::{Call, CallHierarchy, GoToSymbol, Symbol, SymbolKind, SymbolOutline};
-pub(crate) use syntax::colors as code_colors;
+pub(crate) use syntax::{colors as code_colors, colors_with as code_colors_with};
 pub use tasks::{Task, TaskRunner, TaskState};
 pub use welcome::{Project, ProjectSwitcher, RecentProjects, WelcomePage};

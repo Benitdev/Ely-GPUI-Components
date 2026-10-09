@@ -9,7 +9,7 @@ use super::{
     viewer::DiffLayout,
 };
 use crate::{
-    editor::{code_colors, stack},
+    editor::{code_colors_with, stack},
     theme::Palette,
 };
 
@@ -84,23 +84,71 @@ const PROSE: [&str; 13] = [
     "tsv", "log",
 ];
 
-/// Whether `path` holds prose, read plain rather than as code.
-pub(super) fn prose(path: &str) -> bool {
+/// Line comment marks by extension; others take `//`.
+const COMMENTS: [(&str, &[&str]); 4] = [
+    (
+        "#",
+        &[
+            "py",
+            "rb",
+            "sh",
+            "bash",
+            "zsh",
+            "fish",
+            "toml",
+            "yaml",
+            "yml",
+            "pl",
+            "r",
+            "conf",
+            "nix",
+            "ex",
+            "exs",
+            "cmake",
+            "mk",
+            "ps1",
+            "tcl",
+            "jl",
+            "cr",
+            "nim",
+            "gitignore",
+        ],
+    ),
+    ("--", &["sql", "lua", "hs", "elm", "ada"]),
+    (
+        ";",
+        &["ini", "clj", "cljs", "lisp", "el", "scm", "asm", "s"],
+    ),
+    ("%", &["tex", "sty", "erl", "m"]),
+];
+
+/// How `path` reads: none for prose, else its comment mark.
+pub(super) fn syntax(path: &str) -> Option<&'static str> {
     let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
-    match name.rsplit_once('.') {
-        Some((stem, ext)) if !stem.is_empty() => PROSE.contains(&ext.to_ascii_lowercase().as_str()),
-        _ => true,
+    let ext = match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => ext.to_ascii_lowercase(),
+        Some(("", dotfile)) => dotfile.to_ascii_lowercase(),
+        _ if matches!(name, "Makefile" | "Dockerfile" | "CMakeLists.txt") => return Some("#"),
+        _ => return None,
+    };
+    if PROSE.contains(&ext.as_str()) {
+        return None;
     }
+    let found = COMMENTS
+        .iter()
+        .find(|(_, exts)| exts.contains(&ext.as_str()));
+    Some(found.map_or("//", |(mark, _)| *mark))
 }
 
-/// A line's text, colored as code unless prose, changed words washed.
-pub(super) fn code(line: &DiffLine, colors: &Palette, prose: bool, cx: &App) -> StyledText {
+/// A line's syntax colors as the file at `path` reads.
+pub(super) fn colors_of(text: &str, path: &str, cx: &App) -> Vec<(Range<usize>, HighlightStyle)> {
+    syntax(path).map_or_else(Vec::new, |comment| code_colors_with(text, comment, cx))
+}
+
+/// A line colored as its file reads, changed words washed.
+pub(super) fn code(line: &DiffLine, colors: &Palette, path: &str, cx: &App) -> StyledText {
     let (_, word) = washes(line.kind, colors);
-    let mut styles: Vec<(Range<usize>, HighlightStyle)> = if prose {
-        Vec::new()
-    } else {
-        code_colors(&line.text, cx)
-    };
+    let mut styles = colors_of(&line.text, path, cx);
     styles.extend(line.words.iter().map(|range| {
         (
             range.clone(),
@@ -127,21 +175,50 @@ pub(super) fn spoken(line: &DiffLine) -> SharedString {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn prose_reads_plain_and_code_reads_as_code() {
-        for path in [
-            "docs/README.md",
-            "notes.MARKDOWN",
-            "LICENSE",
-            ".gitignore",
-            "a/b.txt",
-            "data.csv",
-        ] {
-            assert!(super::prose(path), "{path}");
-        }
-        for path in ["src/main.rs", "web/app.js", "a.md/b.py", "Cargo.toml"] {
-            assert!(!super::prose(path), "{path}");
-        }
+    #[gpui::test]
+    fn each_file_colors_as_its_kind_reads(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            crate::init_for_tests(cx);
+            let syntax = crate::theme::ActiveTheme::theme(cx).colors.syntax.clone();
+            let color = |text: &str, path: &str, cx: &gpui::App| {
+                super::colors_of(text, path, cx)
+                    .into_iter()
+                    .map(|(range, style)| (range, style.color))
+                    .collect::<Vec<_>>()
+            };
+            for path in [
+                "docs/README.md",
+                "notes.MARKDOWN",
+                "LICENSE",
+                "a/b.txt",
+                "data.csv",
+            ] {
+                assert!(
+                    color("# return 42", path, cx).is_empty(),
+                    "{path} reads plain"
+                );
+            }
+            for path in [
+                "script.py",
+                "config.toml",
+                "run.sh",
+                ".gitignore",
+                "Makefile",
+            ] {
+                assert_eq!(
+                    color("# return 42", path, cx),
+                    [(0..11, Some(syntax.comment))],
+                    "{path}"
+                );
+            }
+            assert_eq!(
+                color("-- return 42", "q.sql", cx),
+                [(0..12, Some(syntax.comment))]
+            );
+            let rust = color("return 42 // done", "src/main.rs", cx);
+            assert_eq!(rust[0], (0..6, Some(syntax.keyword)), "{rust:?}");
+            assert_eq!(rust.last(), Some(&(10..17, Some(syntax.comment))));
+        });
     }
 
     #[test]

@@ -44,6 +44,11 @@ const CONSTANTS: &[&str] = &[
 
 /// Splits source into spans; spaces fall between them.
 pub(crate) fn lex(source: &str) -> Vec<(Range<usize>, Kind)> {
+    lex_with(source, "//")
+}
+
+/// Splits source whose line comments start with `comment`.
+pub(crate) fn lex_with(source: &str, comment: &str) -> Vec<(Range<usize>, Kind)> {
     let mut out = Vec::new();
     let mut chars = source.char_indices().peekable();
     while let Some((start, ch)) = chars.next() {
@@ -61,7 +66,7 @@ pub(crate) fn lex(source: &str) -> Vec<(Range<usize>, Kind)> {
                 }
                 Kind::Text
             }
-            '/' if chars.peek().is_some_and(|(_, next)| *next == '/') => {
+            _ if source[start..].starts_with(comment) => {
                 while chars.next_if(|(_, next)| *next != '\n').is_some() {}
                 Kind::Comment
             }
@@ -96,8 +101,17 @@ fn painted(spans: impl Iterator<Item = (Range<usize>, Hsla)>) -> Vec<(Range<usiz
 
 /// Colors for one line of code in most languages, from the syntax palette.
 pub fn code_highlights(source: &str, cx: &App) -> Vec<(Range<usize>, Highlight)> {
+    code_highlights_with(source, "//", cx)
+}
+
+/// Colors for code whose line comments start with `comment`.
+pub(crate) fn code_highlights_with(
+    source: &str,
+    comment: &str,
+    cx: &App,
+) -> Vec<(Range<usize>, Highlight)> {
     let syntax = &cx.theme().colors.syntax;
-    let spans = lex(source);
+    let spans = lex_with(source, comment);
     let next_is = |ix: usize, mark: &str| {
         spans
             .get(ix + 1)

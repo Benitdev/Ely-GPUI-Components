@@ -9,7 +9,7 @@ use gpui::{
 use super::{
     badges::DiffStat,
     diff::{DiffLine, LineKind, Stretch, diff, side_numbers},
-    rows::{Place, Shown, code, prose, shown, spoken, washes},
+    rows::{Place, Shown, code, shown, spoken, washes},
 };
 use crate::{
     buttons::{Button, ButtonVariant, SegmentedControl},
@@ -194,7 +194,7 @@ impl RenderOnce for DiffViewer {
             .len()
             .max(2);
         let (id, on_open) = (self.id.clone(), self.on_open.clone());
-        let prose = prose(&self.path);
+        let path = self.path.clone();
         let (button, button_height) = (
             self.hunk_action.is_some(),
             theme.control_height(ControlSize::Sm),
@@ -272,7 +272,7 @@ impl RenderOnce for DiffViewer {
                         .children(line.map(|(_, line)| {
                             div()
                                 .whitespace_nowrap()
-                                .child(code(line, &colors, prose, cx))
+                                .child(code(line, &colors, &path, cx))
                         }));
                     match line {
                         Some((place, line)) => {
@@ -331,7 +331,7 @@ impl RenderOnce for DiffViewer {
                                             .flex_1()
                                             .min_w_0()
                                             .overflow_hidden()
-                                            .child(code(line, &colors, prose, cx)),
+                                            .child(code(line, &colors, &path, cx)),
                                     )
                                     .into_any_element()
                             }
