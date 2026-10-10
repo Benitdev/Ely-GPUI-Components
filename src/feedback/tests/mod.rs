@@ -149,9 +149,19 @@ fn the_owner_reads_what_is_shown(cx: &mut TestAppContext) {
     push(&view, Toast::new("Denied").severity(Severity::Danger), cx);
     let toaster = view.read_with(cx, |desk, _| desk.toaster.clone());
     let shown = |cx: &mut VisualTestContext| toaster.read_with(cx, |toaster, _| toaster.shown());
-    assert_eq!(shown(cx), [("Saved".into(), None), ("Denied".into(), Some(Severity::Danger))]);
+    assert_eq!(
+        shown(cx),
+        [
+            ("Saved".into(), None),
+            ("Denied".into(), Some(Severity::Danger))
+        ]
+    );
     toaster.update(cx, |toaster, cx| toaster.dismiss(first, cx));
-    assert_eq!(shown(cx), [("Denied".into(), Some(Severity::Danger))], "a leaving toast is not shown");
+    assert_eq!(
+        shown(cx),
+        [("Denied".into(), Some(Severity::Danger))],
+        "a leaving toast is not shown"
+    );
 }
 
 #[gpui::test]
