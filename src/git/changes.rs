@@ -199,12 +199,16 @@ impl ChangesList {
                     .gap_2()
                     .child(
                         div()
-                            .flex_none()
+                            .min_w_0()
                             .text_color(colors.fg)
+                            .debug_selector({
+                                let path = file.path.clone();
+                                move || format!("change-name-{path}")
+                            })
                             .when(file.status == GitStatus::Deleted, |name| {
                                 name.line_through()
                             })
-                            .child(name),
+                            .child(Ellipsis::new(name)),
                     )
                     .child(
                         div()
@@ -218,6 +222,10 @@ impl ChangesList {
                 div()
                     .flex_none()
                     .flex()
+                    .debug_selector({
+                        let path = file.path.clone();
+                        move || format!("change-actions-{path}")
+                    })
                     .child(action(
                         "open",
                         IconName::FileText,
