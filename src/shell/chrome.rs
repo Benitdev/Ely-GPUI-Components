@@ -21,8 +21,11 @@ pub fn drag_region(id: impl Into<ElementId>, window: &mut Window, cx: &mut App) 
     div()
         .id(id)
         .window_control_area(WindowControlArea::Drag)
-        .on_mouse_down(MouseButton::Left, move |_, _, cx| {
-            down.update(cx, |pressed, _| *pressed = true)
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            // A button inside claims its own press.
+            if !window.default_prevented() {
+                down.update(cx, |pressed, _| *pressed = true)
+            }
         })
         .on_mouse_move(move |_, window, cx| {
             if *moved.read(cx) {
