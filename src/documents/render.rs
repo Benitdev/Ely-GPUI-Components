@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{path::Path, rc::Rc, sync::Arc};
 
 use gpui::{
     AnyElement, App, ElementId, Entity, FontStyle, FontWeight, HighlightStyle, InteractiveText,
@@ -7,7 +7,11 @@ use gpui::{
 };
 use markdown::mdast::AlignKind;
 
-use super::tree::{Inline, Node, Style, parse};
+use super::{
+    diagram::Diagram,
+    picture::Picture,
+    tree::{Inline, Node, Style, parse},
+};
 use crate::{
     editor::code_colors,
     navigation::{Anchor, Sections},
@@ -28,6 +32,7 @@ pub struct MarkdownRenderer {
     size: TextSize,
     sections: Option<Entity<Sections>>,
     code: Option<DrawCode>,
+    base: Option<Arc<Path>>,
 }
 
 impl MarkdownRenderer {
@@ -39,7 +44,14 @@ impl MarkdownRenderer {
             size: TextSize::Base,
             sections: None,
             code: None,
+            base: None,
         }
+    }
+
+    /// The folder relative picture addresses start from.
+    pub fn base(mut self, folder: impl Into<Arc<Path>>) -> Self {
+        self.base = Some(folder.into());
+        self
     }
 
     /// The body's size; headings keep theirs.
@@ -78,6 +90,7 @@ struct Draw<'a> {
     sections: &'a Option<Entity<Sections>>,
     headings: std::cell::Cell<usize>,
     code: &'a Option<DrawCode>,
+    base: &'a Option<Arc<Path>>,
 }
 
 impl Draw<'_> {
@@ -200,6 +213,9 @@ impl Draw<'_> {
                 .children(self.nodes(inner, cx))
                 .into_any_element(),
             Node::Code { language, text } => {
+                if language.as_deref() == Some("mermaid") {
+                    return Diagram::new(text.clone()).into_any_element();
+                }
                 if let Some(draw) = self.code {
                     return draw(
                         self.key("code"),
@@ -336,7 +352,7 @@ impl Draw<'_> {
                 .justify_center()
                 .py_2()
                 .child(match Latex::parse(tex) {
-                    Ok(math) => math.into_any_element(),
+                    Ok(math) => math.display().into_any_element(),
                     Err(error) => div()
                         .text_color(colors.danger)
                         .child(error.to_string())
@@ -344,23 +360,11 @@ impl Draw<'_> {
                 })
                 .into_any_element(),
             Node::Image { alt, url, link } => {
-                let picture = div()
-                    .id(self.key("image"))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .p_3()
-                    .rounded(theme.radius(Radius::Md))
-                    .border_1()
-                    .border_color(colors.border)
-                    .text_color(colors.fg_muted)
-                    .child(
-                        Icon::new(IconName::Image)
-                            .size(IconSize::Sm)
-                            .color(colors.fg_subtle),
-                    )
-                    .child(div().flex_1().child(alt.clone()))
-                    .child(div().text_color(colors.fg_subtle).child(url.clone()));
+                let picture = div().id(self.key("image")).child(Picture {
+                    alt: alt.clone(),
+                    url: url.clone(),
+                    base: self.base.clone(),
+                });
                 let Some(link) = link.clone() else {
                     return picture.into_any_element();
                 };
@@ -443,6 +447,7 @@ impl RenderOnce for MarkdownRenderer {
             sections: &self.sections,
             headings: std::cell::Cell::new(0),
             code: &self.code,
+            base: &self.base,
         };
         div()
             .flex()

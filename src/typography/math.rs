@@ -1,282 +1,46 @@
-use std::fmt;
+use std::{
+    fmt,
+    panic::{AssertUnwindSafe, catch_unwind},
+    sync::Arc,
+};
 
 use gpui::{
-    AnyElement, App, IntoElement, ParentElement, Rems, RenderOnce, Styled, Window, div, prelude::*,
+    App, Asset, IntoElement, ParentElement, Pixels, RenderImage, RenderOnce, SharedString, Size,
+    Styled, Window, div, img, px, size,
 };
+use ratex_layout::{LayoutOptions, layout, to_display_list};
+use ratex_svg::{SvgOptions, render_to_svg};
+use ratex_types::{color::Color, math_style::MathStyle};
 
 use crate::theme::{ActiveTheme, TextSize};
 
-#[derive(Clone, Debug, PartialEq)]
-enum Node {
-    Var(char),
-    Sym(String),
-    Op(String),
-    Word(String),
-    Row(Vec<Node>),
-    Script {
-        base: Box<Node>,
-        sup: Option<Box<Node>>,
-        sub: Option<Box<Node>>,
-    },
-    Frac(Box<Node>, Box<Node>),
-    Sqrt(Box<Node>),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum MathError {
-    Unknown(String),
-    Unbalanced,
-    MissingArgument(&'static str),
-}
+/// Why a formula did not typeset: RaTeX's own words.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MathError(SharedString);
 
 impl fmt::Display for MathError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            MathError::Unknown(name) => write!(f, "unknown command \\{name}"),
-            MathError::Unbalanced => write!(f, "unbalanced braces"),
-            MathError::MissingArgument(name) => write!(f, "\\{name} is missing an argument"),
-        }
+        f.write_str(&self.0)
     }
 }
 
 impl std::error::Error for MathError {}
 
-fn symbol(name: &str) -> Option<Node> {
-    let greek = "alpha α beta β gamma γ delta δ epsilon ε zeta ζ eta η theta θ iota ι kappa κ \
-                 lambda λ mu μ nu ν xi ξ pi π rho ρ sigma σ tau τ upsilon υ phi φ chi χ psi ψ omega ω";
-    let upper = "Gamma Γ Delta Δ Theta Θ Lambda Λ Xi Ξ Pi Π Sigma Σ Phi Φ Psi Ψ Omega Ω";
-    let ops = "pm ± mp ∓ times × cdot · div ÷ leq ≤ geq ≥ neq ≠ approx ≈ equiv ≡ to → \
-               rightarrow → leftarrow ← in ∈ subset ⊂ cup ∪ cap ∩";
-    let plain = "infty ∞ partial ∂ nabla ∇ sum ∑ prod ∏ int ∫ forall ∀ exists ∃ ldots … cdots ⋯";
-    let find = |table: &str| {
-        let words: Vec<&str> = table.split_whitespace().collect();
-        words
-            .chunks(2)
-            .find(|pair| pair[0] == name)
-            .map(|pair| pair[1].to_string())
-    };
-    if let Some(glyph) = find(greek) {
-        return glyph.chars().next().map(Node::Var);
-    }
-    if let Some(glyph) = find(ops) {
-        return Some(Node::Op(glyph));
-    }
-    find(upper).or_else(|| find(plain)).map(Node::Sym)
-}
-
-const FUNCTIONS: [&str; 11] = [
-    "sin", "cos", "tan", "log", "ln", "exp", "lim", "max", "min", "det", "gcd",
-];
-
-struct Parser {
-    chars: Vec<char>,
-    at: usize,
-}
-
-impl Parser {
-    fn peek(&self) -> Option<char> {
-        self.chars.get(self.at).copied()
-    }
-
-    fn bump(&mut self) -> Option<char> {
-        let next = self.peek();
-        self.at += 1;
-        next
-    }
-
-    fn row(&mut self, closed: bool) -> Result<Vec<Node>, MathError> {
-        let mut row = Vec::new();
-        loop {
-            match self.peek() {
-                None if closed => return Err(MathError::Unbalanced),
-                None => return Ok(row),
-                Some('}') if closed => {
-                    self.bump();
-                    return Ok(row);
-                }
-                Some('}') => return Err(MathError::Unbalanced),
-                Some(ch) if ch.is_whitespace() => {
-                    self.bump();
-                }
-                Some(mark @ ('^' | '_')) => {
-                    self.bump();
-                    let script = Box::new(self.argument(if mark == '^' { "^" } else { "_" })?);
-                    let base = row.pop().unwrap_or(Node::Sym(String::new()));
-                    row.push(attach(base, mark == '^', script));
-                }
-                Some(_) => {
-                    let atom = self.atom()?;
-                    row.push(atom);
-                }
-            }
-        }
-    }
-
-    fn atom(&mut self) -> Result<Node, MathError> {
-        match self.bump() {
-            Some('{') => Ok(Node::Row(self.row(true)?)),
-            Some('\\') => self.command(),
-            Some('-') => Ok(Node::Op("−".into())),
-            Some(ch @ ('+' | '=' | '<' | '>')) => Ok(Node::Op(ch.to_string())),
-            Some(ch) if ch.is_alphabetic() => Ok(Node::Var(ch)),
-            Some(ch) => Ok(Node::Sym(ch.to_string())),
-            None => Err(MathError::Unbalanced),
-        }
-    }
-
-    fn argument(&mut self, name: &'static str) -> Result<Node, MathError> {
-        while self.peek().is_some_and(char::is_whitespace) {
-            self.bump();
-        }
-        match self.peek() {
-            None | Some('}') => Err(MathError::MissingArgument(name)),
-            Some(_) => self.atom(),
-        }
-    }
-
-    /// `{...}` read as plain text, spaces kept.
-    fn raw_group(&mut self) -> Result<String, MathError> {
-        while self.peek().is_some_and(char::is_whitespace) {
-            self.bump();
-        }
-        if self.bump() != Some('{') {
-            return Err(MathError::MissingArgument("text"));
-        }
-        let mut depth = 1;
-        let mut text = String::new();
-        loop {
-            match self.bump().ok_or(MathError::Unbalanced)? {
-                '{' => depth += 1,
-                '}' if depth == 1 => return Ok(text),
-                '}' => depth -= 1,
-                _ => {}
-            }
-            text.push(self.chars[self.at - 1]);
-        }
-    }
-
-    fn command(&mut self) -> Result<Node, MathError> {
-        let start = self.at;
-        while self.peek().is_some_and(|ch| ch.is_ascii_alphabetic()) {
-            self.bump();
-        }
-        let name: String = self.chars[start..self.at].iter().collect();
-        if name.is_empty() {
-            let escaped = self.bump().ok_or(MathError::Unbalanced)?;
-            return Ok(Node::Sym(if escaped == ',' {
-                " ".into()
-            } else {
-                escaped.to_string()
-            }));
-        }
-        match name.as_str() {
-            "frac" => {
-                let top = self.argument("frac")?;
-                let bottom = self.argument("frac")?;
-                Ok(Node::Frac(Box::new(top), Box::new(bottom)))
-            }
-            "sqrt" => Ok(Node::Sqrt(Box::new(self.argument("sqrt")?))),
-            "text" => Ok(Node::Word(self.raw_group()?)),
-            "left" | "right" => self.argument("left"),
-            name if FUNCTIONS.contains(&name) => Ok(Node::Word(name.to_string())),
-            name => symbol(name).ok_or_else(|| MathError::Unknown(name.to_string())),
-        }
-    }
-}
-
-fn attach(base: Node, upper: bool, script: Box<Node>) -> Node {
-    match base {
-        Node::Script { base, sup, sub } if upper && sup.is_none() => Node::Script {
-            base,
-            sup: Some(script),
-            sub,
-        },
-        Node::Script { base, sup, sub } if !upper && sub.is_none() => Node::Script {
-            base,
-            sup,
-            sub: Some(script),
-        },
-        base => {
-            let (sup, sub) = if upper {
-                (Some(script), None)
-            } else {
-                (None, Some(script))
-            };
-            Node::Script {
-                base: Box::new(base),
-                sup,
-                sub,
-            }
-        }
-    }
-}
-
-fn draw(node: &Node, size: Rems, cx: &App) -> AnyElement {
-    let rule = cx.theme().colors.fg;
-    let script = size * 0.72;
-    let text = |content: String| div().text_size(size).child(content);
-    match node {
-        Node::Var(ch) => text(ch.to_string()).italic().into_any_element(),
-        Node::Sym(content) | Node::Word(content) => text(content.clone()).into_any_element(),
-        Node::Op(content) => text(content.clone()).px(size * 0.22).into_any_element(),
-        Node::Row(nodes) => div()
-            .flex()
-            .items_center()
-            .children(nodes.iter().map(|node| draw(node, size, cx)))
-            .into_any_element(),
-        Node::Script { base, sup, sub } => div()
-            .flex()
-            .items_center()
-            .child(draw(base, size, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .when(sub.is_none(), |col| col.mb(size * 0.55))
-                    .when(sup.is_none(), |col| col.mt(size * 0.45))
-                    .children(sup.iter().map(|node| draw(node, script, cx)))
-                    .children(sub.iter().map(|node| draw(node, script, cx))),
-            )
-            .into_any_element(),
-        Node::Frac(top, bottom) => div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .px(size * 0.12)
-            .child(draw(top, size * 0.85, cx))
-            .child(div().w_full().border_t_1().border_color(rule))
-            .child(draw(bottom, size * 0.85, cx))
-            .into_any_element(),
-        Node::Sqrt(body) => div()
-            .flex()
-            .items_center()
-            .child(text("√".into()))
-            .child(
-                div()
-                    .border_t_1()
-                    .border_color(rule)
-                    .child(draw(body, size, cx)),
-            )
-            .into_any_element(),
-    }
-}
-
-/// Inline math from a TeX subset: scripts, `\frac`, `\sqrt`, Greek, operators.
+/// TeX typeset by RaTeX, in the text's color.
 #[derive(IntoElement)]
 pub struct Latex {
-    root: Node,
+    source: SharedString,
     size: TextSize,
+    display: bool,
 }
 
 impl Latex {
     pub fn parse(source: &str) -> Result<Self, MathError> {
-        let mut parser = Parser {
-            chars: source.chars().collect(),
-            at: 0,
-        };
+        ratex_parser::parse(source).map_err(|error| MathError(error.message.into()))?;
         Ok(Self {
-            root: Node::Row(parser.row(false)?),
+            source: source.to_string().into(),
             size: TextSize::Lg,
+            display: false,
         })
     }
 
@@ -284,15 +48,107 @@ impl Latex {
         self.size = size;
         self
     }
+
+    /// Display style: limits above and below, larger operators.
+    pub fn display(mut self) -> Self {
+        self.display = true;
+        self
+    }
+}
+
+/// What a typeset picture depends on.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct Formula {
+    source: SharedString,
+    display: bool,
+    rgba: u32,
+    /// Font size and window scale, in hundredths.
+    font: u32,
+    scale: u32,
+}
+
+/// A typeset formula: its picture and logical size.
+type Typeset = Result<(Arc<RenderImage>, Size<Pixels>), MathError>;
+
+enum Typesetter {}
+
+impl Asset for Typesetter {
+    type Source = Formula;
+    type Output = Typeset;
+
+    fn load(formula: Formula, cx: &mut App) -> impl Future<Output = Typeset> + Send + 'static {
+        let renderer = cx.svg_renderer();
+        async move {
+            let (svg, shape) = svg(&formula)?;
+            let picture = renderer
+                .render_single_frame(svg.as_bytes(), formula.scale as f32 / 100.0)
+                .map_err(|error| MathError(format!("{error}").into()))?;
+            Ok((picture, shape))
+        }
+    }
+}
+
+/// The formula as SVG, glyphs outlined, and its size.
+fn svg(formula: &Formula) -> Result<(String, Size<Pixels>), MathError> {
+    let ast =
+        ratex_parser::parse(&formula.source).map_err(|error| MathError(error.message.into()))?;
+    let [r, g, b, a] = formula
+        .rgba
+        .to_be_bytes()
+        .map(|channel| f32::from(channel) / 255.0);
+    let options = LayoutOptions::default()
+        .with_style(match formula.display {
+            true => MathStyle::Display,
+            false => MathStyle::Text,
+        })
+        .with_color(Color::new(r, g, b, a));
+    let font = f64::from(formula.font) / 100.0;
+    // RaTeX may panic on input it parsed.
+    let laid = catch_unwind(AssertUnwindSafe(|| {
+        let list = to_display_list(&layout(&ast, &options));
+        let svg = render_to_svg(
+            &list,
+            &SvgOptions {
+                font_size: font,
+                padding: 0.0,
+                stroke_width: (font / 26.0).max(0.5),
+                embed_glyphs: true,
+                font_dir: String::new(),
+            },
+        );
+        (list.width, list.height + list.depth, svg)
+    }));
+    let (width, height, svg) = laid.map_err(|_| {
+        log::error!("latex: RaTeX failed to lay out {:?}", formula.source);
+        MathError("RaTeX could not lay out this formula".into())
+    })?;
+    let shape = size(px((width * font) as f32), px((height * font) as f32));
+    Ok((svg, shape))
 }
 
 impl RenderOnce for Latex {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
-        let size = theme.text_size(self.size);
-        div()
-            .text_color(theme.colors.fg)
-            .child(draw(&self.root, size, cx))
+        let (color, danger) = (theme.colors.fg, theme.colors.danger);
+        let font = theme.text_size(self.size).to_pixels(window.rem_size());
+        let formula = Formula {
+            source: self.source.clone(),
+            display: self.display,
+            rgba: u32::from(color.to_rgb()),
+            font: (font.as_f32() * 100.0).round() as u32,
+            scale: (window.scale_factor() * 100.0).round() as u32,
+        };
+        match window.use_asset::<Typesetter>(&formula, cx) {
+            Some(Ok((picture, shape))) => img(picture)
+                .w(shape.width)
+                .h(shape.height)
+                .into_any_element(),
+            Some(Err(error)) => div()
+                .text_color(danger)
+                .child(error.to_string())
+                .into_any_element(),
+            None => div().h(font).into_any_element(),
+        }
     }
 }
 
@@ -300,55 +156,40 @@ impl RenderOnce for Latex {
 mod tests {
     use super::*;
 
-    fn parse(source: &str) -> Result<Node, MathError> {
-        Latex::parse(source).map(|latex| latex.root)
+    fn formula(source: &str, display: bool) -> Formula {
+        Formula {
+            source: source.to_string().into(),
+            display,
+            rgba: 0x112233ff,
+            font: 1600,
+            scale: 200,
+        }
     }
 
     #[test]
-    fn scripts_attach_to_the_previous_atom() {
-        let Node::Row(nodes) = parse("x_i^2 + y").unwrap() else {
-            panic!("row")
-        };
-        assert_eq!(nodes.len(), 3);
-        let Node::Script { base, sup, sub } = &nodes[0] else {
-            panic!("script")
-        };
-        assert_eq!(**base, Node::Var('x'));
-        assert_eq!(sup.as_deref(), Some(&Node::Sym("2".into())));
-        assert_eq!(sub.as_deref(), Some(&Node::Var('i')));
-        assert_eq!(nodes[1], Node::Op("+".into()));
-    }
-
-    #[test]
-    fn commands_build_structure() {
-        let Node::Row(nodes) = parse(r"\frac{\alpha}{2} \sqrt{x} \sin").unwrap() else {
-            panic!("row")
-        };
+    fn a_formula_typesets_to_outlined_svg_in_its_color() {
+        let (svg, shape) = svg(&formula(r"\frac{a}{b} + \sqrt{x}", false)).expect("typesets");
+        assert!(svg.starts_with("<svg") && !svg.contains("<text"), "{svg}");
         assert!(
-            matches!(&nodes[0], Node::Frac(top, _) if **top == Node::Row(vec![Node::Var('α')]))
+            svg.contains("17,34,51") || svg.contains("#112233"),
+            "the color: {svg}"
         );
-        assert!(matches!(&nodes[1], Node::Sqrt(_)));
-        assert_eq!(nodes[2], Node::Word("sin".into()));
+        assert!(shape.width > px(16.) && shape.height > px(16.), "{shape:?}");
     }
 
     #[test]
-    fn text_keeps_its_spaces() {
-        let Node::Row(nodes) = parse(r"\text{hello world} x").unwrap() else {
-            panic!("row")
+    fn display_style_sets_limits_larger() {
+        let (_, text) = svg(&formula(r"\sum_{k=1}^{n} k", false)).expect("typesets");
+        let (_, display) = svg(&formula(r"\sum_{k=1}^{n} k", true)).expect("typesets");
+        assert!(display.height > text.height, "{display:?} over {text:?}");
+    }
+
+    #[test]
+    fn bad_tex_says_why() {
+        let Err(error) = Latex::parse(r"\frac{a}") else {
+            panic!("a missing argument parses")
         };
-        assert_eq!(nodes[0], Node::Word("hello world".into()));
-    }
-
-    #[test]
-    fn errors_name_the_fault() {
-        assert_eq!(parse(r"\foo"), Err(MathError::Unknown("foo".into())));
-        assert_eq!(parse("{x"), Err(MathError::Unbalanced));
-        assert_eq!(parse("x}"), Err(MathError::Unbalanced));
-        assert_eq!(parse(r"\frac{a}"), Err(MathError::MissingArgument("frac")));
-        assert_eq!(
-            parse(r"\mathrm{x}"),
-            Err(MathError::Unknown("mathrm".into()))
-        );
-        assert_eq!(parse(r"\text{a"), Err(MathError::Unbalanced));
+        assert!(!error.to_string().is_empty());
+        assert!(Latex::parse(r"x^{2").is_err(), "an open brace");
     }
 }

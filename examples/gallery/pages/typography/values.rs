@@ -204,7 +204,7 @@ pub fn latex(cx: &App) -> impl IntoElement + use<> {
     let math = |source: &str| Latex::parse(source).expect("gallery formula parses");
     section(
         "Latex / MathInline",
-        "A TeX subset: scripts, fractions, roots, Greek.",
+        "TeX typeset by RaTeX, in the text's color.",
         cx,
     )
     .child(

@@ -301,3 +301,60 @@ fn a_selected_version_past_the_history_selects_none(cx: &mut TestAppContext) {
     });
     settle(cx);
 }
+
+/// Markdown drawn `width` points wide, its pictures read in `base`.
+struct Page {
+    source: &'static str,
+    base: std::path::PathBuf,
+    width: f32,
+}
+
+impl Render for Page {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(self.width))
+            .child(super::MarkdownRenderer::new("page", self.source).base(self.base.as_path()))
+    }
+}
+
+/// A 200×100 picture drawn in a `width` column.
+fn drawn_picture(width: f32, cx: &mut TestAppContext) -> gpui::Size<Pixels> {
+    let folder = std::env::temp_dir().join(format!("ely-picture-{}-{width}", std::process::id()));
+    std::fs::create_dir_all(folder.join("assets")).expect("a folder");
+    let mut png = Vec::new();
+    image::RgbaImage::new(200, 100)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("a png");
+    std::fs::write(folder.join("assets/wide shot.png"), png).expect("the picture");
+    cx.update(Theme::init);
+    let (_, cx) = cx.add_window_view(|_, _| Page {
+        source: "Before
+
+![shot](assets/wide%20shot.png)
+",
+        base: folder.clone(),
+        width,
+    });
+    let mut drawn = None;
+    // The decode runs on the background executor.
+    for _ in 0..50 {
+        settle(cx);
+        drawn = cx.debug_bounds("markdown-picture");
+        if drawn.is_some() {
+            break;
+        }
+    }
+    std::fs::remove_dir_all(&folder).expect("cleaned");
+    drawn.expect("the picture drew").size
+}
+
+#[gpui::test]
+fn a_picture_beside_the_file_draws_at_its_ratio_within_the_column(cx: &mut TestAppContext) {
+    let shrunk = drawn_picture(120.0, cx);
+    assert_eq!(shrunk, size(px(120.0), px(60.0)), "shrunk at 2:1");
+}
+
+#[gpui::test]
+fn a_picture_narrower_than_the_column_keeps_its_size(cx: &mut TestAppContext) {
+    assert_eq!(drawn_picture(400.0, cx), size(px(200.0), px(100.0)));
+}
