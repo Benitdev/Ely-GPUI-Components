@@ -300,6 +300,7 @@ impl Draw<'_> {
                 let cell = |blocks: &[Node], column: usize, header: bool, cx: &App| {
                     div()
                         .flex_1()
+                        .min_w_0()
                         .flex()
                         .px_3()
                         .py_1p5()
@@ -315,6 +316,7 @@ impl Draw<'_> {
                         })
                         .child(
                             div()
+                                .max_w_full()
                                 .flex()
                                 .flex_col()
                                 .gap_1()

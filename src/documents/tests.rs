@@ -23,7 +23,7 @@ fn hit(page: usize) -> PageHit {
     }
 }
 
-/// Three tall pages and the hits found; a press while pinning records the note asked.
+/// Three tall pages and hits; a pinning press records notes.
 struct Reader {
     query: Entity<TextInput>,
     width: f32,
@@ -60,7 +60,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<Reader>, Noted, &mut VisualTestConte
     open_with(400.0, None, cx)
 }
 
-/// Pages `width` points wide, with a hit on the second, current from the first frame when `current` says.
+/// Pages `width` wide, a hit on page two, maybe current.
 fn open_with(
     width: f32,
     current: Option<usize>,
@@ -86,7 +86,7 @@ fn settle(cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
-/// A point on the pages, below the header and the find bar, at the view's middle.
+/// A point on the pages, below the bars, mid-view.
 fn on_pages(cx: &mut VisualTestContext) -> Point<Pixels> {
     cx.update(|window, _| point(window.viewport_size().width / 2.0, px(300.0)))
 }
@@ -102,7 +102,7 @@ fn wheel(down: f32, cx: &mut VisualTestContext) {
     settle(cx);
 }
 
-/// Turns pinning on with the header's last button, then presses the pages at their middle; returns the note asked.
+/// Turns pinning on, presses mid-page; the note asked.
 fn pin(cx: &mut VisualTestContext, noted: &Noted) -> (usize, Point<f32>) {
     let at = on_pages(cx);
     pin_at(at, cx, noted)
@@ -143,7 +143,7 @@ fn a_note_lands_where_the_press_is_on_a_scrolled_page(cx: &mut TestAppContext) {
     assert_eq!(scrolled.y, top.y + 150.0, "the press counts the scroll");
 }
 
-/// Scrolls `down`, makes the hit current, then pins a note at the same window point.
+/// Scrolls `down`, makes the hit current, pins a note.
 fn revealed(down: f32, cx: &mut TestAppContext) -> (usize, Point<f32>) {
     let (reader, noted, cx) = open(cx);
     if down > 0.0 {
@@ -201,7 +201,7 @@ fn a_hit_current_from_the_first_frame_comes_into_view(cx: &mut TestAppContext) {
     assert_eq!(at_once, later);
 }
 
-/// A field outside a zen view, and how often Escape left zen.
+/// A field outside zen, and the Escapes that left zen.
 struct Zen {
     outside: Entity<TextInput>,
     on: bool,
@@ -373,6 +373,17 @@ fn a_picture_in_a_table_cell_draws(cx: &mut TestAppContext) {
 | ![shot](assets/wide%20shot.png) |
 ";
     assert_eq!(drawn_picture(table, 400.0, cx), size(px(200.0), px(100.0)));
+}
+
+#[gpui::test]
+fn a_picture_in_a_narrow_cell_shrinks_within_it(cx: &mut TestAppContext) {
+    let table = "| A | B |
+| - | - |
+| ![shot](assets/wide%20shot.png) | b |
+";
+    let drawn = drawn_picture(table, 160.0, cx);
+    assert!(drawn.width < px(80.0), "within its half: {drawn:?}");
+    assert_eq!(drawn.height, drawn.width / 2.0, "at its ratio");
 }
 
 #[gpui::test]
