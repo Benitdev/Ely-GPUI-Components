@@ -1,8 +1,8 @@
-use std::ops::Range;
+use std::{collections::HashMap, ops::Range};
 
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Parser, Tag, TagEnd};
+use markdown::mdast::{self, AlignKind};
 
-use super::markdown::options;
+use super::markdown::{span, tree};
 
 /// How a stretch of inline text prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,7 +40,7 @@ pub enum Node {
         items: Vec<(Option<bool>, Vec<Node>)>,
     },
     Table {
-        aligns: Vec<Alignment>,
+        aligns: Vec<AlignKind>,
         head: Vec<Inline>,
         rows: Vec<Vec<Inline>>,
     },
@@ -56,209 +56,193 @@ pub enum Node {
     },
 }
 
-/// Parses into nodes as it goes: a stack of open containers and the inline text being built.
-#[derive(Default)]
-struct Builder {
-    stack: Vec<(Frame, Vec<Node>)>,
-    inline: Inline,
-    open: Vec<(usize, Style)>,
-    link: Vec<(usize, String)>,
-    image: Vec<(String, String)>,
-    code: Option<(Option<String>, String)>,
-    head: Vec<Inline>,
-    row: Vec<Inline>,
-    rows: Vec<Vec<Inline>>,
-}
-
-enum Frame {
-    Quote,
-    List(Option<u64>, Vec<(Option<bool>, Vec<Node>)>),
-    Item(Option<bool>),
-    Table(Vec<Alignment>),
-    Footnote(String),
-}
-
-impl Builder {
-    fn take_inline(&mut self) -> Inline {
-        std::mem::take(&mut self.inline)
-    }
+/// A tree read against its source and its link definitions.
+struct Reader<'a> {
+    source: &'a str,
+    urls: HashMap<String, String>,
 }
 
 /// `markdown` as blocks.
 pub fn parse(markdown: &str) -> Vec<Node> {
-    let mut built = Builder::default();
-    let mut out: Vec<Node> = Vec::new();
-    for event in Parser::new_ext(markdown, options()) {
-        match event {
-            Event::Start(Tag::Paragraph | Tag::Heading { .. } | Tag::TableCell) => {}
-            Event::End(TagEnd::Paragraph) => {
-                let text = built.take_inline();
-                if !text.text.is_empty() {
-                    push(&mut built, &mut out, Node::Paragraph(text));
+    let root = tree(markdown);
+    let blocks = root.children().expect("the root holds the blocks");
+    let mut urls = HashMap::new();
+    for block in blocks {
+        if let mdast::Node::Definition(definition) = block {
+            urls.entry(definition.identifier.clone())
+                .or_insert_with(|| definition.url.clone());
+        }
+    }
+    let reader = Reader {
+        source: markdown,
+        urls,
+    };
+    let mut out = Vec::new();
+    reader.blocks(blocks, &mut out);
+    out
+}
+
+impl Reader<'_> {
+    fn blocks(&self, nodes: &[mdast::Node], out: &mut Vec<Node>) {
+        for node in nodes {
+            self.block(node, out);
+        }
+    }
+
+    fn nested(&self, nodes: &[mdast::Node]) -> Vec<Node> {
+        let mut out = Vec::new();
+        self.blocks(nodes, &mut out);
+        out
+    }
+
+    /// The address a reference names: the parser makes references to definitions alone.
+    fn url(&self, identifier: &str) -> String {
+        self.urls
+            .get(identifier)
+            .cloned()
+            .expect("a reference names a definition")
+    }
+
+    fn block(&self, node: &mdast::Node, out: &mut Vec<Node>) {
+        match node {
+            mdast::Node::Paragraph(paragraph) => self.paragraph(node, &paragraph.children, out),
+            mdast::Node::Heading(heading) => {
+                out.push(Node::Heading(heading.depth, self.inline(&heading.children)))
+            }
+            mdast::Node::Blockquote(quote) => out.push(Node::Quote(self.nested(&quote.children))),
+            mdast::Node::Code(code) => out.push(Node::Code {
+                language: code.lang.clone(),
+                text: code.value.clone(),
+            }),
+            mdast::Node::Math(math) => out.push(Node::Math(math.value.clone())),
+            mdast::Node::List(list) => {
+                let items = list
+                    .children
+                    .iter()
+                    .map(|item| match item {
+                        mdast::Node::ListItem(item) => (item.checked, self.nested(&item.children)),
+                        other => unreachable!("a list holds items, not {other:?}"),
+                    })
+                    .collect();
+                let start = list.ordered.then(|| u64::from(list.start.unwrap_or(1)));
+                out.push(Node::List { start, items });
+            }
+            mdast::Node::Table(table) => {
+                let mut rows = table.children.iter().map(|row| match row {
+                    mdast::Node::TableRow(row) => row
+                        .children
+                        .iter()
+                        .map(|cell| self.inline(cell.children().expect("a cell holds inlines")))
+                        .collect::<Vec<_>>(),
+                    other => unreachable!("a table holds rows, not {other:?}"),
+                });
+                let head = rows.next().expect("a table has its head row");
+                out.push(Node::Table {
+                    aligns: table.align.clone(),
+                    head,
+                    rows: rows.collect(),
+                });
+            }
+            mdast::Node::ThematicBreak(_) => out.push(Node::Rule),
+            mdast::Node::FootnoteDefinition(note) => out.push(Node::Footnote {
+                label: note
+                    .label
+                    .clone()
+                    .unwrap_or_else(|| note.identifier.clone()),
+                body: self.nested(&note.children),
+            }),
+            mdast::Node::Html(_) | mdast::Node::Definition(_) => {}
+            other => unreachable!("{other:?} is no block outside MDX"),
+        }
+    }
+
+    /// A paragraph's text split around its images; `$$` math written alone stands as a block.
+    fn paragraph(&self, node: &mdast::Node, children: &[mdast::Node], out: &mut Vec<Node>) {
+        if let [mdast::Node::InlineMath(math)] = children
+            && self.source[span(node)].starts_with("$$")
+        {
+            return out.push(Node::Math(math.value.clone()));
+        }
+        let mut run = Inline::default();
+        for child in children {
+            let image = match child {
+                mdast::Node::Image(image) => Some((image.alt.clone(), image.url.clone())),
+                mdast::Node::ImageReference(image) => {
+                    Some((image.alt.clone(), self.url(&image.identifier)))
                 }
-            }
-            Event::End(TagEnd::Heading(level)) => {
-                let text = built.take_inline();
-                push(&mut built, &mut out, Node::Heading(depth(level), text));
-            }
-            Event::Start(Tag::BlockQuote(_)) => built.stack.push((Frame::Quote, Vec::new())),
-            Event::Start(Tag::List(start)) => {
-                flush(&mut built, &mut out);
-                built
-                    .stack
-                    .push((Frame::List(start, Vec::new()), Vec::new()));
-            }
-            Event::Start(Tag::Item) => built.stack.push((Frame::Item(None), Vec::new())),
-            Event::TaskListMarker(done) => {
-                if let Some((Frame::Item(task), _)) = built.stack.last_mut() {
-                    *task = Some(done);
+                _ => None,
+            };
+            match image {
+                Some((alt, url)) => {
+                    text_block(std::mem::take(&mut run), out);
+                    out.push(Node::Image { alt, url });
                 }
+                None => self.inline_into(child, &mut run),
             }
-            Event::End(TagEnd::Item) => {
-                flush(&mut built, &mut out);
-                let (frame, nodes) = built.stack.pop().expect("an item was open");
-                let Frame::Item(task) = frame else {
-                    unreachable!("an item closes an item")
-                };
-                if let Some((Frame::List(_, items), _)) = built.stack.last_mut() {
-                    items.push((task, nodes));
-                }
+        }
+        text_block(run, out);
+    }
+
+    fn inline(&self, nodes: &[mdast::Node]) -> Inline {
+        let mut text = Inline::default();
+        for node in nodes {
+            self.inline_into(node, &mut text);
+        }
+        text
+    }
+
+    /// `nodes` into `text`; their stretch of it, styled.
+    fn styled_children(&self, nodes: &[mdast::Node], text: &mut Inline) -> Range<usize> {
+        let start = text.text.len();
+        for node in nodes {
+            self.inline_into(node, text);
+        }
+        start..text.text.len()
+    }
+
+    fn inline_into(&self, node: &mdast::Node, text: &mut Inline) {
+        let (children, style) = match node {
+            mdast::Node::Text(words) => return text.text.push_str(&words.value.replace('\n', " ")),
+            mdast::Node::Break(_) => return text.text.push('\n'),
+            mdast::Node::InlineCode(code) => return styled(text, &code.value, Style::Code),
+            mdast::Node::InlineMath(math) => return styled(text, &math.value, Style::Math),
+            mdast::Node::FootnoteReference(note) => {
+                let label = note.label.as_ref().unwrap_or(&note.identifier);
+                return styled(text, &format!("[{label}]"), Style::Footnote);
             }
-            Event::End(TagEnd::List(_)) => {
-                let (frame, _) = built.stack.pop().expect("a list was open");
-                let Frame::List(start, items) = frame else {
-                    unreachable!("a list closes a list")
-                };
-                push(&mut built, &mut out, Node::List { start, items });
+            mdast::Node::Image(image) => return text.text.push_str(&image.alt),
+            mdast::Node::ImageReference(image) => return text.text.push_str(&image.alt),
+            mdast::Node::Html(_) => return,
+            mdast::Node::Strong(strong) => (&strong.children, Style::Strong),
+            mdast::Node::Emphasis(emphasis) => (&emphasis.children, Style::Emphasis),
+            mdast::Node::Delete(delete) => (&delete.children, Style::Strike),
+            mdast::Node::Link(link) => (&link.children, Style::Link),
+            mdast::Node::LinkReference(link) => (&link.children, Style::Link),
+            other => unreachable!("{other:?} is no inline outside MDX"),
+        };
+        let range = self.styled_children(children, text);
+        text.styles.push((range.clone(), style));
+        match node {
+            mdast::Node::Link(link) => text.links.push((range, link.url.clone())),
+            mdast::Node::LinkReference(link) => {
+                text.links.push((range, self.url(&link.identifier)))
             }
-            Event::End(TagEnd::BlockQuote(_)) => {
-                let (_, nodes) = built.stack.pop().expect("a quote was open");
-                push(&mut built, &mut out, Node::Quote(nodes));
-            }
-            Event::Start(Tag::FootnoteDefinition(label)) => built
-                .stack
-                .push((Frame::Footnote(label.to_string()), Vec::new())),
-            Event::End(TagEnd::FootnoteDefinition) => {
-                let (frame, body) = built.stack.pop().expect("a footnote was open");
-                let Frame::Footnote(label) = frame else {
-                    unreachable!("a footnote closes a footnote")
-                };
-                push(&mut built, &mut out, Node::Footnote { label, body });
-            }
-            Event::Start(Tag::CodeBlock(kind)) => {
-                let language = match kind {
-                    CodeBlockKind::Fenced(name) if !name.is_empty() => Some(name.to_string()),
-                    _ => None,
-                };
-                built.code = Some((language, String::new()));
-            }
-            Event::End(TagEnd::CodeBlock) => {
-                let (language, text) = built.code.take().expect("a code block was open");
-                push(
-                    &mut built,
-                    &mut out,
-                    Node::Code {
-                        language,
-                        text: text.trim_end_matches('\n').to_string(),
-                    },
-                );
-            }
-            Event::Start(Tag::Table(aligns)) => {
-                built.stack.push((Frame::Table(aligns), Vec::new()))
-            }
-            Event::End(TagEnd::TableCell) => {
-                let cell = built.take_inline();
-                built.row.push(cell);
-            }
-            Event::End(TagEnd::TableHead) => built.head = std::mem::take(&mut built.row),
-            Event::End(TagEnd::TableRow) => {
-                let row = std::mem::take(&mut built.row);
-                built.rows.push(row);
-            }
-            Event::End(TagEnd::Table) => {
-                let (frame, _) = built.stack.pop().expect("a table was open");
-                let Frame::Table(aligns) = frame else {
-                    unreachable!("a table closes a table")
-                };
-                let (head, rows) = (
-                    std::mem::take(&mut built.head),
-                    std::mem::take(&mut built.rows),
-                );
-                push(&mut built, &mut out, Node::Table { aligns, head, rows });
-            }
-            Event::Rule => push(&mut built, &mut out, Node::Rule),
-            Event::DisplayMath(math) => push(&mut built, &mut out, Node::Math(math.to_string())),
-            Event::Start(Tag::Image { dest_url, .. }) => {
-                built.image.push((String::new(), dest_url.to_string()))
-            }
-            Event::End(TagEnd::Image) => {
-                let (alt, url) = built.image.pop().expect("an image closes after it opens");
-                push(&mut built, &mut out, Node::Image { alt, url });
-            }
-            Event::Start(Tag::Strong) => built.open.push((built.inline.text.len(), Style::Strong)),
-            Event::Start(Tag::Emphasis) => {
-                built.open.push((built.inline.text.len(), Style::Emphasis))
-            }
-            Event::Start(Tag::Strikethrough) => {
-                built.open.push((built.inline.text.len(), Style::Strike))
-            }
-            Event::End(TagEnd::Strong | TagEnd::Emphasis | TagEnd::Strikethrough) => {
-                let (start, style) = built.open.pop().expect("a style closes after it opens");
-                let end = built.inline.text.len();
-                built.inline.styles.push((start..end, style));
-            }
-            Event::Start(Tag::Link { dest_url, .. }) => built
-                .link
-                .push((built.inline.text.len(), dest_url.to_string())),
-            Event::End(TagEnd::Link) => {
-                let (start, url) = built.link.pop().expect("a link closes after it opens");
-                let range = start..built.inline.text.len();
-                built.inline.styles.push((range.clone(), Style::Link));
-                built.inline.links.push((range, url));
-            }
-            Event::Text(text) => match (&mut built.code, built.image.last_mut()) {
-                (Some((_, code)), _) => code.push_str(&text),
-                (None, Some((alt, _))) => alt.push_str(&text),
-                (None, None) => built.inline.text.push_str(&text),
-            },
-            Event::Code(code) => styled(&mut built.inline, &code, Style::Code),
-            Event::InlineMath(math) => styled(&mut built.inline, &math, Style::Math),
-            Event::FootnoteReference(label) => {
-                styled(&mut built.inline, &format!("[{label}]"), Style::Footnote)
-            }
-            Event::SoftBreak => built.inline.text.push(' '),
-            Event::HardBreak => built.inline.text.push('\n'),
             _ => {}
         }
     }
-    flush(&mut built, &mut out);
-    out
+}
+
+/// Text left between images, unless it is blank.
+fn text_block(text: Inline, out: &mut Vec<Node>) {
+    if !text.text.trim().is_empty() {
+        out.push(Node::Paragraph(text));
+    }
 }
 
 fn styled(inline: &mut Inline, text: &str, style: Style) {
     let start = inline.text.len();
     inline.text.push_str(text);
     inline.styles.push((start..inline.text.len(), style));
-}
-
-fn depth(level: HeadingLevel) -> u8 {
-    level as u8
-}
-
-/// A finished node goes into the open container, or the document.
-fn push(built: &mut Builder, out: &mut Vec<Node>, node: Node) {
-    match built.stack.last_mut() {
-        Some((_, nodes)) => nodes.push(node),
-        None => out.push(node),
-    }
-}
-
-/// Text left from a tight list item becomes its paragraph.
-fn flush(built: &mut Builder, out: &mut Vec<Node>) {
-    if !built.inline.text.is_empty() {
-        let text = built.take_inline();
-        push(built, out, Node::Paragraph(text));
-    }
 }
 
 #[cfg(test)]
@@ -297,21 +281,51 @@ mod tests {
     }
 
     #[test]
-    fn an_image_inside_an_image_keeps_both() {
-        let nodes = parse("![outer ![inner](inner.png)](outer.png)");
-        let urls: Vec<&str> = nodes
-            .iter()
-            .filter_map(|node| match node {
-                Node::Image { url, .. } => Some(url.as_str()),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(urls, ["inner.png", "outer.png"], "{nodes:?}");
+    fn an_image_inside_an_image_is_the_outer_one() {
+        // markdown-rs drops the inner image from the alt.
+        assert_eq!(
+            parse("![outer ![inner](inner.png)](outer.png)"),
+            [Node::Image {
+                alt: "outer ".into(),
+                url: "outer.png".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn an_image_splits_its_paragraph_and_references_resolve() {
+        let nodes =
+            parse("Before ![a][pic] after [site].\n\n[pic]: a.png\n[site]: https://ely.dev\n");
+        assert!(matches!(&nodes[0], Node::Paragraph(text) if text.text == "Before "));
+        assert_eq!(
+            nodes[1],
+            Node::Image {
+                alt: "a".into(),
+                url: "a.png".into()
+            }
+        );
+        let Node::Paragraph(after) = &nodes[2] else {
+            panic!("a paragraph, not {:?}", nodes[2])
+        };
+        assert_eq!(after.text, " after site.");
+        assert_eq!(after.links, [(7..11, "https://ely.dev".to_string())]);
+        assert_eq!(nodes.len(), 3, "definitions draw nothing: {nodes:?}");
+    }
+
+    #[test]
+    fn a_soft_break_reads_as_a_space_and_a_hard_one_as_a_line() {
+        let nodes = parse("one\ntwo  \nthree");
+        assert!(matches!(&nodes[0], Node::Paragraph(text) if text.text == "one two\nthree"));
     }
 
     #[test]
     fn display_math_stands_alone() {
         assert_eq!(parse("$$c = 1$$"), [Node::Math("c = 1".into())]);
+        assert_eq!(parse("$$\nc = 1\n$$"), [Node::Math("c = 1".into())]);
+        let Node::Paragraph(inline) = &parse("so $c$ holds")[0] else {
+            panic!("inline math stays in its paragraph")
+        };
+        assert_eq!(inline.styles, [(3..4, Style::Math)]);
     }
 
     #[test]
@@ -320,7 +334,7 @@ mod tests {
         let Node::Table { aligns, head, rows } = &nodes[0] else {
             panic!("a table, not {:?}", nodes[0])
         };
-        assert_eq!(aligns, &[Alignment::Left, Alignment::Right]);
+        assert_eq!(aligns, &[AlignKind::Left, AlignKind::Right]);
         assert_eq!(
             head.iter()
                 .map(|cell| cell.text.as_str())
@@ -328,5 +342,18 @@ mod tests {
             ["Name", "Lift"]
         );
         assert_eq!(rows[0][1].text, "0.5");
+    }
+
+    #[test]
+    fn footnotes_number_their_references_and_hold_their_body() {
+        let nodes = parse("Lift[^a].\n\n[^a]: Toward white.\n");
+        let Node::Paragraph(line) = &nodes[0] else {
+            panic!("a paragraph, not {:?}", nodes[0])
+        };
+        assert_eq!(line.text, "Lift[a].");
+        assert_eq!(line.styles, [(4..7, Style::Footnote)]);
+        assert!(
+            matches!(&nodes[1], Node::Footnote { label, body } if label == "a" && body.len() == 1)
+        );
     }
 }

@@ -1,18 +1,32 @@
 use std::ops::Range;
 
 use gpui::{App, FontWeight};
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use markdown::{Constructs, ParseOptions, mdast};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{forms::Highlight, theme::ActiveTheme};
 
-/// The markdown this crate reads: GitHub's tables, strikethrough and task lists, footnotes, and math between dollars.
-pub(crate) fn options() -> Options {
-    Options::ENABLE_TABLES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_MATH
+/// The markdown this crate reads: GitHub's flavor, and math between dollars.
+pub(crate) fn options() -> ParseOptions {
+    ParseOptions {
+        constructs: Constructs {
+            math_flow: true,
+            math_text: true,
+            ..Constructs::gfm()
+        },
+        ..ParseOptions::gfm()
+    }
+}
+
+/// `text` as a syntax tree.
+pub(crate) fn tree(text: &str) -> mdast::Node {
+    markdown::to_mdast(text, &options()).expect("markdown without MDX always parses")
+}
+
+/// The bytes of the source a parsed node spans.
+pub(crate) fn span(node: &mdast::Node) -> Range<usize> {
+    let at = node.position().expect("a parsed node has its position");
+    at.start.offset..at.end.offset
 }
 
 /// How a stretch of markdown prints while it is edited.
@@ -47,58 +61,58 @@ pub(crate) fn edge(span: &str, mark: Mark) -> usize {
     }
 }
 
+/// Every node under `node`, itself first, in source order.
+fn walk<'a>(node: &'a mdast::Node, out: &mut Vec<&'a mdast::Node>) {
+    out.push(node);
+    for child in node.children().into_iter().flatten() {
+        walk(child, out);
+    }
+}
+
 /// The marks over `text`'s bytes: styles, code, links, headings and quotes, and the syntax that writes each.
 pub fn marks(text: &str) -> Vec<(Range<usize>, Mark)> {
+    let root = tree(text);
+    let mut nodes = Vec::new();
+    walk(&root, &mut nodes);
     let mut out = Vec::new();
-    let mut links: Vec<(Range<usize>, Option<Range<usize>>)> = Vec::new();
-    for (event, range) in Parser::new_ext(text, options()).into_offset_iter() {
-        let span = &text[range.clone()];
-        match event {
-            Event::Start(Tag::Strong | Tag::Emphasis | Tag::Strikethrough) => {
-                let mark = match event {
-                    Event::Start(Tag::Strong) => Mark::Strong,
-                    Event::Start(Tag::Emphasis) => Mark::Emphasis,
-                    _ => Mark::Strike,
-                };
-                let edge = edge(span, mark);
-                out.push((range.clone(), mark));
-                out.push((range.start..range.start + edge, Mark::Syntax));
-                out.push((range.end - edge..range.end, Mark::Syntax));
-            }
-            Event::Code(_) => {
-                let ticks = edge(span, Mark::Code);
-                out.push((range.clone(), Mark::Code));
-                out.push((range.start..range.start + ticks, Mark::Syntax));
-                out.push((range.end - ticks..range.end, Mark::Syntax));
-            }
-            Event::Start(Tag::Link { .. }) => links.push((range, None)),
-            Event::Text(_) if !links.is_empty() => {
-                let (_, inner) = links.last_mut().expect("inside a link");
-                *inner = Some(match inner.take() {
-                    Some(inner) => inner.start..range.end,
-                    None => range,
-                });
-            }
-            Event::End(TagEnd::Link) => {
-                let (whole, inner) = links.pop().expect("a link ends after it starts");
-                out.push((whole.clone(), Mark::Link));
-                if let Some(inner) = inner {
-                    out.push((whole.start..inner.start, Mark::Syntax));
-                    out.push((inner.end..whole.end, Mark::Syntax));
+    for node in nodes {
+        let range = span(node);
+        let written = &text[range.clone()];
+        let styled = match node {
+            mdast::Node::Strong(_) => Some(Mark::Strong),
+            mdast::Node::Emphasis(_) => Some(Mark::Emphasis),
+            mdast::Node::Delete(_) => Some(Mark::Strike),
+            mdast::Node::InlineCode(_) => Some(Mark::Code),
+            _ => None,
+        };
+        if let Some(mark) = styled {
+            let edge = edge(written, mark);
+            out.push((range.clone(), mark));
+            out.push((range.start..range.start + edge, Mark::Syntax));
+            out.push((range.end - edge..range.end, Mark::Syntax));
+            continue;
+        }
+        match node {
+            mdast::Node::Link(link) => {
+                out.push((range.clone(), Mark::Link));
+                if let (Some(first), Some(last)) = (link.children.first(), link.children.last()) {
+                    let inner = span(first).start..span(last).end;
+                    out.push((range.start..inner.start, Mark::Syntax));
+                    out.push((inner.end..range.end, Mark::Syntax));
                 }
             }
-            Event::Start(Tag::Heading { level, .. }) => {
-                let hashes = leading(span, '#');
-                out.push((range.clone(), Mark::Heading(level as u8)));
+            mdast::Node::Heading(heading) => {
+                let hashes = leading(written, '#');
+                out.push((range.clone(), Mark::Heading(heading.depth)));
                 if hashes > 0 {
-                    let spaced = hashes + leading(&span[hashes..], ' ');
+                    let spaced = hashes + leading(&written[hashes..], ' ');
                     out.push((range.start..range.start + spaced, Mark::Syntax));
                 }
             }
-            Event::Start(Tag::BlockQuote(_)) => {
+            mdast::Node::Blockquote(_) => {
                 out.push((range.clone(), Mark::Quote));
                 let mut at = range.start;
-                for line in span.split_inclusive('\n') {
+                for line in written.split_inclusive('\n') {
                     let marker = line.len() - line.trim_start_matches(['>', ' ']).len();
                     out.push((at..at + marker, Mark::Syntax));
                     at += line.len();
@@ -154,39 +168,32 @@ pub fn markdown_highlights(text: &str, cx: &App) -> Vec<(Range<usize>, Highlight
 
 /// A link written `[text](address)` around byte `at`: its range, its text and its address.
 pub fn link_at(text: &str, at: usize) -> Option<(Range<usize>, String, String)> {
-    Parser::new_ext(text, options())
-        .into_offset_iter()
-        .find_map(|(event, range)| match event {
-            Event::Start(Tag::Link { dest_url, .. })
-                if range.start <= at && at <= range.end && text[range.clone()].starts_with('[') =>
-            {
-                let written = &text[range.clone()];
-                let label = &written[1..written.rfind("](")?];
-                Some((range, label.to_string(), dest_url.to_string()))
+    let root = tree(text);
+    let mut nodes = Vec::new();
+    walk(&root, &mut nodes);
+    nodes.into_iter().find_map(|node| match node {
+        mdast::Node::Link(link) => {
+            let range = span(node);
+            let written = &text[range.clone()];
+            if !(range.start <= at && at <= range.end && written.starts_with('[')) {
+                return None;
             }
-            _ => None,
-        })
+            let label = &written[1..written.rfind("](")?];
+            Some((range, label.to_string(), link.url.clone()))
+        }
+        _ => None,
+    })
 }
 
-/// The document's top-level blocks, as ranges of its source.
+/// The document's top-level blocks, as ranges of its source; link definitions are none.
 pub fn block_ranges(text: &str) -> Vec<Range<usize>> {
-    let mut depth = 0usize;
-    let mut out = Vec::new();
-    for (event, range) in Parser::new_ext(text, options()).into_offset_iter() {
-        match event {
-            Event::Start(_) => {
-                if depth == 0 {
-                    out.push(range);
-                }
-                depth += 1;
-            }
-            Event::End(_) => depth -= 1,
-            Event::Rule if depth == 0 => out.push(range),
-            _ => {}
-        }
-    }
-    out.into_iter()
-        .map(|range| {
+    let root = tree(text);
+    root.children()
+        .expect("the root holds the blocks")
+        .iter()
+        .filter(|block| !matches!(block, mdast::Node::Definition(_)))
+        .map(|block| {
+            let range = span(block);
             let kept = text[range.clone()].trim_end_matches(['\n', '\r']).len();
             range.start..range.start + kept
         })

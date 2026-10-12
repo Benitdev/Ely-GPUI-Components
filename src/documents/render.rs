@@ -5,7 +5,7 @@ use gpui::{
     IntoElement, ParentElement, RenderOnce, SharedString, StrikethroughStyle, Styled, StyledText,
     UnderlineStyle, Window, div, prelude::*,
 };
-use pulldown_cmark::Alignment;
+use markdown::mdast::AlignKind;
 
 use super::tree::{Inline, Node, Style, parse};
 use crate::{
@@ -291,10 +291,10 @@ impl Draw<'_> {
                         .flex()
                         .px_3()
                         .py_1p5()
-                        .when(aligns.get(column) == Some(&Alignment::Right), |cell| {
+                        .when(aligns.get(column) == Some(&AlignKind::Right), |cell| {
                             cell.justify_end()
                         })
-                        .when(aligns.get(column) == Some(&Alignment::Center), |cell| {
+                        .when(aligns.get(column) == Some(&AlignKind::Center), |cell| {
                             cell.justify_center()
                         })
                         .when(header, |cell| {
