@@ -5,6 +5,7 @@ mod divider;
 mod files;
 mod focus;
 mod ghost;
+mod held;
 mod icon;
 mod image;
 mod layer;
@@ -28,6 +29,7 @@ pub(crate) use focus::{
 };
 pub use focus::{FocusNext, FocusPrev, FocusRing, FocusScope};
 pub use ghost::DragGhost;
+pub(crate) use held::hold;
 pub use icon::{Icon, IconName};
 pub use image::Image;
 pub(crate) use image::{checked_ratio, framed};

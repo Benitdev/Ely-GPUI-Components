@@ -159,7 +159,7 @@ impl BlockEditor {
             }
             BlockKind::Math => {
                 let tex = block.fields[0].read(cx).text().to_string();
-                let shown = match Latex::parse(&tex) {
+                let shown = match Latex::parse((id.clone(), format!("math-{key}")), &tex) {
                     _ if tex.trim().is_empty() => div().into_any_element(),
                     Ok(math) => div()
                         .flex()

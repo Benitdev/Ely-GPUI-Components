@@ -25,6 +25,7 @@ pub use formatted::{
 };
 pub use inline::{Blockquote, Code, Highlight, Kbd, KbdCombo};
 pub use link::{ExternalLink, Link};
+pub(crate) use math::failed;
 pub use math::{Latex, MathError};
 pub use rolling::AnimatedNumber;
 pub use select::SelectableText;

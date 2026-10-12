@@ -201,7 +201,8 @@ pub fn emoji(cx: &App) -> impl IntoElement + use<> {
 }
 
 pub fn latex(cx: &App) -> impl IntoElement + use<> {
-    let math = |source: &str| Latex::parse(source).expect("gallery formula parses");
+    let math =
+        |id: &'static str, source: &str| Latex::parse(id, source).expect("gallery formula parses");
     section(
         "Latex / MathInline",
         "TeX typeset by RaTeX, in the text's color.",
@@ -210,17 +211,17 @@ pub fn latex(cx: &App) -> impl IntoElement + use<> {
     .child(
         specimens()
             .gap_10()
-            .child(specimen("euler", math(r"e^{i\pi} + 1 = 0"), cx))
+            .child(specimen("euler", math("euler", r"e^{i\pi} + 1 = 0"), cx))
             .child(specimen(
                 "sum",
-                math(r"\sum_{k=1}^{n} k = \frac{n(n+1)}{2}"),
+                math("sum", r"\sum_{k=1}^{n} k = \frac{n(n+1)}{2}"),
                 cx,
             ))
             .child(specimen(
                 "root",
-                math(r"x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}"),
+                math("root", r"x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}"),
                 cx,
             )),
     )
-    .child(code("Latex::parse(r\"e^{i\\pi} + 1 = 0\")?", cx))
+    .child(code("Latex::parse(\"euler\", r\"e^{i\\pi} + 1 = 0\")?", cx))
 }

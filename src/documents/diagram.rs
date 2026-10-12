@@ -4,22 +4,27 @@ use std::{
 };
 
 use gpui::{
-    App, Asset, Hsla, IntoElement, ParentElement, Pixels, RenderImage, RenderOnce, SharedString,
-    Size, Styled, Window, div, img, px, size,
+    App, Asset, ElementId, Hsla, IntoElement, ParentElement, Pixels, RenderImage, RenderOnce,
+    SharedString, Size, Styled, Window, div, img, px, size,
 };
 use mermaid_rs_renderer::{LayoutConfig, RenderOptions, Theme, render_strict};
 
-use crate::theme::{ActiveTheme, Radius, TextSize};
+use crate::{
+    primitives::hold,
+    theme::{ActiveTheme, Radius, TextSize},
+};
 
 /// A Mermaid diagram; a failure shows why and the source.
 #[derive(IntoElement)]
 pub struct Diagram {
+    id: ElementId,
     source: SharedString,
 }
 
 impl Diagram {
-    pub fn new(source: impl Into<SharedString>) -> Self {
+    pub fn new(id: impl Into<ElementId>, source: impl Into<SharedString>) -> Self {
         Self {
+            id: id.into(),
             source: source.into(),
         }
     }
@@ -66,9 +71,14 @@ fn svg(chart: &Chart) -> Result<String, SharedString> {
         true => Theme::dark(),
         false => Theme::modern(),
     };
-    theme.background = chart.ground.to_string();
-    theme.edge_label_background = chart.ground.to_string();
-    theme.text_color = chart.ink.to_string();
+    let (ground, ink) = (chart.ground.to_string(), chart.ink.to_string());
+    theme.background = ground.clone();
+    theme.edge_label_background = ground;
+    theme.primary_text_color = ink.clone();
+    theme.text_color = ink.clone();
+    theme.pie_title_text_color = ink.clone();
+    theme.pie_section_text_color = ink.clone();
+    theme.pie_legend_text_color = ink;
     let options = RenderOptions {
         theme,
         layout: LayoutConfig::default(),
@@ -114,7 +124,8 @@ impl RenderOnce for Diagram {
             theme.text_size(TextSize::Sm),
             theme.mono_family.clone(),
         );
-        match window.use_asset::<Drawer>(&chart, cx) {
+        let picture = |drawn: &Drawn| drawn.as_ref().ok().map(|(image, _)| image.clone());
+        match hold::<Drawer>(self.id, &chart, picture, window, cx) {
             Some(Ok((picture, shape))) => div()
                 .flex()
                 .justify_center()
@@ -157,9 +168,12 @@ mod tests {
 
     #[test]
     fn a_flowchart_draws_with_the_ground_and_ink() {
-        let svg = svg(&chart("flowchart LR\n  A --> B", true)).expect("draws");
-        assert!(svg.contains("<svg"), "{svg}");
-        assert!(svg.to_lowercase().contains("#2c2c2c"), "the ground: {svg}");
+        let svg = svg(&chart("flowchart LR\n  A[Start] --> B", true)).expect("draws");
+        let svg = svg.to_lowercase();
+        assert!(svg.contains("#2c2c2c"), "the ground: {svg}");
+        let label = svg.find(">start<").expect("the label");
+        let tag = &svg[svg[..label].rfind("<text").expect("its tag")..label];
+        assert!(tag.contains("fill=\"#eeeeee\""), "the label's ink: {tag}");
     }
 
     #[test]

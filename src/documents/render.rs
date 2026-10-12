@@ -17,7 +17,7 @@ use crate::{
     navigation::{Anchor, Sections},
     primitives::{FocusRing as _, Icon, IconName},
     theme::{ActiveTheme, IconSize, Radius, TextSize},
-    typography::Latex,
+    typography::{Latex, failed},
 };
 
 type OnLink = Rc<dyn Fn(&str, &mut Window, &mut App)>;
@@ -214,7 +214,7 @@ impl Draw<'_> {
                 .into_any_element(),
             Node::Code { language, text } => {
                 if language.as_deref() == Some("mermaid") {
-                    return Diagram::new(text.clone()).into_any_element();
+                    return Diagram::new(self.key("diagram"), text.clone()).into_any_element();
                 }
                 if let Some(draw) = self.code {
                     return draw(
@@ -351,16 +351,14 @@ impl Draw<'_> {
                 .flex()
                 .justify_center()
                 .py_2()
-                .child(match Latex::parse(tex) {
+                .child(match Latex::parse(self.key("math"), tex) {
                     Ok(math) => math.display().into_any_element(),
-                    Err(error) => div()
-                        .text_color(colors.danger)
-                        .child(error.to_string())
-                        .into_any_element(),
+                    Err(error) => failed(&error, tex, cx),
                 })
                 .into_any_element(),
             Node::Image { alt, url, link } => {
                 let picture = div().id(self.key("image")).child(Picture {
+                    id: self.key("picture"),
                     alt: alt.clone(),
                     url: url.clone(),
                     base: self.base.clone(),

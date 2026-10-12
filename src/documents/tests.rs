@@ -358,3 +358,15 @@ fn a_picture_beside_the_file_draws_at_its_ratio_within_the_column(cx: &mut TestA
 fn a_picture_narrower_than_the_column_keeps_its_size(cx: &mut TestAppContext) {
     assert_eq!(drawn_picture(400.0, cx), size(px(200.0), px(100.0)));
 }
+
+#[gpui::test]
+fn a_formula_that_fails_shows_why_and_its_source(cx: &mut TestAppContext) {
+    cx.update(Theme::init);
+    let (_, cx) = cx.add_window_view(|_, _| Page {
+        source: "$$x^2^3$$\n",
+        base: std::env::temp_dir(),
+        width: 300.0,
+    });
+    settle(cx);
+    assert!(cx.debug_bounds("latex-error").is_some(), "the failure drew");
+}

@@ -5,14 +5,14 @@ use std::{
 
 use base64::Engine as _;
 use gpui::{
-    AnyElement, App, Asset, Hsla, Image, ImageAssetLoader, ImageFormat, InteractiveElement,
-    IntoElement, ParentElement, RenderImage, RenderOnce, Resource, SMOOTH_SVG_SCALE_FACTOR,
-    SharedString, Styled, Window, div, img, px,
+    AnyElement, App, Asset, ElementId, Hsla, Image, ImageAssetLoader, ImageFormat,
+    InteractiveElement, IntoElement, ParentElement, RenderImage, RenderOnce, Resource,
+    SMOOTH_SVG_SCALE_FACTOR, SharedString, Styled, Window, div, img, px,
 };
 
 use crate::{
     i18n,
-    primitives::{Icon, IconName},
+    primitives::{Icon, IconName, hold},
     theme::{ActiveTheme, IconSize, Radius},
 };
 
@@ -62,14 +62,8 @@ pub(crate) fn origin(url: &str, base: Option<&Path>) -> Origin {
     if lower.starts_with("data:") {
         return inline(url);
     }
-    if let Some(rest) = url.strip_prefix("file://") {
-        let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-        // Windows writes file:///C:/…
-        let rest = match rest.as_bytes() {
-            [b'/', _, b':', ..] if cfg!(windows) => &rest[1..],
-            _ => rest,
-        };
-        return path(rest).map_or_else(Origin::Bad, Origin::File);
+    if lower.starts_with("file:") {
+        return file(&url[5..]);
     }
     let scheme = url.split_once(':').is_some_and(|(scheme, _)| {
         scheme.len() > 1
@@ -86,6 +80,24 @@ pub(crate) fn origin(url: &str, base: Option<&Path>) -> Origin {
         Ok(path) => base.map_or(Origin::Loose, |base| Origin::File(base.join(path))),
         Err(why) => Origin::Bad(why),
     }
+}
+
+/// A `file:` address after its scheme: host, path, no query.
+fn file(rest: &str) -> Origin {
+    let rest = rest.split(['?', '#']).next().unwrap_or_default();
+    let (host, written) = match rest.strip_prefix("//") {
+        Some(after) => after.split_at(after.find('/').unwrap_or(after.len())),
+        None => ("", rest),
+    };
+    let local = host.is_empty() || host.eq_ignore_ascii_case("localhost");
+    let written = match (local, written.as_bytes()) {
+        // Windows writes file:///C:/…
+        (true, [b'/', _, b':', ..]) if cfg!(windows) => written[1..].to_string(),
+        (true, _) => written.to_string(),
+        (false, _) if cfg!(windows) => format!("//{host}{written}"),
+        (false, _) => return Origin::Bad(format!("files on {host} are not read").into()),
+    };
+    path(&written).map_or_else(Origin::Bad, Origin::File)
 }
 
 /// A `data:` address: base64 bytes of an image type.
@@ -128,6 +140,7 @@ impl Asset for Unpacker {
 /// The picture at `url`, natural size up to the column.
 #[derive(IntoElement)]
 pub(crate) struct Picture {
+    pub id: ElementId,
     pub alt: String,
     pub url: String,
     /// The folder relative addresses start from.
@@ -136,32 +149,32 @@ pub(crate) struct Picture {
 
 impl RenderOnce for Picture {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        picture(&self.alt, &self.url, self.base.as_deref(), window, cx)
+        picture(self, window, cx)
     }
 }
 
-fn picture(
-    alt: &str,
-    url: &str,
-    base: Option<&Path>,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
+fn picture(shown: Picture, window: &mut Window, cx: &mut App) -> AnyElement {
+    let Picture { id, alt, url, base } = shown;
+    let (alt, url) = (alt.as_str(), url.as_str());
     let colors = cx.theme().colors.clone();
-    let (loaded, svg) = match origin(url, base) {
+    let (loaded, svg) = match origin(url, base.as_deref()) {
         Origin::File(path) => {
             let svg = path
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
             let resource = Resource::Path(path.into());
-            let loaded = window
-                .use_asset::<ImageAssetLoader>(&resource, cx)
+            let image = |loaded: &Result<Arc<RenderImage>, _>| loaded.as_ref().ok().cloned();
+            let loaded = hold::<ImageAssetLoader>(id, &resource, image, window, cx)
                 .map(|loaded| loaded.map_err(|error| SharedString::from(error.to_string())));
             (loaded, svg)
         }
         Origin::Data(format, bytes) => {
             let svg = format == ImageFormat::Svg;
-            (window.use_asset::<Unpacker>(&(format, bytes), cx), svg)
+            let image = |loaded: &Result<Arc<RenderImage>, _>| loaded.as_ref().ok().cloned();
+            (
+                hold::<Unpacker>(id, &(format, bytes), image, window, cx),
+                svg,
+            )
         }
         Origin::Web => {
             let said = i18n::text(cx, "markdown.picture.web", &[]);
@@ -240,16 +253,32 @@ mod tests {
     }
 
     #[test]
-    fn file_addresses_decode() {
-        assert_eq!(
-            origin("file:///tmp/a%23b.png", None),
-            Origin::File(PathBuf::from("/tmp/a#b.png"))
-        );
+    fn file_addresses_decode_without_query_or_fragment() {
+        for url in [
+            "file:///tmp/a%23b.png",
+            "file://localhost/tmp/a%23b.png#x",
+            "FILE:/tmp/a%23b.png?y",
+        ] {
+            assert_eq!(
+                origin(url, None),
+                Origin::File(PathBuf::from("/tmp/a#b.png")),
+                "{url}"
+            );
+        }
         if cfg!(windows) {
             assert_eq!(
-                origin("file:///C:/notes/a.png", None),
+                origin("file:///C:/notes/a.png#preview", None),
                 Origin::File(PathBuf::from("C:/notes/a.png"))
             );
+        }
+    }
+
+    #[test]
+    fn a_file_on_another_host_is_its_share_or_refused() {
+        let found = origin("file://server/share/a.png", Some(Path::new("/notes")));
+        match cfg!(windows) {
+            true => assert_eq!(found, Origin::File(PathBuf::from("//server/share/a.png"))),
+            false => assert!(matches!(found, Origin::Bad(_)), "{found:?}"),
         }
     }
 
