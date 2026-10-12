@@ -19,6 +19,7 @@ mod line;
 mod moves;
 mod preview;
 mod problems;
+mod prose;
 mod refactor;
 mod row;
 mod search;

@@ -23,6 +23,13 @@ pub(crate) fn tree(text: &str) -> mdast::Node {
     markdown::to_mdast(text, &options()).expect("markdown without MDX always parses")
 }
 
+/// A whole file as a syntax tree: front matter too.
+pub(crate) fn file_tree(text: &str) -> mdast::Node {
+    let mut options = options();
+    options.constructs.frontmatter = true;
+    markdown::to_mdast(text, &options).expect("markdown without MDX always parses")
+}
+
 /// The bytes of the source a parsed node spans.
 pub(crate) fn span(node: &mdast::Node) -> Range<usize> {
     let at = node.position().expect("a parsed node has its position");

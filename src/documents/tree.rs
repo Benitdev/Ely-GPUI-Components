@@ -59,7 +59,7 @@ pub enum Node {
 }
 
 /// A tree read against its source and its link definitions.
-struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     source: &'a str,
     urls: HashMap<String, String>,
 }
@@ -97,28 +97,29 @@ impl Run {
 /// `markdown` as blocks.
 pub fn parse(markdown: &str) -> Vec<Node> {
     let root = tree(markdown);
-    let mut nodes = Vec::new();
-    walk(&root, &mut nodes);
-    let mut urls = HashMap::new();
-    for node in nodes {
-        if let mdast::Node::Definition(definition) = node {
-            urls.entry(definition.identifier.clone())
-                .or_insert_with(|| definition.url.clone());
-        }
-    }
-    let reader = Reader {
-        source: markdown,
-        urls,
-    };
     let mut out = Vec::new();
-    reader.blocks(
+    Reader::new(markdown, &root).blocks(
         root.children().expect("the root holds the blocks"),
         &mut out,
     );
     out
 }
 
-impl Reader<'_> {
+impl<'a> Reader<'a> {
+    /// A reader of `root`, parsed from `source`.
+    pub(crate) fn new(source: &'a str, root: &mdast::Node) -> Self {
+        let mut nodes = Vec::new();
+        walk(root, &mut nodes);
+        let mut urls = HashMap::new();
+        for node in nodes {
+            if let mdast::Node::Definition(definition) = node {
+                urls.entry(definition.identifier.clone())
+                    .or_insert_with(|| definition.url.clone());
+            }
+        }
+        Self { source, urls }
+    }
+
     fn blocks(&self, nodes: &[mdast::Node], out: &mut Vec<Node>) {
         for node in nodes {
             self.block(node, out);
@@ -139,7 +140,7 @@ impl Reader<'_> {
             .expect("a reference names a definition")
     }
 
-    fn block(&self, node: &mdast::Node, out: &mut Vec<Node>) {
+    pub(crate) fn block(&self, node: &mdast::Node, out: &mut Vec<Node>) {
         match node {
             mdast::Node::Paragraph(paragraph) => self.paragraph(node, &paragraph.children, out),
             mdast::Node::Heading(heading) => {
@@ -212,7 +213,7 @@ impl Reader<'_> {
     }
 
     /// Inline text where images draw as their alt text.
-    fn inline(&self, nodes: &[mdast::Node]) -> Inline {
+    pub(crate) fn inline(&self, nodes: &[mdast::Node]) -> Inline {
         let mut run = Run::default();
         for node in nodes {
             self.inline_into(node, &mut run, &mut Images::Alt);

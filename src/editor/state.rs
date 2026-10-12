@@ -63,6 +63,7 @@ pub(crate) struct Options {
     pub sticky: bool,
     pub read_only: bool,
     pub tab: usize,
+    pub highlighter: Option<super::prose::LineHighlighter>,
 }
 
 /// What the owner lays over the code.
@@ -186,6 +187,7 @@ impl CodeEditor {
                 sticky: false,
                 read_only: false,
                 tab: 4,
+                highlighter: None,
             },
             marks: Marks::default(),
             marked: None,
@@ -430,6 +432,12 @@ impl CodeEditor {
         if before.text != self.buffer.text() {
             if self.composing.is_none() {
                 self.history.record(before, typing);
+                let dropped = self
+                    .history
+                    .trim(super::prose::HISTORY_BYTES, |step| step.text.len());
+                if dropped > 0 {
+                    log::info!("code editor: {dropped} oldest undo steps dropped");
+                }
             }
             self.marks.ghost = None;
             self.folded.retain(|line| *line < self.buffer.lines());

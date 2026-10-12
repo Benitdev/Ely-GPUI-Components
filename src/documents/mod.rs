@@ -1,6 +1,8 @@
 mod blocks;
+mod contents;
 mod counts;
 mod diagram;
+mod document;
 mod epub;
 mod find;
 mod format;
@@ -29,8 +31,10 @@ use gpui::App;
 
 pub(crate) use blocks::source;
 pub use blocks::{Align, BlockData, BlockEditor, BlockEvent, BlockKind, Media};
+pub use contents::outline;
 pub use counts::{ReadingTime, WordCount};
 pub use diagram::Diagram;
+pub use document::{DocumentEvent, DocumentHeading, MarkdownDocument};
 pub use epub::{Chapter, EpubReader};
 pub use format::{Format, format};
 pub(crate) use history::Change;
@@ -42,7 +46,7 @@ pub use modes::{MarkdownEditor, MarkdownMode};
 pub use pages::{PageCover, PageIcon};
 pub use print::{Margins, Paper, PrintPreview, PrintSettings, sheet};
 pub use reading::{Footnote, Glossary, ReadingProgress, TooltipTerm, ZenMode};
-pub use render::{MarkdownRenderer, outline};
+pub use render::MarkdownRenderer;
 pub use rich::RichTextEditor;
 pub use templates::{Template, TemplatePicker};
 pub use thumbs::PageThumbnailList;
@@ -54,4 +58,5 @@ pub use viewer::{DocPage, DocumentViewer, PageHit, PageNote};
 /// Binds the documents keys. `init` calls it.
 pub(crate) fn bind_keys(cx: &mut App) {
     rich::bind_keys(cx);
+    document::bind_keys(cx);
 }

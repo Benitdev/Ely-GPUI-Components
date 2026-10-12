@@ -29,13 +29,16 @@ pub enum MarkdownMode {
     Source,
     /// The source beside the document it makes.
     Split,
+    /// The document alone, read only.
+    Preview,
 }
 
 impl MarkdownMode {
-    const ALL: [(Self, &'static str); 3] = [
+    const ALL: [(Self, &'static str); 4] = [
         (Self::Visual, "Visual"),
         (Self::Source, "Source"),
         (Self::Split, "Split"),
+        (Self::Preview, "Preview"),
     ];
 
     fn name(self) -> &'static str {
@@ -76,7 +79,7 @@ fn shifted(range: Range<usize>, replaced: &Range<usize>, written: usize) -> Rang
 }
 
 /// What joins a block added at the end to the text before it.
-fn joint(document: &str) -> &'static str {
+pub(crate) fn joint(document: &str) -> &'static str {
     if document.is_empty() || document.ends_with("\n\n") {
         ""
     } else if document.ends_with('\n') {
@@ -250,6 +253,16 @@ impl RenderOnce for MarkdownEditor {
                     .into_any_element()
             }
             MarkdownMode::Visual => visual(self, state, switch, window, cx),
+            MarkdownMode::Preview => {
+                let text = SharedString::from(self.field.read(cx).text().to_string());
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(div().flex().justify_end().child(switch))
+                    .child(MarkdownRenderer::new((self.id, "preview"), text))
+                    .into_any_element()
+            }
         }
     }
 }

@@ -143,11 +143,36 @@ impl<S> History<S> {
         self.typing_since = None;
         Some(next)
     }
+
+    /// Drops oldest undo steps past `budget`; returns how many.
+    pub fn trim(&mut self, budget: usize, size: impl Fn(&S) -> usize) -> usize {
+        let mut held: usize = self.undo.iter().chain(&self.redo).map(&size).sum();
+        let mut dropped = 0;
+        while held > budget && dropped < self.undo.len() {
+            held -= size(&self.undo[dropped]);
+            dropped += 1;
+        }
+        self.undo.drain(..dropped);
+        dropped
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trimming_drops_the_oldest_steps_past_the_budget() {
+        let mut history = History::default();
+        for step in ["aaaa", "bbbb", "cccc"] {
+            history.record(step.to_string(), false);
+        }
+        assert_eq!(history.trim(9, String::len), 1, "12 bytes over 9");
+        assert_eq!(history.undo("now".into()), Some("cccc".to_string()));
+        assert_eq!(history.undo("cccc".into()), Some("bbbb".to_string()));
+        assert_eq!(history.undo("bbbb".into()), None, "the oldest went");
+        assert_eq!(history.trim(100, String::len), 0);
+    }
 
     #[test]
     fn graphemes_keep_clusters_whole() {

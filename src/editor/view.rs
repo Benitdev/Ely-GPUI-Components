@@ -53,7 +53,7 @@ impl CodeEditor {
     }
 
     /// The first line the list shows, after scrolling.
-    fn top_line(&self) -> Option<usize> {
+    pub(crate) fn top_line(&self) -> Option<usize> {
         let scrolled = -self.scroll.0.borrow().base_handle.offset().y;
         let first = (scrolled / self.frame.line).floor().max(0.0) as usize;
         self.frame.rows[first.min(self.frame.rows.len().saturating_sub(1))..]
@@ -73,7 +73,7 @@ impl CodeEditor {
         }
         let rows = headers.into_iter().map(|line| {
             let text = self.buffer.line(line).to_string();
-            let styles = syntax::colors(&text, cx);
+            let styles = self.line_colors(&text, cx);
             let jump = cx.entity();
             div()
                 .id(("sticky", line))
@@ -131,7 +131,7 @@ impl CodeEditor {
             .map(|row| match row {
                 Row::Line(at) => {
                     let text = self.buffer.line(*at);
-                    syntax::colors(text, cx)
+                    self.line_colors(text, cx)
                         .into_iter()
                         .filter_map(|(range, style)| {
                             let start = text[..range.start].chars().count();

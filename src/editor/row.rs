@@ -8,7 +8,6 @@ use super::{
     gutter::Cell,
     layout::{CHAT_ROWS, Row},
     state::{CodeEditor, EditorEvent},
-    syntax,
 };
 use crate::theme::{ActiveTheme, TextSize};
 
@@ -121,7 +120,7 @@ impl CodeEditor {
             let line = self.buffer.line_of(ghost.offset);
             let rest =
                 self.buffer.text()[ghost.offset..self.buffer.line_range(line).end].to_string();
-            let styles = syntax::colors(&rest, cx);
+            let styles = self.line_colors(&rest, cx);
             StyledText::new(rest).with_highlights(styles)
         });
         base.child(self.gutter(Cell::Blank, ix, cx))

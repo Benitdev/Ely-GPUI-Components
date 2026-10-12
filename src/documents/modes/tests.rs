@@ -110,3 +110,41 @@ fn a_press_on_a_block_of_a_replaced_text_opens_nothing(cx: &mut gpui::TestAppCon
         "x"
     );
 }
+
+#[cfg(feature = "test-support")]
+struct Previewed(gpui::Entity<TextInput>);
+
+#[cfg(feature = "test-support")]
+impl gpui::Render for Previewed {
+    fn render(
+        &mut self,
+        _: &mut gpui::Window,
+        _: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        MarkdownEditor::new("preview", &self.0, MarkdownMode::Preview)
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[gpui::test]
+fn preview_draws_the_document_and_takes_no_press(cx: &mut gpui::TestAppContext) {
+    cx.update(crate::init_for_tests);
+    let (view, cx) = cx.add_window_view(|window, cx| {
+        Previewed(cx.new(|cx| {
+            let mut field = TextInput::new(window, cx).multi_line(1, usize::MAX);
+            field.set_text("# Lift", cx);
+            field
+        }))
+    });
+    cx.run_until_parked();
+    let field = view.read_with(cx, |view, _| view.0.clone());
+    cx.simulate_click(
+        gpui::point(gpui::px(20.0), gpui::px(60.0)),
+        gpui::Modifiers::none(),
+    );
+    assert_eq!(
+        field.read_with(cx, |field, _| field.text().to_string()),
+        "# Lift"
+    );
+    assert!(!cx.update(|window, cx| field.focus_handle(cx).is_focused(window)));
+}
