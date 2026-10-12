@@ -79,7 +79,7 @@ impl MarkdownDocument {
         self.place_top(window, cx);
     }
 
-    /// Moves the view to the asked top, once text is read.
+    /// Moves the view to the asked top once read.
     pub(super) fn place_top(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(line) = self.top.filter(|_| !self.placing) else {
             return;
