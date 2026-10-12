@@ -2,6 +2,7 @@ mod attach;
 mod edit;
 mod finding;
 mod lists;
+mod look;
 mod parse;
 mod place;
 mod tables;
@@ -19,6 +20,7 @@ use gpui::{
 };
 
 pub use attach::Attachment;
+pub use look::DocumentLook;
 pub use parse::DocumentHeading;
 use parse::{Parsed, alike, parsed};
 pub use tables::{TableEdit, TableRefusal};
@@ -83,6 +85,11 @@ pub struct MarkdownDocument {
     writes: usize,
     /// A match asked before its text was read; its version.
     showing: Option<(Range<usize>, u64)>,
+    look: DocumentLook,
+    /// Typing in the open block, counted.
+    typed: u64,
+    /// The block, text, typing and height last centered.
+    centered: Option<(usize, u64, u64, u64)>,
     focus: FocusHandle,
     on_link: Option<OnLink>,
     _subscriptions: Vec<Subscription>,
@@ -136,6 +143,9 @@ impl MarkdownDocument {
             asks: 0,
             writes: 0,
             showing: None,
+            look: DocumentLook::default(),
+            typed: 0,
+            centered: None,
             focus,
             on_link: None,
             _subscriptions: subscriptions,

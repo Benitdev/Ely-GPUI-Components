@@ -1,7 +1,7 @@
 use gpui::{
     AnyElement, App, ClickEvent, Context, ExternalPaths, FontWeight, InteractiveElement,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, actions, div, list,
+    StatefulInteractiveElement, Styled, Window, actions, div, list, prelude::FluentBuilder as _,
 };
 
 use super::MarkdownDocument;
@@ -15,6 +15,14 @@ use crate::{
 actions!(markdown_document, [Undo, Redo, Indent, Outdent, Paste]);
 
 const CONTEXT: &str = "MarkdownDocument";
+
+/// How far a faded block recedes.
+const FADED: f32 = 0.35;
+
+/// Modes with a reader's block to keep.
+fn editing_mode(mode: MarkdownMode) -> bool {
+    mode == MarkdownMode::Visual
+}
 
 /// Undo and redo; Tab shifts an open block's lines.
 pub(crate) fn bind_keys(cx: &mut App) {
@@ -40,9 +48,11 @@ impl MarkdownDocument {
         let colors = theme.colors.clone();
         let (radius, body, mono) = (
             theme.radius(Radius::Md),
-            theme.text_size(TextSize::Base),
+            theme.text_size(TextSize::Base) * self.look.scale,
             theme.mono_family.clone(),
         );
+        // Focus fades all but the reader's block.
+        let faded = self.look.focus && editing_mode(self.mode) && ix != self.current_block(cx);
         let editing = self.mode == MarkdownMode::Visual;
         let open = self.open.as_ref();
         let field = |open: &super::Open| {
@@ -79,9 +89,11 @@ impl MarkdownDocument {
                     nodes,
                     &self.base,
                     &self.on_link,
+                    self.look.scale,
                     cx,
                 )),
             None => div()
+                .text_size(body)
                 .font_family(mono)
                 .text_color(colors.fg_muted)
                 .child(self.parsed.text[block.range.clone()].to_string()),
@@ -92,6 +104,7 @@ impl MarkdownDocument {
             .px_3()
             .py_1()
             .rounded(radius)
+            .when(faded, |block| block.opacity(FADED))
             .child(shown);
         match editing {
             true => self.pressable(block, Some(ix), cx).into_any_element(),
@@ -150,7 +163,21 @@ impl Render for MarkdownDocument {
                 log::info!("markdown document: {} files dropped", dropped.paths().len());
                 cx.emit(super::Attachment::Files(dropped.paths().to_vec()));
             }));
+        self.center_current(cx);
         let blocks = list(self.list.clone(), cx.processor(Self::item)).size_full();
+        // The text column: its measure, font, centered.
+        let column = |content: gpui::AnyElement, look: &super::DocumentLook| {
+            div().size_full().flex().justify_center().child(
+                div()
+                    .h_full()
+                    .w_full()
+                    .when_some(look.measure, |column, measure| column.max_w(measure))
+                    .when_some(look.font.clone(), |column, font| column.font_family(font))
+                    .child(content),
+            )
+        };
+        let blocks = column(blocks.into_any_element(), &self.look);
+        let source = column(self.editor.clone().into_any_element(), &self.look);
         match self.mode {
             MarkdownMode::Source => root
                 .capture_action(cx.listener(|document, _: &crate::editor::Paste, _, cx| {
@@ -163,7 +190,7 @@ impl Render for MarkdownDocument {
                         cx.stop_propagation();
                     }
                 }))
-                .child(self.editor.clone())
+                .child(source)
                 .into_any_element(),
             MarkdownMode::Split => root
                 .flex()

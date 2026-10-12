@@ -11,6 +11,9 @@ use super::{
 };
 use crate::theme::{ActiveTheme, TextSize};
 
+/// How far a faded line recedes.
+const FADED: f32 = 0.35;
+
 impl CodeEditor {
     /// Row `ix` as the list draws it.
     pub(crate) fn row(&self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
@@ -19,7 +22,11 @@ impl CodeEditor {
             .w_full()
             .h(self.frame.line)
             .flex();
+        let caret = self.buffer.line_of(self.primary().head);
         match self.frame.rows[ix] {
+            Row::Line(line) if self.options.focus_line && line != caret => {
+                self.line_row(base.opacity(FADED), ix, line, window, cx)
+            }
             Row::Line(line) => self.line_row(base, ix, line, window, cx),
             Row::Lens(at) => self.lens_row(base, ix, at, cx),
             Row::Removed(hunk, at) => self.removed_row(base, ix, hunk, at, cx),

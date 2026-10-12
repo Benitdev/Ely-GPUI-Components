@@ -33,6 +33,7 @@ mod tasks;
 mod tests;
 mod view;
 mod welcome;
+mod writing;
 
 pub use buffer::Buffer;
 pub use chat::InlineChat;

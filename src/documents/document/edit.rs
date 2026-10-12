@@ -97,7 +97,10 @@ impl MarkdownDocument {
                     InputEvent::Blur => {
                         document.commit(cx);
                     }
-                    InputEvent::Changed => cx.emit(DocumentEvent::Changed),
+                    InputEvent::Changed => {
+                        document.typed += 1;
+                        cx.emit(DocumentEvent::Changed)
+                    }
                     _ => {}
                 }),
             ];

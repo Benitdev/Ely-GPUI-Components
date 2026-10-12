@@ -64,6 +64,12 @@ pub(crate) struct Options {
     pub read_only: bool,
     pub tab: usize,
     pub highlighter: Option<super::prose::LineHighlighter>,
+    /// Text size against the theme's.
+    pub scale: f32,
+    /// Lines but the caret's fade.
+    pub focus_line: bool,
+    /// The caret's line stays mid-view.
+    pub typewriter: bool,
 }
 
 /// What the owner lays over the code.
@@ -114,6 +120,8 @@ pub struct CodeEditor {
     /// The text before an input method's composition began, while it runs.
     pub(crate) composing: Option<Snapshot>,
     pub(crate) metrics: Metrics,
+    /// The caret row typewriter scrolling last centered.
+    pub(crate) centered: Option<usize>,
     pub(crate) dragging: bool,
     pub(crate) caret_on: bool,
     /// Blink runs only while focused, or unseen cursors redraw forever.
@@ -191,11 +199,15 @@ impl CodeEditor {
                 read_only: false,
                 tab: 4,
                 highlighter: None,
+                scale: 1.0,
+                focus_line: false,
+                typewriter: false,
             },
             marks: Marks::default(),
             marked: None,
             composing: None,
             metrics: Metrics::default(),
+            centered: None,
             dragging: false,
             caret_on: true,
             focused: false,

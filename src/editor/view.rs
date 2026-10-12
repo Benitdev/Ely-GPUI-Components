@@ -2,8 +2,8 @@ use std::ops::Range;
 
 use gpui::{
     AnyElement, Bounds, Context, ElementInputHandler, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, Styled, StyledText, Window,
-    canvas, div, fill, font, point, size, uniform_list,
+    MouseDownEvent, MouseMoveEvent, ParentElement, Pixels, Render, ScrollStrategy, Styled,
+    StyledText, Window, canvas, div, fill, font, point, size, uniform_list,
 };
 
 use super::{
@@ -225,7 +225,7 @@ impl Render for CodeEditor {
         let theme = cx.theme();
         let colors = theme.colors.clone();
         let mono_family = theme.mono_family.clone();
-        let size = theme.text_size(TextSize::Sm);
+        let size = theme.text_size(TextSize::Sm) * self.options.scale;
         let pixels = size.to_pixels(window.rem_size());
         let mono = window
             .text_system()
@@ -263,6 +263,13 @@ impl Render for CodeEditor {
         };
         self.metrics.advance = advance;
         self.metrics.line = line;
+        // Typewriter: the caret's row centers as it moves.
+        let row = self.primary_row();
+        if self.options.typewriter && self.centered != Some(row) {
+            self.scroll
+                .scroll_to_item_strict(row, ScrollStrategy::Center);
+            self.centered = Some(row);
+        }
         let sticky = if self.options.sticky {
             self.sticky(cx)
         } else {

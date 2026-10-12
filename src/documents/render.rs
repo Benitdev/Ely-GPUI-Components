@@ -92,6 +92,8 @@ struct Draw<'a> {
     headings: std::cell::Cell<usize>,
     code: &'a Option<DrawCode>,
     base: &'a Option<Arc<Path>>,
+    /// Text size against the theme's.
+    scale: f32,
 }
 
 impl Draw<'_> {
@@ -186,7 +188,7 @@ impl Draw<'_> {
                 };
                 let heading = div()
                     .pt_2()
-                    .text_size(theme.text_size(size))
+                    .text_size(theme.text_size(size) * self.scale)
                     .font_weight(if *level <= 2 {
                         FontWeight::SEMIBOLD
                     } else {
@@ -238,11 +240,11 @@ impl Draw<'_> {
                     .rounded(theme.radius(Radius::Md))
                     .bg(colors.sunken)
                     .font_family(theme.mono_family.clone())
-                    .text_size(theme.text_size(TextSize::Sm))
+                    .text_size(theme.text_size(TextSize::Sm) * self.scale)
                     .text_color(colors.syntax.variable)
                     .children(language.clone().map(|name| {
                         div()
-                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_size(theme.text_size(TextSize::Xs) * self.scale)
                             .text_color(colors.fg_subtle)
                             .child(name)
                     }))
@@ -422,6 +424,7 @@ pub(crate) fn draw_nodes(
     nodes: &[Node],
     base: &Option<Arc<Path>>,
     on_link: &Option<OnLink>,
+    scale: f32,
     cx: &App,
 ) -> Vec<AnyElement> {
     let draw = Draw {
@@ -432,6 +435,7 @@ pub(crate) fn draw_nodes(
         headings: std::cell::Cell::new(0),
         code: &None,
         base,
+        scale,
     };
     draw.nodes(nodes, cx)
 }
@@ -448,6 +452,7 @@ impl RenderOnce for MarkdownRenderer {
             headings: std::cell::Cell::new(0),
             code: &self.code,
             base: &self.base,
+            scale: 1.0,
         };
         div()
             .flex()
