@@ -224,7 +224,8 @@ fn drawn_fallback_text_stays_inside_the_frame() {
         let pixels = image.as_bytes(0).expect("pixels");
         pixels.chunks_exact(4).filter(|pixel| pixel[3] > 16).count()
     };
-    for source in [r"\text{中文}", r"\text{한글}"] {
+    // The last is in gpui's bundled IBM Plex Sans alone.
+    for source in [r"\text{中文}", r"\text{한글}", "\\text{\u{ECE0}}"] {
         let (svg, _) = svg(&formula(source, false)).expect("typesets");
         let tree = usvg::roxmltree::Document::parse(&svg).expect("xml");
         let view: Vec<f32> = tree

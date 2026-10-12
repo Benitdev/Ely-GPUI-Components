@@ -182,14 +182,53 @@ fn texts(group: &usvg::Group, kept: &mut usize, lost: &mut usize) {
     }
 }
 
-/// The system's fonts, read once.
+/// The system's fonts and gpui's bundled ones, read once.
 fn fonts() -> Arc<usvg::fontdb::Database> {
     static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
     FONTS
         .get_or_init(|| {
+            use gpui::AssetSource as _;
             let mut fonts = usvg::fontdb::Database::new();
             fonts.load_system_fonts();
-            log::info!("diagram: {} system font faces for export", fonts.len());
+            // The faces gpui's SVG renderer adds, from the same assets.
+            for path in [
+                "fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf",
+                "fonts/lilex/Lilex-Regular.ttf",
+            ] {
+                match crate::Assets.load(path) {
+                    Ok(Some(data)) => fonts.load_font_data(data.into_owned()),
+                    Ok(None) => log::debug!("diagram: no bundled {path}"),
+                    Err(error) => log::error!("diagram: bundled {path} did not load: {error}"),
+                }
+            }
+            // As gpui: unanswered generic families take bundled faces.
+            use usvg::fontdb::{Family, Query};
+            for (family, bundled) in [
+                (Family::SansSerif, "IBM Plex Sans"),
+                (Family::Serif, "IBM Plex Sans"),
+                (Family::Monospace, "Lilex"),
+                (Family::Cursive, "IBM Plex Sans"),
+                (Family::Fantasy, "IBM Plex Sans"),
+            ] {
+                let query = Query {
+                    families: &[family],
+                    ..Default::default()
+                };
+                if fonts.query(&query).is_some() {
+                    continue;
+                }
+                match family {
+                    Family::SansSerif => fonts.set_sans_serif_family(bundled),
+                    Family::Serif => fonts.set_serif_family(bundled),
+                    Family::Monospace => fonts.set_monospace_family(bundled),
+                    Family::Cursive => fonts.set_cursive_family(bundled),
+                    _ => fonts.set_fantasy_family(bundled),
+                }
+            }
+            log::info!(
+                "diagram: {} font faces for measuring and export",
+                fonts.len()
+            );
             Arc::new(fonts)
         })
         .clone()
