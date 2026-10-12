@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::{App, AppContext as _, Context, Focusable as _, Window};
+use gpui::{AppContext as _, Context, Focusable as _, Window};
 
 use super::{DocumentEvent, MarkdownDocument, Open};
 use crate::{
@@ -29,13 +29,6 @@ impl MarkdownDocument {
         if self.mode == MarkdownMode::Visual && self.open.is_none() && empty {
             self.open(None, false, window, cx);
         }
-    }
-
-    /// The open block has no step left that way.
-    pub(super) fn at_edge_of_history(&self, redo: bool, cx: &App) -> bool {
-        self.open
-            .as_ref()
-            .is_some_and(|open| !open.input.read(cx).can_step(redo))
     }
 
     /// Undo or redo in the document's one history.

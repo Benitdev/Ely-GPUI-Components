@@ -164,18 +164,14 @@ impl Render for MarkdownDocument {
                 .on_action(cx.listener(|document, _: &Redo, window, cx| {
                     document.history(true, window, cx);
                 }))
-                // Past the block's own history, the document's.
+                // One history: a block's own never runs.
                 .capture_action(cx.listener(|document, _: &forms::Undo, window, cx| {
-                    if document.at_edge_of_history(false, cx) {
-                        cx.stop_propagation();
-                        document.history(false, window, cx);
-                    }
+                    cx.stop_propagation();
+                    document.history(false, window, cx);
                 }))
                 .capture_action(cx.listener(|document, _: &forms::Redo, window, cx| {
-                    if document.at_edge_of_history(true, cx) {
-                        cx.stop_propagation();
-                        document.history(true, window, cx);
-                    }
+                    cx.stop_propagation();
+                    document.history(true, window, cx);
                 }))
                 .capture_action(cx.listener(|document, _: &Up, window, cx| {
                     if document.step(false, window, cx) {

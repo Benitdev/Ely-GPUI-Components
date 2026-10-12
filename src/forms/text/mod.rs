@@ -220,14 +220,6 @@ impl TextInput {
         &self.label
     }
 
-    /// A step left in that direction of its history.
-    pub(crate) fn can_step(&self, redo: bool) -> bool {
-        match redo {
-            true => self.history.can_redo(),
-            false => self.history.can_undo(),
-        }
-    }
-
     pub fn selection(&self) -> Range<usize> {
         self.selection.clone()
     }

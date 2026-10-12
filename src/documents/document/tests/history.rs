@@ -1,6 +1,6 @@
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 
-use super::{MarkdownDocument, MarkdownMode, TEXT, open, opened, press, text};
+use super::{MarkdownDocument, MarkdownMode, TEXT, open, press, text};
 
 /// Focus on `document`'s own handle, as an owner gives it.
 fn focus(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) {
@@ -62,7 +62,7 @@ fn undo_in_an_untouched_block_steps_the_document(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn undo_in_a_typed_block_stays_in_the_block(cx: &mut TestAppContext) {
+fn undo_takes_a_typed_block_back_as_one_step(cx: &mut TestAppContext) {
     let (document, cx) = open("Seed", MarkdownMode::Source, cx);
     document.update(cx, |document, cx| document.set_text(TEXT, cx));
     mode(&document, MarkdownMode::Visual, cx);
@@ -70,34 +70,49 @@ fn undo_in_a_typed_block_stays_in_the_block(cx: &mut TestAppContext) {
     cx.simulate_input(" x");
     cx.simulate_keystrokes("secondary-z");
     cx.run_until_parked();
-    assert_eq!(
-        text(&document, cx),
-        TEXT,
-        "the typing went, not the edit before"
-    );
-    assert_eq!(opened(&document, cx), "Blend toward white.", "still open");
+    assert_eq!(text(&document, cx), TEXT, "the edit before stays");
 }
 
 #[gpui::test]
-fn redo_after_undo_stays_in_the_block(cx: &mut TestAppContext) {
+fn redo_survives_a_switch_to_source(cx: &mut TestAppContext) {
     let (document, cx) = open("", MarkdownMode::Visual, cx);
     focus(&document, cx);
     cx.simulate_input("Hi");
     cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
     assert_eq!(text(&document, cx), "");
+    mode(&document, MarkdownMode::Source, cx);
     cx.simulate_keystrokes("secondary-shift-z");
-    assert_eq!(text(&document, cx), "Hi", "the block's own redo");
-    assert_eq!(opened(&document, cx), "Hi", "the block stays open");
+    assert_eq!(text(&document, cx), "Hi");
 }
 
 #[gpui::test]
-fn redo_after_undo_in_a_written_block_stays_in_it(cx: &mut TestAppContext) {
+fn redo_survives_preview_and_back(cx: &mut TestAppContext) {
     let (document, cx) = open("Seed", MarkdownMode::Visual, cx);
     press(0, Modifiers::none(), cx);
     cx.simulate_input("!");
-    cx.simulate_keystrokes("secondary-z secondary-shift-z");
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    assert_eq!(text(&document, cx), "Seed");
+    mode(&document, MarkdownMode::Preview, cx);
+    mode(&document, MarkdownMode::Visual, cx);
+    cx.simulate_keystrokes("secondary-shift-z");
+    cx.run_until_parked();
     assert_eq!(text(&document, cx), "Seed!");
-    assert_eq!(opened(&document, cx), "Seed!", "the block stays open");
+}
+
+#[gpui::test]
+fn redo_survives_a_second_undo(cx: &mut TestAppContext) {
+    let (document, cx) = open("", MarkdownMode::Visual, cx);
+    focus(&document, cx);
+    cx.simulate_input("Hi");
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-z");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("secondary-shift-z");
+    cx.run_until_parked();
+    assert_eq!(text(&document, cx), "Hi");
 }
 
 #[gpui::test]
