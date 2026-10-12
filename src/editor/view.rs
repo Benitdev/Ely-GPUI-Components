@@ -54,7 +54,8 @@ impl CodeEditor {
 
     /// The first line the list shows, after scrolling.
     pub(crate) fn top_line(&self) -> Option<usize> {
-        let scrolled = -self.scroll.0.borrow().base_handle.offset().y;
+        // Typewriter room above the first line is no line.
+        let scrolled = -self.scroll.0.borrow().base_handle.offset().y - self.room;
         let first = (scrolled / self.frame.line).floor().max(0.0) as usize;
         self.frame.rows[first.min(self.frame.rows.len().saturating_sub(1))..]
             .iter()
@@ -270,6 +271,13 @@ impl Render for CodeEditor {
                 .scroll_to_item_strict(row, ScrollStrategy::Center);
             self.centered = Some(row);
         }
+        // Half a view of room: a resize keeps the center.
+        let height = self.metrics.height;
+        self.room = match self.options.typewriter {
+            true => height / 2.0,
+            false => gpui::px(0.0),
+        };
+        let room = self.room;
         let sticky = if self.options.sticky {
             self.sticky(cx)
         } else {
@@ -284,7 +292,9 @@ impl Render for CodeEditor {
             }),
         )
         .track_scroll(&self.scroll)
-        .size_full();
+        .size_full()
+        .pt(room)
+        .pb(room);
         let (top, focus, input) = (cx.entity(), self.focus.clone(), cx.entity());
         let unlock = cx.entity();
         let banner = self.options.read_only.then(|| {
@@ -303,12 +313,22 @@ impl Render for CodeEditor {
             .relative()
             .flex_1()
             .h_full()
+            .min_h_0()
             .child(list)
             .children(sticky)
             .child(
                 canvas(
-                    move |bounds, _, cx| {
-                        top.update(cx, |editor, _| editor.metrics.top = bounds.origin.y);
+                    move |bounds, window, cx| {
+                        let resized = top.update(cx, |editor, _| {
+                            editor.metrics.top = bounds.origin.y;
+                            let resized = editor.metrics.height != bounds.size.height;
+                            editor.metrics.height = bounds.size.height;
+                            resized
+                        });
+                        // A new height centers the caret again.
+                        if resized {
+                            window.request_animation_frame();
+                        }
                     },
                     |_, _, _, _| {},
                 )

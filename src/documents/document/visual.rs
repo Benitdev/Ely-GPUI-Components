@@ -42,8 +42,19 @@ pub(crate) fn bind_keys(cx: &mut App) {
 }
 
 impl MarkdownDocument {
-    /// List item `ix`: a block, or the end.
-    fn item(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    /// List item `ix`, with typewriter room at the ends.
+    fn item(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let (first, last) = (ix == 0, ix == self.parsed.blocks.len());
+        let room = self.room;
+        div()
+            .when(first, |item| item.pt(room))
+            .when(last, |item| item.pb(room))
+            .child(self.block_item(ix, window, cx))
+            .into_any_element()
+    }
+
+    /// A block, or the end.
+    fn block_item(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let colors = theme.colors.clone();
         let (radius, body, mono) = (
@@ -57,6 +68,7 @@ impl MarkdownDocument {
         let open = self.open.as_ref();
         let field = |open: &super::Open| {
             div()
+                .text_size(body)
                 .px_3()
                 .py_2()
                 .rounded(radius)
@@ -164,6 +176,8 @@ impl Render for MarkdownDocument {
                 cx.emit(super::Attachment::Files(dropped.paths().to_vec()));
             }));
         self.center_current(cx);
+        // Typewriter: half a view past each end.
+        self.make_room();
         let blocks = list(self.list.clone(), cx.processor(Self::item)).size_full();
         // The text column: its measure, font, centered.
         let column = |content: gpui::AnyElement, look: &super::DocumentLook| {

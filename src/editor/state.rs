@@ -100,6 +100,8 @@ pub(crate) struct Metrics {
     pub top: Pixels,
     pub advance: Pixels,
     pub line: Pixels,
+    /// The view's height, under any typewriter room.
+    pub height: Pixels,
 }
 
 const BLINK: Duration = Duration::from_millis(530);
@@ -122,6 +124,8 @@ pub struct CodeEditor {
     pub(crate) metrics: Metrics,
     /// The caret row typewriter scrolling last centered.
     pub(crate) centered: Option<usize>,
+    /// Typewriter room past each end, as last drawn.
+    pub(crate) room: Pixels,
     pub(crate) dragging: bool,
     pub(crate) caret_on: bool,
     /// Blink runs only while focused, or unseen cursors redraw forever.
@@ -208,6 +212,7 @@ impl CodeEditor {
             composing: None,
             metrics: Metrics::default(),
             centered: None,
+            room: Pixels::ZERO,
             dragging: false,
             caret_on: true,
             focused: false,

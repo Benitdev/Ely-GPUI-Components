@@ -58,22 +58,45 @@ impl MarkdownDocument {
         }
     }
 
+    /// Half a view of room at each end, for typewriter.
+    pub(super) fn make_room(&mut self) {
+        let room = match self.look.typewriter && self.mode == MarkdownMode::Visual {
+            true => self.list.viewport_bounds().size.height / 2.0,
+            false => gpui::Pixels::ZERO,
+        };
+        if room != self.room {
+            self.room = room;
+            let last = self.parsed.blocks.len();
+            self.list.remeasure_items(0..1);
+            self.list.remeasure_items(last..last + 1);
+        }
+    }
+
     /// The current block mid-view once it or its text moves.
     pub(super) fn center_current(&mut self, cx: &gpui::App) {
         if !self.look.typewriter || self.mode != MarkdownMode::Visual {
             return;
         }
         let ix = self.current_block(cx);
-        let Some(block) = self.list.bounds_for_item(ix) else {
+        let Some(mut block) = self.list.bounds_for_item(ix) else {
             return;
         };
-        // A new layout moves it too: its height counts.
-        let height = f32::from(block.size.height).round() as u64;
-        let moved = (ix, self.edits, self.typed, height);
+        // The ends' room is no block.
+        if ix == 0 {
+            block.origin.y += self.room;
+            block.size.height -= self.room;
+        }
+        if ix == self.parsed.blocks.len() {
+            block.size.height -= self.room;
+        }
+        let view = self.list.viewport_bounds();
+        // A new layout or a resize moves it too.
+        let heights =
+            [block.size.height, view.size.height].map(|height| f32::from(height).round() as u64);
+        let moved = (ix, self.edits, self.typed, heights);
         if self.centered == Some(moved) {
             return;
         }
-        let view = self.list.viewport_bounds();
         self.list.scroll_by(block.center().y - view.center().y);
         self.centered = Some(moved);
     }

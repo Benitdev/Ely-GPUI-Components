@@ -16,7 +16,7 @@ use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment,
-    ListState, Subscription, Task, Window,
+    ListState, Pixels, Subscription, Task, Window,
 };
 
 pub use attach::Attachment;
@@ -88,8 +88,10 @@ pub struct MarkdownDocument {
     look: DocumentLook,
     /// Typing in the open block, counted.
     typed: u64,
-    /// The block, text, typing and height last centered.
-    centered: Option<(usize, u64, u64, u64)>,
+    /// Typewriter room past each end of the list.
+    room: Pixels,
+    /// The block, text, typing and heights last centered.
+    centered: Option<(usize, u64, u64, [u64; 2])>,
     focus: FocusHandle,
     on_link: Option<OnLink>,
     _subscriptions: Vec<Subscription>,
@@ -146,6 +148,7 @@ impl MarkdownDocument {
             look: DocumentLook::default(),
             typed: 0,
             centered: None,
+            room: Pixels::ZERO,
             focus,
             on_link: None,
             _subscriptions: subscriptions,

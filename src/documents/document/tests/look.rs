@@ -106,3 +106,113 @@ fn focus_counts_the_open_block_as_the_readers(cx: &mut TestAppContext) {
         3
     );
 }
+
+fn typewriter() -> DocumentLook {
+    DocumentLook {
+        typewriter: true,
+        ..DocumentLook::default()
+    }
+}
+
+/// How far block `ix` sits from mid-view.
+fn off_middle(
+    document: &gpui::Entity<super::MarkdownDocument>,
+    ix: usize,
+    cx: &mut gpui::VisualTestContext,
+) -> gpui::Pixels {
+    document.read_with(cx, |document, _| {
+        let mut block = document.list.bounds_for_item(ix).expect("laid out");
+        if ix == 0 {
+            block.origin.y += document.room;
+            block.size.height -= document.room;
+        }
+        if ix == document.parsed.blocks.len() {
+            block.size.height -= document.room;
+        }
+        (block.center().y - document.list.viewport_bounds().center().y).abs()
+    })
+}
+
+#[gpui::test]
+fn an_open_block_takes_the_scale(cx: &mut TestAppContext) {
+    let (document, cx) = open("A paragraph.\n", MarkdownMode::Visual, cx);
+    document.update_in(cx, |document, window, cx| {
+        document.open(Some(0), false, window, cx)
+    });
+    frames(cx);
+    let plain = document
+        .read_with(cx, |document, _| document.list.bounds_for_item(0))
+        .expect("laid out");
+    let large = DocumentLook {
+        scale: 2.0,
+        ..DocumentLook::default()
+    };
+    document.update(cx, |document, cx| document.set_look(large, cx));
+    frames(cx);
+    let scaled = document
+        .read_with(cx, |document, _| document.list.bounds_for_item(0))
+        .expect("laid out");
+    assert!(
+        scaled.size.height > plain.size.height * 1.5,
+        "{plain:?} to {scaled:?}"
+    );
+}
+
+#[gpui::test]
+fn a_resize_centers_the_block_again(cx: &mut TestAppContext) {
+    let (document, cx) = open(&long(), MarkdownMode::Visual, cx);
+    document.update_in(cx, |document, window, cx| {
+        document.set_look(typewriter(), cx);
+        document.open(Some(40), false, window, cx);
+        document.list.scroll_to_reveal_item(40);
+    });
+    frames(cx);
+    cx.simulate_resize(gpui::size(px(1000.0), px(400.0)));
+    frames(cx);
+    assert!(off_middle(&document, 40, cx) < px(4.0));
+}
+
+#[gpui::test]
+fn the_first_and_last_blocks_center(cx: &mut TestAppContext) {
+    let (document, cx) = open(&long(), MarkdownMode::Visual, cx);
+    document.update_in(cx, |document, window, cx| {
+        document.set_look(typewriter(), cx);
+        document.open(Some(0), false, window, cx);
+    });
+    frames(cx);
+    let first = off_middle(&document, 0, cx);
+    assert!(first < px(4.0), "the first is {first:?} off");
+    document.update_in(cx, |document, window, cx| {
+        document.open(Some(59), false, window, cx);
+        document.list.scroll_to_reveal_item(59);
+    });
+    frames(cx);
+    assert!(off_middle(&document, 59, cx) < px(4.0), "the last");
+}
+
+#[gpui::test]
+fn the_last_source_line_centers_and_a_resize_follows(cx: &mut TestAppContext) {
+    let (document, cx) = open(&long(), MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| {
+        document.set_look(typewriter(), cx);
+        document.set_caret(119, 0, cx);
+    });
+    frames(cx);
+    let top = document.read_with(cx, |document, cx| document.top_line(cx));
+    assert!(
+        top > 80,
+        "top {top}: the last line is mid-view, not at the bottom"
+    );
+    cx.simulate_resize(gpui::size(px(1000.0), px(400.0)));
+    frames(cx);
+    let resized = document.read_with(cx, |document, cx| document.top_line(cx));
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    let (line, height) =
+        editor.read_with(cx, |editor, _| (editor.metrics.line, editor.metrics.height));
+    let half = (height / line / 2.0).floor() as usize;
+    let middle = 119 - half;
+    assert!(
+        resized.abs_diff(middle) <= 1,
+        "top {top} to {resized}; mid-view is {middle}"
+    );
+}
