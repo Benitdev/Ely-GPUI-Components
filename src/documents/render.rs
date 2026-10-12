@@ -395,7 +395,8 @@ impl Draw<'_> {
 
 /// Opens `url` through the owner, else the system.
 fn open_link(on_link: &Option<OnLink>, url: &str, window: &mut Window, cx: &mut App) {
-    log::info!("markdown: open {url}");
+    // The address is the document's: never logged.
+    log::info!("markdown: a link opens");
     match on_link {
         Some(on_link) => on_link(url, window, cx),
         None => cx.open_url(url),

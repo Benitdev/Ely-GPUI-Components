@@ -200,7 +200,7 @@ fn picture(shown: Picture, window: &mut Window, cx: &mut App) -> AnyElement {
                 .into_any_element()
         }
         Some(Err(why)) => {
-            log::warn!("markdown: a picture did not load: {why}");
+            log::warn!("markdown: a picture did not load");
             note(alt, why, colors.danger, cx)
         }
         None => note(alt, url.to_string().into(), colors.fg_subtle, cx),

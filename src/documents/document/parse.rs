@@ -108,6 +108,7 @@ pub(crate) fn alike(old: &Parsed, new: &Parsed) -> (usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::documents::tree::Style;
 
     #[test]
     fn every_block_is_shown_raw_ones_as_written() {
@@ -134,6 +135,33 @@ mod tests {
             .map(|heading| (heading.depth, heading.title.as_str(), heading.at))
             .collect();
         assert_eq!(headings, [(1, "Lift", 18), (2, "Quoted", 67)]);
+    }
+
+    #[test]
+    fn the_extended_syntax_draws_as_content() {
+        let text = "| a |\n| - |\n| 1 |\n\n- [x] done\n\n~~gone~~\n\n$$\nx^2\n$$\n\n```mermaid\ngraph TD\nA-->B\n```\n\nNote[^1]\n\n[^1]: foot\n";
+        let found = parsed(text);
+        let drawn: Vec<&Node> = found
+            .blocks
+            .iter()
+            .map(|block| match &block.nodes {
+                Some(nodes) => &nodes[0],
+                None => panic!("{:?} shows raw", &text[block.range.clone()]),
+            })
+            .collect();
+        assert!(matches!(drawn[0], Node::Table { .. }));
+        assert!(matches!(drawn[1], Node::List { items, .. } if items[0].0 == Some(true)));
+        assert!(
+            matches!(drawn[2], Node::Paragraph(line) if line.styles.iter().any(|(_, style)| *style == Style::Strike))
+        );
+        assert!(matches!(drawn[3], Node::Math(formula) if formula == "x^2"));
+        assert!(
+            matches!(drawn[4], Node::Code { language: Some(language), .. } if language == "mermaid")
+        );
+        assert!(
+            matches!(drawn[5], Node::Paragraph(line) if line.styles.iter().any(|(_, style)| *style == Style::Footnote))
+        );
+        assert!(matches!(drawn[6], Node::Footnote { label, .. } if label == "1"));
     }
 
     #[test]
