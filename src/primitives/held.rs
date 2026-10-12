@@ -7,13 +7,38 @@ use std::{
 
 use gpui::{App, Asset, ElementId, Global, RenderImage, Window};
 
-/// Holders of each asset, keyed as gpui's cache keys it.
+type Key = (TypeId, u64);
+
+/// Each held asset's holders and its painted image.
 #[derive(Default)]
-struct Holders(HashMap<(TypeId, u64), usize>);
+struct Holders(HashMap<Key, (usize, Option<Arc<RenderImage>>)>);
 
 impl Global for Holders {}
 
-fn key<A: Asset>(source: &A::Source) -> (TypeId, u64) {
+impl Holders {
+    fn join(&mut self, key: Key) {
+        self.0.entry(key).or_default().0 += 1;
+    }
+
+    fn loaded(&mut self, key: Key, image: Option<Arc<RenderImage>>) {
+        let record = self.0.get_mut(&key).expect("a loaded asset is held");
+        if image.is_some() {
+            record.1 = image;
+        }
+    }
+
+    /// One holder leaves; the last one gets the image to free.
+    fn leave(&mut self, key: Key) -> Option<Option<Arc<RenderImage>>> {
+        let record = self.0.get_mut(&key).expect("a held asset is counted");
+        record.0 -= 1;
+        if record.0 > 0 {
+            return None;
+        }
+        self.0.remove(&key).map(|(_, image)| image)
+    }
+}
+
+fn key<A: Asset>(source: &A::Source) -> Key {
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     (TypeId::of::<A>(), hasher.finish())
@@ -22,13 +47,11 @@ fn key<A: Asset>(source: &A::Source) -> (TypeId, u64) {
 /// An element's asset; the last holder to leave frees it.
 pub(crate) struct Held<A: Asset> {
     source: Option<A::Source>,
-    image: Option<Arc<RenderImage>>,
 }
 
 impl<A: Asset> Held<A> {
     fn take(&mut self, source: &A::Source, cx: &mut App) {
-        let holders = &mut cx.default_global::<Holders>().0;
-        *holders.entry(key::<A>(source)).or_default() += 1;
+        cx.default_global::<Holders>().join(key::<A>(source));
         self.source = Some(source.clone());
     }
 
@@ -36,15 +59,9 @@ impl<A: Asset> Held<A> {
         let Some(source) = self.source.take() else {
             return;
         };
-        let image = self.image.take();
-        let holders = &mut cx.default_global::<Holders>().0;
-        let key = key::<A>(&source);
-        let count = holders.get_mut(&key).expect("a held asset is counted");
-        *count -= 1;
-        if *count > 0 {
+        let Some(image) = cx.default_global::<Holders>().leave(key::<A>(&source)) else {
             return;
-        }
-        holders.remove(&key);
+        };
         cx.remove_asset::<A>(&source);
         if let Some(image) = image {
             // The window may be drawing; free after it.
@@ -53,7 +70,7 @@ impl<A: Asset> Held<A> {
     }
 }
 
-/// `source` as `A` for element `id`; the previous one let go.
+/// `source` as `A` for element `id`; the previous released.
 pub(crate) fn hold<A: Asset>(
     id: impl Into<ElementId>,
     source: &A::Source,
@@ -67,10 +84,7 @@ where
     let held = window.use_keyed_state(id, cx, |_, cx| {
         cx.on_release(|held: &mut Held<A>, cx| held.free(cx))
             .detach();
-        Held {
-            source: None,
-            image: None,
-        }
+        Held { source: None }
     });
     let loaded = window.use_asset::<A>(source, cx);
     held.update(cx, |held, cx| {
@@ -78,9 +92,38 @@ where
             held.free(cx);
             held.take(source, cx);
         }
-        if let Some(loaded) = &loaded {
-            held.image = image(loaded);
-        }
     });
+    if let Some(loaded) = &loaded {
+        cx.default_global::<Holders>()
+            .loaded(key::<A>(source), image(loaded));
+    }
     loaded
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui::RenderImage;
+    use smallvec::smallvec;
+
+    use super::*;
+
+    fn picture() -> Arc<RenderImage> {
+        let frame = image::Frame::new(image::RgbaImage::new(1, 1));
+        Arc::new(RenderImage::new(smallvec![frame]))
+    }
+
+    #[test]
+    fn the_last_holder_frees_the_image_another_painted() {
+        let (mut holders, key) = (Holders::default(), (TypeId::of::<()>(), 7));
+        holders.join(key);
+        holders.join(key);
+        let painted = picture();
+        holders.loaded(key, Some(painted.clone()));
+        // The pending holder reports nothing yet.
+        holders.loaded(key, None);
+        assert!(holders.leave(key).is_none(), "one holder remains");
+        let freed = holders.leave(key).expect("the last holder left");
+        assert_eq!(freed.map(|image| image.id), Some(painted.id));
+        assert!(holders.0.is_empty());
+    }
 }
