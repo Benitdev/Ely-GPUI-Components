@@ -139,6 +139,7 @@ impl Render for MarkdownDocument {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // A top line asked before its text was read.
         self.place_top(window, cx);
+        self.show_waiting(window, cx);
         let colors = cx.theme().colors.clone();
         let root = div()
             .size_full()

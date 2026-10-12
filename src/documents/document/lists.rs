@@ -3,8 +3,10 @@
 use std::ops::Range;
 
 use gpui::{Context, Window};
+use markdown::mdast;
 
 use super::MarkdownDocument;
+use crate::documents::markdown::{span, tree, walk};
 
 /// Spaces one indent step adds.
 const STEP: usize = 4;
@@ -37,6 +39,23 @@ pub(super) fn next(line: &str) -> Option<Next> {
         return Some(Next::End);
     }
     Some(Next::Item(format!("{}{mark}{task}", " ".repeat(indent))))
+}
+
+/// Whether `at` sits in a list item, not code.
+fn listed(source: &str, at: usize) -> bool {
+    let root = tree(source);
+    let mut nodes = Vec::new();
+    walk(&root, &mut nodes);
+    let held: Vec<&mdast::Node> = nodes
+        .into_iter()
+        .filter(|node| span(node).start <= at && at <= span(node).end)
+        .collect();
+    let item = held
+        .iter()
+        .any(|node| matches!(node, mdast::Node::ListItem(_)));
+    item && !held
+        .iter()
+        .any(|node| matches!(node, mdast::Node::Code(_) | mdast::Node::Math(_)))
 }
 
 /// A bullet marker, and where its text starts.
@@ -117,7 +136,25 @@ impl MarkdownDocument {
         if editor.selections().len() != 1 || !caret.is_empty() {
             return false;
         }
+        if !self.read_now(cx) {
+            self.reparse(true, cx);
+        }
+        if !self.read_now(cx) {
+            log::info!("markdown document: Enter while a long text is read");
+            return false;
+        }
+        let editor = self.editor.read(cx);
         let text = editor.text();
+        let ix = self.block_at(caret.start);
+        let block = self.parsed.blocks.get(ix).map(|block| block.range.clone());
+        let Some(block) =
+            block.filter(|block| block.start <= caret.start && caret.start <= block.end)
+        else {
+            return false;
+        };
+        if !listed(&text[block.clone()], caret.start - block.start) {
+            return false;
+        }
         let start = text[..caret.start].rfind('\n').map_or(0, |at| at + 1);
         let end = text[caret.start..]
             .find('\n')
@@ -149,7 +186,7 @@ impl MarkdownDocument {
             let input = input.read(cx);
             (input.text().to_string(), input.selection())
         };
-        if !caret.is_empty() {
+        if !caret.is_empty() || !listed(&text, caret.start) {
             return false;
         }
         let start = text[..caret.start].rfind('\n').map_or(0, |at| at + 1);

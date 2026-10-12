@@ -46,7 +46,7 @@ fn a_table_edit_is_one_undo_step_at_the_caret(cx: &mut TestAppContext) {
     let edited = document.update(cx, |document, cx| {
         document.edit_table(crate::documents::TableEdit::RowBelow, cx)
     });
-    assert!(edited);
+    assert_eq!(edited, Ok(()));
     assert_eq!(text(&document, cx), "| A |\n| --- |\n| 1 |\n|  |\n");
     let editor = document.read_with(cx, |document, _| document.editor().clone());
     editor.update(cx, |editor, cx| editor.undo(cx));
@@ -56,7 +56,9 @@ fn a_table_edit_is_one_undo_step_at_the_caret(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_new_table_goes_after_the_caret_line(cx: &mut TestAppContext) {
     let (document, cx) = open("Intro\nNext\n", MarkdownMode::Visual, cx);
-    document.update(cx, |document, cx| document.insert_table(cx));
+    document.update(cx, |document, cx| {
+        document.insert_table(cx).expect("inserted")
+    });
     assert_eq!(
         text(&document, cx),
         "Intro\n\n|   |   |   |\n| --- | --- | --- |\n|   |   |   |\n|   |   |   |\n\nNext\n"
@@ -92,4 +94,56 @@ fn every_replacement_is_one_undo_step(cx: &mut TestAppContext) {
     let editor = document.read_with(cx, |document, _| document.editor().clone());
     editor.update(cx, |editor, cx| editor.undo(cx));
     assert_eq!(text(&document, cx), "a b a");
+}
+
+const FENCED: &str = "```text\n- a\n```\n";
+
+#[gpui::test]
+fn enter_in_source_code_is_a_plain_line_break(cx: &mut TestAppContext) {
+    let (document, cx) = open(FENCED, MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| document.set_caret(1, 3, cx));
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    let focus = editor.read_with(cx, gpui::Focusable::focus_handle);
+    cx.update(|window, cx| window.focus(&focus, cx));
+    cx.simulate_keystrokes("enter");
+    assert_eq!(text(&document, cx), "```text\n- a\n\n```\n");
+}
+
+#[gpui::test]
+fn enter_in_an_open_code_block_is_a_plain_line_break(cx: &mut TestAppContext) {
+    let (document, cx) = open(FENCED, MarkdownMode::Visual, cx);
+    press(0, Modifiers::none(), cx);
+    document.update(cx, |document, cx| {
+        let input = document.open.as_ref().expect("open").input.clone();
+        input.update(cx, |input, cx| input.select(11..11, cx));
+    });
+    cx.simulate_keystrokes("enter");
+    assert_eq!(opened(&document, cx), "```text\n- a\n\n```");
+}
+
+#[gpui::test]
+fn a_match_shown_after_a_replacement_opens_selected(cx: &mut TestAppContext) {
+    let (document, cx) = open("a b a\n", MarkdownMode::Visual, cx);
+    document.update_in(cx, |document, window, cx| {
+        document.replace(vec![(0..1, "x".into())], cx);
+        document.show_match(4..5, window, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_input("z");
+    assert_eq!(text(&document, cx), "x b z\n");
+}
+
+#[gpui::test]
+fn preview_takes_no_edits(cx: &mut TestAppContext) {
+    let (document, cx) = open("| A |\n| - |\n| 1 |\n", MarkdownMode::Preview, cx);
+    let refused = document.update(cx, |document, cx| {
+        (
+            document.replace(vec![(2..3, "B".into())], cx),
+            document.edit_table(crate::documents::TableEdit::RowBelow, cx),
+            document.insert_table(cx),
+        )
+    });
+    let preview = Err(crate::documents::TableRefusal::Preview);
+    assert_eq!(refused, (false, preview, preview));
+    assert_eq!(text(&document, cx), "| A |\n| - |\n| 1 |\n");
 }

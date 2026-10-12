@@ -19,7 +19,7 @@ use gpui::{
 
 pub use parse::DocumentHeading;
 use parse::{Parsed, alike, parsed};
-pub use tables::TableEdit;
+pub use tables::{TableEdit, TableRefusal};
 
 use super::{MarkdownMode, markdown::markdown_highlights, modes::joint, render::OnLink};
 use crate::{
@@ -79,6 +79,8 @@ pub struct MarkdownDocument {
     asks: u64,
     /// Its own write-backs whose changes are still to come.
     writes: usize,
+    /// A match asked for before its text was read.
+    showing: Option<Range<usize>>,
     focus: FocusHandle,
     on_link: Option<OnLink>,
     _subscriptions: Vec<Subscription>,
@@ -131,6 +133,7 @@ impl MarkdownDocument {
             top: None,
             asks: 0,
             writes: 0,
+            showing: None,
             focus,
             on_link: None,
             _subscriptions: subscriptions,
