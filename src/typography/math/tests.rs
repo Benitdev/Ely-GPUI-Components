@@ -213,3 +213,42 @@ fn an_exported_formula_frames_its_outlined_text() {
         assert!(inside, "{source}: {ink:?} in {shape:?}");
     }
 }
+
+#[test]
+fn drawn_fallback_text_stays_inside_the_frame() {
+    let renderer = gpui::SvgRenderer::new(std::sync::Arc::new(crate::Assets));
+    let ink = |svg: &str| {
+        let image = renderer
+            .render_single_frame(svg.as_bytes(), 4.0)
+            .expect("draws");
+        let pixels = image.as_bytes(0).expect("pixels");
+        pixels.chunks_exact(4).filter(|pixel| pixel[3] > 16).count()
+    };
+    for source in [r"\text{中文}", r"\text{한글}"] {
+        let (svg, _) = svg(&formula(source, false)).expect("typesets");
+        let tree = usvg::roxmltree::Document::parse(&svg).expect("xml");
+        let view: Vec<f32> = tree
+            .root_element()
+            .attribute("viewBox")
+            .expect("a view box")
+            .split_whitespace()
+            .map(|number| number.parse().expect("a number"))
+            .collect();
+        // The same ink in a frame wider all round.
+        let wide = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{} {} {} {}\" width=\"{}\" height=\"{}\">{}",
+            view[0] - 64.0,
+            view[1] - 64.0,
+            view[2] + 128.0,
+            view[3] + 128.0,
+            view[2] + 128.0,
+            view[3] + 128.0,
+            &svg[svg.find('>').expect("a tag") + 1..]
+        );
+        let (framed, all) = (ink(&svg), ink(&wide));
+        assert!(
+            framed as f32 >= all as f32 * 0.95,
+            "{source}: {framed} of {all} pixels"
+        );
+    }
+}
