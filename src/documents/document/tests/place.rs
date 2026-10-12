@@ -198,3 +198,30 @@ fn a_reset_keeps_the_caret_and_the_top_line(cx: &mut TestAppContext) {
     });
     assert_eq!((caret, top), ((40, 2), 30));
 }
+
+#[gpui::test]
+fn the_selection_reads_in_source_and_in_an_open_block(cx: &mut TestAppContext) {
+    let (document, cx) = open("# One\n\nTwo words.\n", MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| {
+        document
+            .editor
+            .update(cx, |editor, cx| editor.select(std::iter::once(2..5), cx))
+    });
+    assert_eq!(
+        document.read_with(cx, |document, cx| document.selected(cx)),
+        "One"
+    );
+    document.update_in(cx, |document, window, cx| {
+        document.set_mode(MarkdownMode::Visual, window, cx)
+    });
+    frames(cx);
+    super::type_in(&document, Some(1), None, cx);
+    document.update(cx, |document, cx| {
+        let open = document.open.as_ref().expect("a block is open");
+        open.input.update(cx, |input, cx| input.select(4..9, cx));
+    });
+    assert_eq!(
+        document.read_with(cx, |document, cx| document.selected(cx)),
+        "words"
+    );
+}

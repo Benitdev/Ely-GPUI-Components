@@ -28,6 +28,16 @@ impl MarkdownDocument {
         point(&self.text(cx), open.range.start + joined + input.cursor())
     }
 
+    /// The selected Markdown: the source's, or the open block's.
+    pub fn selected(&self, cx: &App) -> String {
+        let Some(open) = &self.open else {
+            let editor = self.editor.read(cx);
+            return editor.text()[editor.primary().range()].to_string();
+        };
+        let input = open.input.read(cx);
+        input.text()[input.selection()].to_string()
+    }
+
     /// The caret to `line` and `column`, clamped to text.
     pub fn set_caret(&mut self, line: usize, column: usize, cx: &mut Context<Self>) {
         self.commit(cx);
