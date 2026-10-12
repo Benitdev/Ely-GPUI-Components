@@ -397,3 +397,31 @@ fn a_text_past_the_largest_read_is_never_read(cx: &mut TestAppContext) {
     });
     assert_eq!((blocks, outline), (0, 0), "the old read is gone");
 }
+
+/// Focus on `document`'s own handle, as an owner gives it.
+fn focus(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) {
+    let handle = document.read_with(cx, |document, cx| {
+        gpui::Focusable::focus_handle(document, cx)
+    });
+    cx.update(|window, cx| window.focus(&handle, cx));
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn an_empty_visual_document_takes_typing_on_focus(cx: &mut TestAppContext) {
+    let (document, cx) = open("", MarkdownMode::Visual, cx);
+    focus(&document, cx);
+    cx.simulate_input("Hi");
+    assert_eq!(text(&document, cx), "Hi", "typing lands with no press");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert_eq!(text(&document, cx), "Hi", "escape keeps it");
+}
+
+#[gpui::test]
+fn focus_opens_no_block_in_a_written_document(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
+    focus(&document, cx);
+    cx.simulate_input("x");
+    assert_eq!(text(&document, cx), TEXT);
+}

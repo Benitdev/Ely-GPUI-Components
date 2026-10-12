@@ -5,6 +5,7 @@ use gpui::{AppContext as _, Context, Focusable as _, Window};
 use super::{DocumentEvent, MarkdownDocument, Open};
 use crate::{
     documents::{
+        MarkdownMode,
         markdown::markdown_highlights,
         modes::{at_edge, joint},
     },
@@ -22,6 +23,14 @@ fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<usize> {
 }
 
 impl MarkdownDocument {
+    /// An empty visual document takes typing at once.
+    pub(super) fn focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let empty = self.editor.read(cx).text().trim().is_empty();
+        if self.mode == MarkdownMode::Visual && self.open.is_none() && empty {
+            self.open(None, false, window, cx);
+        }
+    }
+
     /// Opens block `ix` as shown, or one past the end.
     pub(super) fn open(
         &mut self,

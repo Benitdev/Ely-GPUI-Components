@@ -105,11 +105,15 @@ impl MarkdownDocument {
                 .hide_indent_guides()
                 .highlighter(markdown_highlights)
         });
-        let subscriptions = vec![cx.subscribe(&editor, |document, _, event, cx| {
-            if *event == EditorEvent::Changed {
-                document.changed(cx);
-            }
-        })];
+        let focus = cx.focus_handle();
+        let subscriptions = vec![
+            cx.subscribe(&editor, |document, _, event, cx| {
+                if *event == EditorEvent::Changed {
+                    document.changed(cx);
+                }
+            }),
+            cx.on_focus(&focus, window, Self::focused),
+        ];
         let overdraw = window.rem_size() * 40.0;
         let mut document = Self {
             editor,
@@ -123,7 +127,7 @@ impl MarkdownDocument {
             top: None,
             asks: 0,
             writes: 0,
-            focus: cx.focus_handle(),
+            focus,
             on_link: None,
             _subscriptions: subscriptions,
         };
