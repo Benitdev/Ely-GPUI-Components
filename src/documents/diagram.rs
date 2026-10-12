@@ -104,21 +104,24 @@ pub fn diagram_svg(source: &str) -> Result<String, SharedString> {
         ink: "#000000".into(),
         scale: 100,
     };
-    let drawn = svg(&chart)?;
-    // Markers and text become paths any reader draws.
+    flatten(&svg(&chart)?)
+}
+
+/// `svg` with markers and text as paths any reader draws.
+pub(crate) fn flatten(svg: &str) -> Result<String, SharedString> {
     let options = usvg::Options {
         fontdb: fonts(),
         ..usvg::Options::default()
     };
-    let tree = usvg::Tree::from_data(drawn.as_bytes(), &options)
+    let tree = usvg::Tree::from_data(svg.as_bytes(), &options)
         .map_err(|error| SharedString::from(format!("{error}")))?;
     // A letter without a font vanishes: say so.
     let (mut kept, mut lost) = (0, 0);
     texts(tree.root(), &mut kept, &mut lost);
-    let written = labels(&drawn)?;
+    let written = labels(svg)?;
     if kept < written || lost > 0 {
-        log::error!("diagram: {kept} of {written} labels set, {lost} letters without a font");
-        return Err("no installed font could set this diagram's labels".into());
+        log::error!("svg: {kept} of {written} texts set, {lost} letters without a font");
+        return Err("no installed font has every letter here".into());
     }
     Ok(tree.to_string(&usvg::WriteOptions::default()))
 }

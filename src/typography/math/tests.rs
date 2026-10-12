@@ -182,6 +182,14 @@ fn a_shared_formula_stays_until_its_last_holder_leaves(cx: &mut gpui::TestAppCon
 fn an_exported_formula_is_black_outlines() {
     let svg = formula_svg(r"\sqrt{x}", true).expect("typesets");
     assert!(svg.starts_with("<svg") && !svg.contains("<text"), "{svg}");
-    assert!(svg.contains("0,0,0"), "black: {svg}");
+    assert!(svg.contains("#000000"), "black: {svg}");
     assert!(formula_svg(r"\frac{", false).is_err());
+}
+
+#[test]
+fn an_exported_formula_outlines_its_text_or_says_why() {
+    let svg = formula_svg(r"\text{中文} + x", false).expect("a system font sets it");
+    assert!(!svg.contains("<text"), "{svg}");
+    let why = formula_svg("\\text{\u{F0000}}", false).expect_err("no font");
+    assert!(why.to_string().contains("font"), "{why}");
 }

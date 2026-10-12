@@ -33,6 +33,7 @@ pub(crate) use blocks::source;
 pub use blocks::{Align, BlockData, BlockEditor, BlockEvent, BlockKind, Media};
 pub use contents::outline;
 pub use counts::{ReadingTime, WordCount};
+pub(crate) use diagram::flatten;
 pub use diagram::{Diagram, diagram_svg};
 pub use document::{
     Attachment, DocumentEvent, DocumentHeading, DocumentLook, LARGEST_READ, MarkdownDocument,

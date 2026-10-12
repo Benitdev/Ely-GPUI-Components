@@ -125,7 +125,9 @@ pub fn formula_svg(source: &str, display: bool) -> Result<String, MathError> {
         font: 1600,
         scale: 100,
     };
-    svg(&formula).map(|(svg, _)| svg)
+    // RaTeX writes text where it has no outline.
+    let (svg, _) = svg(&formula)?;
+    crate::documents::flatten(&svg).map_err(MathError::said)
 }
 
 /// The formula as outlined SVG holding all ink; its size.
