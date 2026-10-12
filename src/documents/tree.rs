@@ -2,7 +2,7 @@ use std::{collections::HashMap, ops::Range};
 
 use markdown::mdast::{self, AlignKind};
 
-use super::markdown::{span, tree};
+use super::markdown::{span, tree, walk};
 
 /// How a stretch of inline text prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,9 +46,11 @@ pub enum Node {
     },
     Rule,
     Math(String),
+    /// A picture, and the link around it.
     Image {
         alt: String,
         url: String,
+        link: Option<String>,
     },
     Footnote {
         label: String,
@@ -62,13 +64,44 @@ struct Reader<'a> {
     urls: HashMap<String, String>,
 }
 
+/// Inline text being built, and the containers open around it.
+#[derive(Default)]
+struct Run {
+    text: Inline,
+    open: Vec<(usize, Style, Option<String>)>,
+}
+
+impl Run {
+    /// Text so far; open styles close here, reopen at zero.
+    fn cut(&mut self) -> Inline {
+        let mut done = std::mem::take(&mut self.text);
+        let end = done.text.len();
+        for (start, style, url) in self.open.iter_mut().rev() {
+            if *start < end {
+                done.styles.push((*start..end, *style));
+                if let Some(url) = url {
+                    done.links.push((*start..end, url.clone()));
+                }
+            }
+            *start = 0;
+        }
+        done
+    }
+
+    /// The innermost open link's address.
+    fn link(&self) -> Option<String> {
+        self.open.iter().rev().find_map(|(_, _, url)| url.clone())
+    }
+}
+
 /// `markdown` as blocks.
 pub fn parse(markdown: &str) -> Vec<Node> {
     let root = tree(markdown);
-    let blocks = root.children().expect("the root holds the blocks");
+    let mut nodes = Vec::new();
+    walk(&root, &mut nodes);
     let mut urls = HashMap::new();
-    for block in blocks {
-        if let mdast::Node::Definition(definition) = block {
+    for node in nodes {
+        if let mdast::Node::Definition(definition) = node {
             urls.entry(definition.identifier.clone())
                 .or_insert_with(|| definition.url.clone());
         }
@@ -78,7 +111,10 @@ pub fn parse(markdown: &str) -> Vec<Node> {
         urls,
     };
     let mut out = Vec::new();
-    reader.blocks(blocks, &mut out);
+    reader.blocks(
+        root.children().expect("the root holds the blocks"),
+        &mut out,
+    );
     out
 }
 
@@ -95,7 +131,7 @@ impl Reader<'_> {
         out
     }
 
-    /// The address a reference names: the parser makes references to definitions alone.
+    /// A reference's address; the parser checked its definition.
     fn url(&self, identifier: &str) -> String {
         self.urls
             .get(identifier)
@@ -107,7 +143,12 @@ impl Reader<'_> {
         match node {
             mdast::Node::Paragraph(paragraph) => self.paragraph(node, &paragraph.children, out),
             mdast::Node::Heading(heading) => {
-                out.push(Node::Heading(heading.depth, self.inline(&heading.children)))
+                let (mut run, mut after) = (Run::default(), Vec::new());
+                for child in &heading.children {
+                    self.inline_into(child, &mut run, &mut Images::After(&mut after));
+                }
+                out.push(Node::Heading(heading.depth, run.cut()));
+                out.extend(after);
             }
             mdast::Node::Blockquote(quote) => out.push(Node::Quote(self.nested(&quote.children))),
             mdast::Node::Code(code) => out.push(Node::Code {
@@ -156,53 +197,36 @@ impl Reader<'_> {
         }
     }
 
-    /// A paragraph's text split around its images; `$$` math written alone stands as a block.
+    /// Text split at its images; lone `$$` math is block.
     fn paragraph(&self, node: &mdast::Node, children: &[mdast::Node], out: &mut Vec<Node>) {
         if let [mdast::Node::InlineMath(math)] = children
             && self.source[span(node)].starts_with("$$")
         {
             return out.push(Node::Math(math.value.clone()));
         }
-        let mut run = Inline::default();
+        let mut run = Run::default();
         for child in children {
-            let image = match child {
-                mdast::Node::Image(image) => Some((image.alt.clone(), image.url.clone())),
-                mdast::Node::ImageReference(image) => {
-                    Some((image.alt.clone(), self.url(&image.identifier)))
-                }
-                _ => None,
-            };
-            match image {
-                Some((alt, url)) => {
-                    text_block(std::mem::take(&mut run), out);
-                    out.push(Node::Image { alt, url });
-                }
-                None => self.inline_into(child, &mut run),
-            }
+            self.inline_into(child, &mut run, &mut Images::Split(out));
         }
-        text_block(run, out);
+        text_block(run.cut(), out);
     }
 
+    /// Inline text where images draw as their alt text.
     fn inline(&self, nodes: &[mdast::Node]) -> Inline {
-        let mut text = Inline::default();
+        let mut run = Run::default();
         for node in nodes {
-            self.inline_into(node, &mut text);
+            self.inline_into(node, &mut run, &mut Images::Alt);
         }
-        text
+        run.cut()
     }
 
-    /// `nodes` into `text`; their stretch of it, styled.
-    fn styled_children(&self, nodes: &[mdast::Node], text: &mut Inline) -> Range<usize> {
-        let start = text.text.len();
-        for node in nodes {
-            self.inline_into(node, text);
-        }
-        start..text.text.len()
-    }
-
-    fn inline_into(&self, node: &mdast::Node, text: &mut Inline) {
-        let (children, style) = match node {
-            mdast::Node::Text(words) => return text.text.push_str(&words.value.replace('\n', " ")),
+    fn inline_into(&self, node: &mdast::Node, run: &mut Run, images: &mut Images) {
+        let text = &mut run.text;
+        let (children, style, url) = match node {
+            mdast::Node::Text(words) => {
+                let soft = words.value.replace("\r\n", " ").replace(['\r', '\n'], " ");
+                return text.text.push_str(&soft);
+            }
             mdast::Node::Break(_) => return text.text.push('\n'),
             mdast::Node::InlineCode(code) => return styled(text, &code.value, Style::Code),
             mdast::Node::InlineMath(math) => return styled(text, &math.value, Style::Math),
@@ -210,26 +234,59 @@ impl Reader<'_> {
                 let label = note.label.as_ref().unwrap_or(&note.identifier);
                 return styled(text, &format!("[{label}]"), Style::Footnote);
             }
-            mdast::Node::Image(image) => return text.text.push_str(&image.alt),
-            mdast::Node::ImageReference(image) => return text.text.push_str(&image.alt),
+            mdast::Node::Image(_) | mdast::Node::ImageReference(_) => {
+                let (alt, url) = match node {
+                    mdast::Node::Image(image) => (image.alt.clone(), image.url.clone()),
+                    mdast::Node::ImageReference(image) => {
+                        (image.alt.clone(), self.url(&image.identifier))
+                    }
+                    _ => unreachable!("matched as an image"),
+                };
+                let link = run.link();
+                return match images {
+                    Images::Alt => run.text.text.push_str(&alt),
+                    Images::Split(out) => {
+                        text_block(run.cut(), out);
+                        out.push(Node::Image { alt, url, link })
+                    }
+                    Images::After(out) => out.push(Node::Image { alt, url, link }),
+                };
+            }
             mdast::Node::Html(_) => return,
-            mdast::Node::Strong(strong) => (&strong.children, Style::Strong),
-            mdast::Node::Emphasis(emphasis) => (&emphasis.children, Style::Emphasis),
-            mdast::Node::Delete(delete) => (&delete.children, Style::Strike),
-            mdast::Node::Link(link) => (&link.children, Style::Link),
-            mdast::Node::LinkReference(link) => (&link.children, Style::Link),
+            mdast::Node::Strong(strong) => (&strong.children, Style::Strong, None),
+            mdast::Node::Emphasis(emphasis) => (&emphasis.children, Style::Emphasis, None),
+            mdast::Node::Delete(delete) => (&delete.children, Style::Strike, None),
+            mdast::Node::Link(link) => (&link.children, Style::Link, Some(link.url.clone())),
+            mdast::Node::LinkReference(link) => (
+                &link.children,
+                Style::Link,
+                Some(self.url(&link.identifier)),
+            ),
             other => unreachable!("{other:?} is no inline outside MDX"),
         };
-        let range = self.styled_children(children, text);
-        text.styles.push((range.clone(), style));
-        match node {
-            mdast::Node::Link(link) => text.links.push((range, link.url.clone())),
-            mdast::Node::LinkReference(link) => {
-                text.links.push((range, self.url(&link.identifier)))
+        run.open.push((run.text.text.len(), style, url));
+        for child in children {
+            self.inline_into(child, run, images);
+        }
+        let (start, style, url) = run.open.pop().expect("the container opened above");
+        let end = run.text.text.len();
+        if start < end {
+            run.text.styles.push((start..end, style));
+            if let Some(url) = url {
+                run.text.links.push((start..end, url));
             }
-            _ => {}
         }
     }
+}
+
+/// Where an inline image goes.
+enum Images<'a> {
+    /// Its alt text stays in the line.
+    Alt,
+    /// It splits the text into blocks.
+    Split(&'a mut Vec<Node>),
+    /// It follows the text, as a heading's.
+    After(&'a mut Vec<Node>),
 }
 
 /// Text left between images, unless it is blank.
@@ -287,7 +344,8 @@ mod tests {
             parse("![outer ![inner](inner.png)](outer.png)"),
             [Node::Image {
                 alt: "outer ".into(),
-                url: "outer.png".into()
+                url: "outer.png".into(),
+                link: None
             }]
         );
     }
@@ -301,7 +359,8 @@ mod tests {
             nodes[1],
             Node::Image {
                 alt: "a".into(),
-                url: "a.png".into()
+                url: "a.png".into(),
+                link: None
             }
         );
         let Node::Paragraph(after) = &nodes[2] else {
@@ -314,8 +373,82 @@ mod tests {
 
     #[test]
     fn a_soft_break_reads_as_a_space_and_a_hard_one_as_a_line() {
-        let nodes = parse("one\ntwo  \nthree");
-        assert!(matches!(&nodes[0], Node::Paragraph(text) if text.text == "one two\nthree"));
+        for (source, shown) in [
+            ("one\ntwo  \nthree", "one two\nthree"),
+            ("one\r\ntwo  \r\nthree", "one two\nthree"),
+            ("one\rtwo  \rthree", "one two\nthree"),
+        ] {
+            let nodes = parse(source);
+            assert!(
+                matches!(&nodes[0], Node::Paragraph(text) if text.text == shown),
+                "{source:?} reads {nodes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn definitions_nested_in_quotes_and_lists_resolve() {
+        for source in [
+            "[site] ![pic]\n\n> [site]: https://ely.dev\n> [pic]: a.png\n",
+            "[site] ![pic]\n\n- [site]: https://ely.dev\n- [pic]: a.png\n",
+        ] {
+            let nodes = parse(source);
+            let Node::Paragraph(text) = &nodes[0] else {
+                panic!("a paragraph, not {:?}", nodes[0])
+            };
+            assert_eq!(text.links, [(0..4, "https://ely.dev".to_string())]);
+            assert_eq!(
+                nodes[1],
+                Node::Image {
+                    alt: "pic".into(),
+                    url: "a.png".into(),
+                    link: None
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn an_image_inside_styles_and_links_stays_an_image() {
+        let nodes = parse("*a ![x](x.png) b* [![y](y.png)](https://ely.dev)");
+        let Node::Paragraph(before) = &nodes[0] else {
+            panic!("a paragraph, not {:?}", nodes[0])
+        };
+        assert_eq!(
+            (before.text.as_str(), &before.styles[..]),
+            ("a ", &[(0..2, Style::Emphasis)][..])
+        );
+        assert_eq!(
+            nodes[1],
+            Node::Image {
+                alt: "x".into(),
+                url: "x.png".into(),
+                link: None
+            }
+        );
+        let Node::Paragraph(after) = &nodes[2] else {
+            panic!("a paragraph, not {:?}", nodes[2])
+        };
+        assert_eq!(
+            (after.text.as_str(), &after.styles[..]),
+            (" b ", &[(0..2, Style::Emphasis)][..])
+        );
+        assert_eq!(
+            nodes[3],
+            Node::Image {
+                alt: "y".into(),
+                url: "y.png".into(),
+                link: Some("https://ely.dev".into())
+            }
+        );
+        assert_eq!(nodes.len(), 4, "{nodes:?}");
+    }
+
+    #[test]
+    fn a_heading_keeps_its_images_after_it() {
+        let nodes = parse("# Lift ![x](x.png)");
+        assert!(matches!(&nodes[0], Node::Heading(1, text) if text.text == "Lift "));
+        assert!(matches!(&nodes[1], Node::Image { url, .. } if url == "x.png"));
     }
 
     #[test]

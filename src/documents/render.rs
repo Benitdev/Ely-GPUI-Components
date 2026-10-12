@@ -11,7 +11,7 @@ use super::tree::{Inline, Node, Style, parse};
 use crate::{
     editor::code_colors,
     navigation::{Anchor, Sections},
-    primitives::{Icon, IconName},
+    primitives::{FocusRing as _, Icon, IconName},
     theme::{ActiveTheme, IconSize, Radius, TextSize},
     typography::Latex,
 };
@@ -146,12 +146,7 @@ impl Draw<'_> {
         let on_link = self.on_link.clone();
         InteractiveText::new(self.key("links"), styled)
             .on_click(ranges, move |ix, window, cx| {
-                let url = &urls[ix];
-                log::info!("markdown: open {url}");
-                match &on_link {
-                    Some(on_link) => on_link(url, window, cx),
-                    None => cx.open_url(url),
-                }
+                open_link(&on_link, &urls[ix], window, cx)
             })
             .into_any_element()
     }
@@ -348,23 +343,35 @@ impl Draw<'_> {
                         .into_any_element(),
                 })
                 .into_any_element(),
-            Node::Image { alt, url } => div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .p_3()
-                .rounded(theme.radius(Radius::Md))
-                .border_1()
-                .border_color(colors.border)
-                .text_color(colors.fg_muted)
-                .child(
-                    Icon::new(IconName::Image)
-                        .size(IconSize::Sm)
-                        .color(colors.fg_subtle),
-                )
-                .child(div().flex_1().child(alt.clone()))
-                .child(div().text_color(colors.fg_subtle).child(url.clone()))
-                .into_any_element(),
+            Node::Image { alt, url, link } => {
+                let picture = div()
+                    .id(self.key("image"))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .p_3()
+                    .rounded(theme.radius(Radius::Md))
+                    .border_1()
+                    .border_color(colors.border)
+                    .text_color(colors.fg_muted)
+                    .child(
+                        Icon::new(IconName::Image)
+                            .size(IconSize::Sm)
+                            .color(colors.fg_subtle),
+                    )
+                    .child(div().flex_1().child(alt.clone()))
+                    .child(div().text_color(colors.fg_subtle).child(url.clone()));
+                let Some(link) = link.clone() else {
+                    return picture.into_any_element();
+                };
+                let on_link = self.on_link.clone();
+                picture
+                    .tab_index(0)
+                    .focus_ring(cx)
+                    .cursor_pointer()
+                    .on_click(move |_, window, cx| open_link(&on_link, &link, window, cx))
+                    .into_any_element()
+            }
             Node::Footnote { label, body } => div()
                 .flex()
                 .gap_2()
@@ -380,6 +387,15 @@ impl Draw<'_> {
                 )
                 .into_any_element(),
         }
+    }
+}
+
+/// Opens `url` through the owner, else the system.
+fn open_link(on_link: &Option<OnLink>, url: &str, window: &mut Window, cx: &mut App) {
+    log::info!("markdown: open {url}");
+    match on_link {
+        Some(on_link) => on_link(url, window, cx),
+        None => cx.open_url(url),
     }
 }
 

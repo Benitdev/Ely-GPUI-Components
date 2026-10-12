@@ -6,7 +6,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{forms::Highlight, theme::ActiveTheme};
 
-/// The markdown this crate reads: GitHub's flavor, and math between dollars.
+/// GitHub's flavor, and math between dollars.
 pub(crate) fn options() -> ParseOptions {
     ParseOptions {
         constructs: Constructs {
@@ -62,7 +62,7 @@ pub(crate) fn edge(span: &str, mark: Mark) -> usize {
 }
 
 /// Every node under `node`, itself first, in source order.
-fn walk<'a>(node: &'a mdast::Node, out: &mut Vec<&'a mdast::Node>) {
+pub(crate) fn walk<'a>(node: &'a mdast::Node, out: &mut Vec<&'a mdast::Node>) {
     out.push(node);
     for child in node.children().into_iter().flatten() {
         walk(child, out);
@@ -93,9 +93,10 @@ pub fn marks(text: &str) -> Vec<(Range<usize>, Mark)> {
             continue;
         }
         match node {
-            mdast::Node::Link(link) => {
+            mdast::Node::Link(mdast::Link { children, .. })
+            | mdast::Node::LinkReference(mdast::LinkReference { children, .. }) => {
                 out.push((range.clone(), Mark::Link));
-                if let (Some(first), Some(last)) = (link.children.first(), link.children.last()) {
+                if let (Some(first), Some(last)) = (children.first(), children.last()) {
                     let inner = span(first).start..span(last).end;
                     out.push((range.start..inner.start, Mark::Syntax));
                     out.push((inner.end..range.end, Mark::Syntax));
@@ -185,7 +186,7 @@ pub fn link_at(text: &str, at: usize) -> Option<(Range<usize>, String, String)> 
     })
 }
 
-/// The document's top-level blocks, as ranges of its source; link definitions are none.
+/// Top-level blocks as source ranges; definitions excluded.
 pub fn block_ranges(text: &str) -> Vec<Range<usize>> {
     let root = tree(text);
     root.children()
@@ -256,6 +257,24 @@ mod tests {
             ]
         );
         assert_eq!(found("## Lift"), [("## Lift", Heading(2)), ("## ", Syntax)]);
+    }
+
+    #[test]
+    fn reference_links_mark_their_syntax() {
+        use Mark::*;
+        let defined = "\n\n[site]: https://ely.dev\n";
+        for (link, open, close) in [
+            ("[the site][site]", "[", "][site]"),
+            ("[site][]", "[", "][]"),
+            ("[site]", "[", "]"),
+        ] {
+            let text = format!("{link}{defined}");
+            assert_eq!(
+                found(&text),
+                [(link, Link), (open, Syntax), (close, Syntax)],
+                "{link}"
+            );
+        }
     }
 
     #[test]
