@@ -161,7 +161,7 @@ fn labels(svg: &str) -> Result<usize, SharedString> {
         .count())
 }
 
-/// Text nodes usvg set, and letters it found no glyph for.
+/// Text nodes usvg set; letters it found no glyph for.
 fn texts(group: &usvg::Group, kept: &mut usize, lost: &mut usize) {
     for node in group.children() {
         match node {
