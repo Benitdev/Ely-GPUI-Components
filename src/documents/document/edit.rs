@@ -38,7 +38,7 @@ impl MarkdownDocument {
         if written.is_some() {
             self.reparse(cx);
         }
-        if !self.read_now() {
+        if !self.read_now(cx) {
             return log::warn!("markdown document: pressed while the text is read again");
         }
         let text = self.editor.read(cx).text();

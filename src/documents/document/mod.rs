@@ -50,12 +50,14 @@ pub struct MarkdownDocument {
     mode: MarkdownMode,
     base: Option<Arc<Path>>,
     parsed: Arc<Parsed>,
-    /// Text changes counted; `read` is the one parsed.
+    /// Text changes counted; a read of an older one lapses.
     edits: u64,
-    read: u64,
     _parsing: Option<Task<()>>,
     list: ListState,
     open: Option<Open>,
+    /// A top line asked for, until the view holds it.
+    top: Option<usize>,
+    placing: bool,
     /// Its own write-backs whose changes are still to come.
     writes: usize,
     focus: FocusHandle,
@@ -100,10 +102,11 @@ impl MarkdownDocument {
             base: None,
             parsed: Arc::default(),
             edits: 0,
-            read: u64::MAX,
             _parsing: None,
             list: ListState::new(1, ListAlignment::Top, overdraw),
             open: None,
+            top: None,
+            placing: false,
             writes: 0,
             focus: cx.focus_handle(),
             on_link: None,
@@ -136,9 +139,13 @@ impl MarkdownDocument {
     pub fn set_mode(&mut self, mode: MarkdownMode, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         log::info!("markdown document: {:?} to {mode:?}", self.mode);
-        let top = self.top_line(cx);
+        let listed = |mode| matches!(mode, MarkdownMode::Visual | MarkdownMode::Preview);
+        // Visual and preview share one list and its scroll.
+        let top = (!(listed(self.mode) && listed(mode))).then(|| self.top_line(cx));
         self.mode = mode;
-        self.set_top_line(top, cx);
+        if let Some(top) = top {
+            self.set_top_line(top, window, cx);
+        }
         let focus = self.focus_handle(cx);
         window.focus(&focus, cx);
         cx.notify();
@@ -184,8 +191,8 @@ impl MarkdownDocument {
     }
 
     /// Whether the blocks shown read the text now.
-    pub fn read_now(&self) -> bool {
-        self.read == self.edits
+    pub fn read_now(&self, cx: &App) -> bool {
+        self.parsed.text == self.editor.read(cx).text()
     }
 
     fn changed(&mut self, cx: &mut Context<Self>) {
@@ -226,7 +233,6 @@ impl MarkdownDocument {
         self.list
             .splice(head..old - tail, read.blocks.len() - head - tail);
         self.parsed = Arc::new(read);
-        self.read = edits;
         cx.emit(DocumentEvent::Parsed);
         cx.notify();
     }

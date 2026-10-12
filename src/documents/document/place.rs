@@ -46,40 +46,99 @@ impl MarkdownDocument {
         cx.notify();
     }
 
-    /// The first line in view.
+    /// The first line in view; block lines share its height.
     pub fn top_line(&self, cx: &App) -> usize {
+        if let Some(line) = self.top {
+            return line;
+        }
         let editor = self.editor.read(cx);
         match self.mode {
             MarkdownMode::Source | MarkdownMode::Split => editor.top_line().unwrap_or(0),
             MarkdownMode::Visual | MarkdownMode::Preview => {
-                let ix = self.list.logical_scroll_top().item_ix;
-                let at = self
-                    .parsed
-                    .blocks
-                    .get(ix)
-                    .map_or(editor.text().len(), |block| block.range.start);
-                editor.buffer.line_of(at.min(editor.text().len()))
+                let ListOffset {
+                    item_ix,
+                    offset_in_item,
+                } = self.list.logical_scroll_top();
+                let Some(block) = self.parsed.blocks.get(item_ix) else {
+                    return editor.buffer.lines() - 1;
+                };
+                let first = editor.buffer.line_of(block.range.start);
+                let lines = editor.buffer.line_of(block.range.end) + 1 - first;
+                let into = self.list.bounds_for_item(item_ix).map_or(0.0, |bounds| {
+                    offset_in_item.as_f32() / bounds.size.height.as_f32().max(1.0)
+                });
+                first + ((into * lines as f32).round() as usize).min(lines - 1)
             }
         }
     }
 
     /// Scrolls `line` to the top; the caret stays.
-    pub fn set_top_line(&mut self, line: usize, cx: &mut Context<Self>) {
-        let editor = self.editor.read(cx);
-        let line = line.min(editor.buffer.lines() - 1);
-        let (scroll, at) = (editor.scroll.clone(), editor.buffer.line_range(line).start);
-        match self.mode {
-            MarkdownMode::Source | MarkdownMode::Split => {
-                scroll.scroll_to_item_strict(line, ScrollStrategy::Top)
-            }
-            MarkdownMode::Visual | MarkdownMode::Preview => {
-                let item_ix = self.block_at(at);
-                self.list.scroll_to(ListOffset {
-                    item_ix,
-                    offset_in_item: px(0.),
-                });
-            }
+    pub fn set_top_line(&mut self, line: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let lines = self.editor.read(cx).buffer.lines();
+        self.top = Some(line.min(lines - 1));
+        self.place_top(window, cx);
+    }
+
+    /// Moves the view to the asked top, once text is read.
+    pub(super) fn place_top(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(line) = self.top.filter(|_| !self.placing) else {
+            return;
+        };
+        if matches!(self.mode, MarkdownMode::Source | MarkdownMode::Split) {
+            let scroll = self.editor.read(cx).scroll.clone();
+            scroll.scroll_to_item_strict(line, ScrollStrategy::Top);
+            self.placing = true;
+            // The editor's offset holds it from the next frame.
+            return cx.on_next_frame(window, move |document, window, cx| {
+                document.placed(line, None, window, cx)
+            });
         }
+        if !self.read_now(cx) {
+            return;
+        }
+        let editor = self.editor.read(cx);
+        let at = editor.buffer.line_range(line).start;
+        let item_ix = self.block_at(at);
+        let Some(block) = self.parsed.blocks.get(item_ix) else {
+            self.top = None;
+            return;
+        };
+        let first = editor.buffer.line_of(block.range.start);
+        let lines = editor.buffer.line_of(block.range.end) + 1 - first;
+        let into = line.saturating_sub(first) as f32 / lines as f32;
+        self.list.scroll_to(ListOffset {
+            item_ix,
+            offset_in_item: px(0.),
+        });
+        self.placing = true;
+        cx.notify();
+        // A block's height is known once drawn.
+        cx.on_next_frame(window, move |document, window, cx| {
+            document.placed(line, Some((item_ix, into)), window, cx)
+        });
+    }
+
+    /// A frame after placing `line`; a newer ask goes next.
+    fn placed(
+        &mut self,
+        line: usize,
+        within: Option<(usize, f32)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.placing = false;
+        if self.top != Some(line) {
+            return self.place_top(window, cx);
+        }
+        if let Some((item_ix, into)) = within
+            && let Some(bounds) = self.list.bounds_for_item(item_ix)
+        {
+            self.list.scroll_to(ListOffset {
+                item_ix,
+                offset_in_item: bounds.size.height * into,
+            });
+        }
+        self.top = None;
         cx.notify();
     }
 
