@@ -36,7 +36,9 @@ fn every_glyph_lies_inside_the_picture() {
         r"\left(\frac{a}{b}\right)",
     ] {
         let (svg, shape) = svg(&formula(source, false)).expect("typesets");
-        let tree = usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default()).expect("svg");
+        // Measured with the fonts it draws with.
+        let options = crate::documents::svg_options();
+        let tree = usvg::Tree::from_data(svg.as_bytes(), &options).expect("svg");
         let ink = tree.root().abs_stroke_bounding_box();
         let (w, h) = (shape.width.as_f32(), shape.height.as_f32());
         let near = |a: f32, b: f32| (a - b).abs() < 0.01;

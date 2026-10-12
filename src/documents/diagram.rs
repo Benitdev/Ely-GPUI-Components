@@ -107,10 +107,27 @@ pub fn diagram_svg(source: &str) -> Result<String, SharedString> {
     flatten(&svg(&chart)?)
 }
 
-/// usvg reading with the system's fonts.
+/// usvg reading with the system's fonts, chosen as gpui draws.
 pub(crate) fn options() -> usvg::Options<'static> {
+    let named = usvg::FontResolver::default_font_selector();
+    let select_font = Box::new(
+        move |font: &usvg::Font, db: &mut Arc<usvg::fontdb::Database>| {
+            // A missing family falls to sans-serif, then any face.
+            let sans = usvg::fontdb::Query {
+                families: &[usvg::fontdb::Family::SansSerif],
+                ..Default::default()
+            };
+            named(font, db)
+                .or_else(|| db.query(&sans))
+                .or_else(|| db.faces().next().map(|face| face.id))
+        },
+    );
     usvg::Options {
         fontdb: fonts(),
+        font_resolver: usvg::FontResolver {
+            select_font,
+            select_fallback: usvg::FontResolver::default_fallback_selector(),
+        },
         ..usvg::Options::default()
     }
 }
