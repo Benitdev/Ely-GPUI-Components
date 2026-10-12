@@ -23,19 +23,19 @@ fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<usize> {
 }
 
 impl MarkdownDocument {
-    /// An empty visual document takes typing at once.
+    /// An empty, read visual document takes typing at once.
     pub(super) fn focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let empty = self.editor.read(cx).text().trim().is_empty();
+        let empty = self.editor.read(cx).text().trim().is_empty() && self.read_now(cx);
         if self.mode == MarkdownMode::Visual && self.open.is_none() && empty {
             self.open(None, false, window, cx);
         }
     }
 
-    /// The open block still holds what it opened with.
-    pub(super) fn untouched(&self, cx: &App) -> bool {
-        self.open.as_ref().is_some_and(|open| {
-            open.input.read(cx).text() == &self.editor.read(cx).text()[open.range.clone()]
-        })
+    /// The open block has no step left that way.
+    pub(super) fn at_edge_of_history(&self, redo: bool, cx: &App) -> bool {
+        self.open
+            .as_ref()
+            .is_some_and(|open| !open.input.read(cx).can_step(redo))
     }
 
     /// Undo or redo in the document's one history.
@@ -46,7 +46,8 @@ impl MarkdownDocument {
             false => editor.undo(cx),
         });
         window.focus(&self.focus, cx);
-        self.focused(window, cx);
+        // Once the change is read, an empty end opens.
+        cx.defer_in(window, |document, window, cx| document.focused(window, cx));
     }
 
     /// Opens block `ix` as shown, or one past the end.

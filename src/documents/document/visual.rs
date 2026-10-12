@@ -164,15 +164,15 @@ impl Render for MarkdownDocument {
                 .on_action(cx.listener(|document, _: &Redo, window, cx| {
                     document.history(true, window, cx);
                 }))
-                // An untouched block leaves undo to the document.
+                // Past the block's own history, the document's.
                 .capture_action(cx.listener(|document, _: &forms::Undo, window, cx| {
-                    if document.untouched(cx) {
+                    if document.at_edge_of_history(false, cx) {
                         cx.stop_propagation();
                         document.history(false, window, cx);
                     }
                 }))
                 .capture_action(cx.listener(|document, _: &forms::Redo, window, cx| {
-                    if document.untouched(cx) {
+                    if document.at_edge_of_history(true, cx) {
                         cx.stop_propagation();
                         document.history(true, window, cx);
                     }
