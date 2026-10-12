@@ -23,7 +23,7 @@ use crate::{
 /// How a markdown editor shows its text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MarkdownMode {
-    /// The document as it reads; a pressed block opens as its source.
+    /// The document as read; a pressed block opens as source.
     Visual,
     /// The markdown, styled as it is typed.
     Source,
@@ -52,7 +52,7 @@ impl MarkdownMode {
 
 type OnMode = Rc<dyn Fn(MarkdownMode, &mut Window, &mut App)>;
 
-/// The block open as its source: the document it opened in, where, its own field, and whether it adds a block at the end.
+/// The open block: its document, range, field, and appending.
 struct Open {
     document: String,
     range: Range<usize>,
@@ -66,7 +66,7 @@ struct Visual {
     open: Option<Open>,
 }
 
-/// `range` moved by an edit that wrote `written` bytes over `replaced`, when it lies after it.
+/// `range` shifted by `written` bytes written over `replaced`.
 fn shifted(range: Range<usize>, replaced: &Range<usize>, written: usize) -> Range<usize> {
     if range.start < replaced.end {
         return range;
@@ -78,7 +78,7 @@ fn shifted(range: Range<usize>, replaced: &Range<usize>, written: usize) -> Rang
     start..end
 }
 
-/// What joins a block added at the end to the text before it.
+/// What joins an appended block to the text before.
 pub(crate) fn joint(document: &str) -> &'static str {
     if document.is_empty() || document.ends_with("\n\n") {
         ""
@@ -89,7 +89,7 @@ pub(crate) fn joint(document: &str) -> &'static str {
     }
 }
 
-/// Writes the open block back over its range as one undo step, and closes it; the range replaced and the bytes written, none when the text left the range.
+/// Writes the open block back as one step; the edit.
 fn commit(
     state: &Entity<Visual>,
     field: &Entity<TextInput>,
@@ -123,7 +123,7 @@ fn commit(
     Some((open.range, written.len()))
 }
 
-/// Opens the block at `range` in a field of its own, so undo stays with it; the caret at its start or end.
+/// Opens the block at `range` in its own field.
 fn open(
     state: &Entity<Visual>,
     field: &Entity<TextInput>,
@@ -168,7 +168,7 @@ fn open(
     });
 }
 
-/// Whether the caret sits on the field's first line, or with `last` its last.
+/// The caret on the first line, or with `last` last.
 pub(crate) fn at_edge(input: &TextInput, last: bool) -> bool {
     let edge = if last { input.text().len() } else { 0 };
     match (input.bounds_for(input.cursor()), input.bounds_for(edge)) {
@@ -177,7 +177,7 @@ pub(crate) fn at_edge(input: &TextInput, last: bool) -> bool {
     }
 }
 
-/// Markdown written three ways: visual, where the document reads as it will and a pressed block opens as its source; source, styled as it is typed; and split, the source beside the document. The toolbar, links, suggestions and counts come with each.
+/// Markdown written as visual, source, or split views.
 #[derive(IntoElement)]
 pub struct MarkdownEditor {
     id: ElementId,
@@ -267,7 +267,7 @@ impl RenderOnce for MarkdownEditor {
     }
 }
 
-/// The visual body: each block rendered, the open one as its source.
+/// The visual body: blocks drawn, the open one as source.
 fn visual(
     editor: MarkdownEditor,
     state: Entity<Visual>,

@@ -58,7 +58,7 @@ fn leading(text: &str, ch: char) -> usize {
         .sum()
 }
 
-/// How many bytes at each end of `span` write `mark`: its asterisks, tildes or backticks.
+/// Bytes at each end of `span` that write `mark`.
 pub(crate) fn edge(span: &str, mark: Mark) -> usize {
     let first = span.chars().next().expect("a styled span has its marker");
     let run = leading(span, first).min(span.len() / 2);
@@ -76,7 +76,7 @@ pub(crate) fn walk<'a>(node: &'a mdast::Node, out: &mut Vec<&'a mdast::Node>) {
     }
 }
 
-/// The marks over `text`'s bytes: styles, code, links, headings and quotes, and the syntax that writes each.
+/// The marks over `text`, with the syntax writing each.
 pub fn marks(text: &str) -> Vec<(Range<usize>, Mark)> {
     let root = tree(text);
     let mut nodes = Vec::new();
@@ -133,7 +133,7 @@ pub fn marks(text: &str) -> Vec<(Range<usize>, Mark)> {
     out
 }
 
-/// Markdown styled as it is typed: strong and headings heavier, emphasis slanted, strikes struck, code washed, links in their tone; the syntax that writes them recedes.
+/// Markdown styled as typed; its syntax recedes.
 pub fn markdown_highlights(text: &str, cx: &App) -> Vec<(Range<usize>, Highlight)> {
     let colors = &cx.theme().colors;
     let plain = Highlight::new(colors.fg);
@@ -174,7 +174,7 @@ pub fn markdown_highlights(text: &str, cx: &App) -> Vec<(Range<usize>, Highlight
         .collect()
 }
 
-/// A link written `[text](address)` around byte `at`: its range, its text and its address.
+/// The `[text](address)` link around byte `at`, if any.
 pub fn link_at(text: &str, at: usize) -> Option<(Range<usize>, String, String)> {
     let root = tree(text);
     let mut nodes = Vec::new();
@@ -208,7 +208,7 @@ pub fn block_ranges(text: &str) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// Words in `text` as a reader counts them; each ideograph counts as one.
+/// Words in `text`; each ideograph counts as one.
 pub fn words(text: &str) -> usize {
     text.unicode_words().count()
 }
@@ -216,7 +216,7 @@ pub fn words(text: &str) -> usize {
 /// Words an adult reads in a minute, on average.
 const PACE: usize = 238;
 
-/// Minutes to read `words`, at least one when there are any.
+/// Minutes to read `words`; at least one if any.
 pub fn reading_minutes(words: usize) -> usize {
     words.div_ceil(PACE)
 }

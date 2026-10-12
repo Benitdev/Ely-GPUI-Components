@@ -24,7 +24,7 @@ use crate::{
 pub(crate) type OnLink = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 type DrawCode = Rc<dyn Fn(ElementId, Option<SharedString>, SharedString) -> AnyElement>;
 
-/// Markdown as a document: headings, prose with its styles and links, lists and tasks, quotes, code colored as code, tables, rules, math and footnotes. A press on a link opens it, or hands it to the host.
+/// Markdown drawn as a document; links go to the host.
 #[derive(IntoElement)]
 pub struct MarkdownRenderer {
     id: ElementId,
@@ -61,13 +61,13 @@ impl MarkdownRenderer {
         self
     }
 
-    /// Marks each heading for a table of contents over `sections`; `outline` gives its entries.
+    /// Marks headings for `sections`; `outline` lists them.
     pub fn sections(mut self, sections: &Entity<Sections>) -> Self {
         self.sections = Some(sections.clone());
         self
     }
 
-    /// Draws code blocks with the owner's element, given an id, the language and the code.
+    /// Code blocks drawn by the owner: id, language, code.
     pub fn code(
         mut self,
         draw: impl Fn(ElementId, Option<SharedString>, SharedString) -> AnyElement + 'static,
@@ -83,7 +83,7 @@ impl MarkdownRenderer {
     }
 }
 
-/// Renders nodes with one set of links handlers and ids under one owner.
+/// Draws nodes under one owner's ids and link handler.
 struct Draw<'a> {
     id: &'a ElementId,
     on_link: &'a Option<OnLink>,
@@ -297,7 +297,7 @@ impl Draw<'_> {
                 }))
                 .into_any_element(),
             Node::Table { aligns, head, rows } => {
-                let cell = |inline: &Inline, column: usize, header: bool, cx: &App| {
+                let cell = |blocks: &[Node], column: usize, header: bool, cx: &App| {
                     div()
                         .flex_1()
                         .flex()
@@ -313,7 +313,13 @@ impl Draw<'_> {
                             cell.font_weight(FontWeight::MEDIUM)
                                 .text_color(colors.fg_muted)
                         })
-                        .child(self.inline(inline, cx))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .children(self.nodes(blocks, cx)),
+                        )
                 };
                 div()
                     .flex()
@@ -326,7 +332,7 @@ impl Draw<'_> {
                         div().flex().bg(colors.hover).children(
                             head.iter()
                                 .enumerate()
-                                .map(|(column, inline)| cell(inline, column, true, cx)),
+                                .map(|(column, blocks)| cell(blocks, column, true, cx)),
                         ),
                     )
                     .children(rows.iter().map(|row| {
@@ -337,7 +343,7 @@ impl Draw<'_> {
                             .children(
                                 row.iter()
                                     .enumerate()
-                                    .map(|(column, inline)| cell(inline, column, false, cx)),
+                                    .map(|(column, blocks)| cell(blocks, column, false, cx)),
                             )
                     }))
                     .into_any_element()

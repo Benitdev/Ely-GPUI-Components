@@ -194,8 +194,8 @@ fn picture(shown: Picture, window: &mut Window, cx: &mut App) -> AnyElement {
             let width = i32::from(natural.width) as f32 / smooth;
             div()
                 .debug_selector(|| "markdown-picture".into())
-                .w_full()
-                .max_w(px(width))
+                .w(px(width))
+                .max_w_full()
                 .child(img(image).size_full())
                 .into_any_element()
         }

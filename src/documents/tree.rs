@@ -16,7 +16,7 @@ pub enum Style {
     Footnote,
 }
 
-/// Inline content: its text, the styled stretches of it, and the address of each link, in order.
+/// Inline text, its styled stretches and link addresses.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Inline {
     pub text: String,
@@ -34,15 +34,16 @@ pub enum Node {
         language: Option<String>,
         text: String,
     },
-    /// Items with their blocks, numbered from `start` when ordered, each with its checkbox when a task.
+    /// Items and blocks; ordered from `start`; tasks carry checkboxes.
     List {
         start: Option<u64>,
         items: Vec<(Option<bool>, Vec<Node>)>,
     },
+    /// Each cell's blocks: its text, split at pictures.
     Table {
         aligns: Vec<AlignKind>,
-        head: Vec<Inline>,
-        rows: Vec<Vec<Inline>>,
+        head: Vec<Vec<Node>>,
+        rows: Vec<Vec<Vec<Node>>>,
     },
     Rule,
     Math(String),
@@ -174,7 +175,12 @@ impl<'a> Reader<'a> {
                     mdast::Node::TableRow(row) => row
                         .children
                         .iter()
-                        .map(|cell| self.inline(cell.children().expect("a cell holds inlines")))
+                        .map(|cell| {
+                            let mut blocks = Vec::new();
+                            let inlines = cell.children().expect("a cell holds inlines");
+                            self.paragraph(cell, inlines, &mut blocks);
+                            blocks
+                        })
                         .collect::<Vec<_>>(),
                     other => unreachable!("a table holds rows, not {other:?}"),
                 });
@@ -469,13 +475,26 @@ mod tests {
             panic!("a table, not {:?}", nodes[0])
         };
         assert_eq!(aligns, &[AlignKind::Left, AlignKind::Right]);
+        let text = |cell: &[Node]| match cell {
+            [Node::Paragraph(line)] => line.text.clone(),
+            other => panic!("one line, not {other:?}"),
+        };
         assert_eq!(
-            head.iter()
-                .map(|cell| cell.text.as_str())
-                .collect::<Vec<_>>(),
+            head.iter().map(|cell| text(cell)).collect::<Vec<_>>(),
             ["Name", "Lift"]
         );
-        assert_eq!(rows[0][1].text, "0.5");
+        assert_eq!(text(&rows[0][1]), "0.5");
+    }
+
+    #[test]
+    fn a_picture_in_a_cell_stays_a_picture() {
+        let nodes = parse("| Picture |\n| --- |\n| ![shot](assets/shot.png) |\n");
+        let Node::Table { rows, .. } = &nodes[0] else {
+            panic!("a table, not {:?}", nodes[0])
+        };
+        assert!(
+            matches!(&rows[0][0][..], [Node::Image { alt, url, .. }] if alt == "shot" && url == "assets/shot.png")
+        );
     }
 
     #[test]

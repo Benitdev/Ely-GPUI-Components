@@ -317,9 +317,19 @@ impl Render for Page {
     }
 }
 
-/// A 200×100 picture drawn in a `width` column.
-fn drawn_picture(width: f32, cx: &mut TestAppContext) -> gpui::Size<Pixels> {
-    let folder = std::env::temp_dir().join(format!("ely-picture-{}-{width}", std::process::id()));
+const SHOT: &str = "Before
+
+![shot](assets/wide%20shot.png)
+";
+
+/// A 200×100 picture in `source`, drawn in a `width` column.
+fn drawn_picture(source: &'static str, width: f32, cx: &mut TestAppContext) -> gpui::Size<Pixels> {
+    let named = format!(
+        "ely-picture-{}-{width}-{}",
+        std::process::id(),
+        source.len()
+    );
+    let folder = std::env::temp_dir().join(named);
     std::fs::create_dir_all(folder.join("assets")).expect("a folder");
     let mut png = Vec::new();
     image::RgbaImage::new(200, 100)
@@ -328,10 +338,7 @@ fn drawn_picture(width: f32, cx: &mut TestAppContext) -> gpui::Size<Pixels> {
     std::fs::write(folder.join("assets/wide shot.png"), png).expect("the picture");
     cx.update(Theme::init);
     let (_, cx) = cx.add_window_view(|_, _| Page {
-        source: "Before
-
-![shot](assets/wide%20shot.png)
-",
+        source,
         base: folder.clone(),
         width,
     });
@@ -350,13 +357,22 @@ fn drawn_picture(width: f32, cx: &mut TestAppContext) -> gpui::Size<Pixels> {
 
 #[gpui::test]
 fn a_picture_beside_the_file_draws_at_its_ratio_within_the_column(cx: &mut TestAppContext) {
-    let shrunk = drawn_picture(120.0, cx);
+    let shrunk = drawn_picture(SHOT, 120.0, cx);
     assert_eq!(shrunk, size(px(120.0), px(60.0)), "shrunk at 2:1");
 }
 
 #[gpui::test]
 fn a_picture_narrower_than_the_column_keeps_its_size(cx: &mut TestAppContext) {
-    assert_eq!(drawn_picture(400.0, cx), size(px(200.0), px(100.0)));
+    assert_eq!(drawn_picture(SHOT, 400.0, cx), size(px(200.0), px(100.0)));
+}
+
+#[gpui::test]
+fn a_picture_in_a_table_cell_draws(cx: &mut TestAppContext) {
+    let table = "| Picture |
+| --- |
+| ![shot](assets/wide%20shot.png) |
+";
+    assert_eq!(drawn_picture(table, 400.0, cx), size(px(200.0), px(100.0)));
 }
 
 #[gpui::test]
