@@ -180,3 +180,21 @@ x- one"
     });
     assert_eq!(outline, [("Lift".to_string(), 0)]);
 }
+
+#[gpui::test]
+fn a_reset_keeps_the_caret_and_the_top_line(cx: &mut TestAppContext) {
+    let lines: String = (0..60).map(|n| format!("Line {n}\n\n")).collect();
+    let (document, cx) = open(&lines, MarkdownMode::Source, cx);
+    document.update_in(cx, |document, window, cx| {
+        document.set_caret(40, 2, cx);
+        document.set_top_line(30, window, cx);
+    });
+    frames(cx);
+    let changed: String = (0..60).map(|n| format!("Row {n}\n\n")).collect();
+    document.update(cx, |document, cx| document.reset(changed, cx));
+    frames(cx);
+    let (caret, top) = document.read_with(cx, |document, cx| {
+        (document.caret(cx), document.top_line(cx))
+    });
+    assert_eq!((caret, top), ((40, 2), 30));
+}

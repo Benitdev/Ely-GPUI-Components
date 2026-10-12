@@ -206,10 +206,20 @@ impl MarkdownDocument {
             .update(cx, |editor, cx| editor.set_text(text, cx));
     }
 
-    /// Replaces the text, undo afresh; open typing drops.
+    /// New text, undo afresh; caret and top line stay.
     pub fn reset(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
+        let ((line, column), top) = (self.caret(cx), self.top_line(cx));
         self.drop_open(cx);
         self.editor.update(cx, |editor, cx| editor.reset(text, cx));
+        self.set_caret(line, column, cx);
+        // Placed once the new text is read.
+        self.asks += 1;
+        self.top = Some(Placement {
+            line: top,
+            ask: self.asks,
+            placing: false,
+        });
+        cx.notify();
     }
 
     /// The headings as last read, with lines from zero.
