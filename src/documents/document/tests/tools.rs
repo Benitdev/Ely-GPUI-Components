@@ -224,6 +224,14 @@ fn shift_tab_takes_a_tab_indent_out(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn shift_tab_takes_spaces_then_a_tab_out(cx: &mut TestAppContext) {
+    let (document, cx) = open("- a\n  \t- b\n", MarkdownMode::Visual, cx);
+    press(0, Modifiers::none(), cx);
+    cx.simulate_keystrokes("shift-tab");
+    assert_eq!(opened(&document, cx), "- a\n- b");
+}
+
+#[gpui::test]
 fn a_table_on_an_indented_blank_line_is_a_table(cx: &mut TestAppContext) {
     let (document, cx) = open(
         "    

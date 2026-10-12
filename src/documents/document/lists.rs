@@ -91,6 +91,22 @@ fn ordered(rest: &str) -> Option<(String, usize)> {
     Some((format!("{}{close}", number + 1), digits + 1))
 }
 
+/// Leading bytes that make one step, tabs to stops of four.
+fn outdent(line: &str) -> usize {
+    let mut columns = 0;
+    for (bytes, ch) in line.char_indices() {
+        if columns >= STEP {
+            return bytes;
+        }
+        columns = match ch {
+            ' ' => columns + 1,
+            '\t' => (columns / STEP + 1) * STEP,
+            _ => return bytes,
+        };
+    }
+    line.len()
+}
+
 /// Lines `range` touches, a step in or out.
 pub(super) fn shift(text: &str, range: Range<usize>, deeper: bool) -> (String, Range<usize>) {
     let first = text[..range.start].rfind('\n').map_or(0, |at| at + 1);
@@ -102,13 +118,12 @@ pub(super) fn shift(text: &str, range: Range<usize>, deeper: bool) -> (String, R
     let mut at = first;
     loop {
         let line = &text[at..text[at..].find('\n').map_or(text.len(), |end| at + end)];
-        let spaces = line.len() - line.trim_start_matches(' ').len();
         match deeper {
             true => changes.push((at, STEP as isize)),
-            // A leading tab is one step out.
-            false if line.starts_with('\t') => changes.push((at, -1)),
-            false if spaces > 0 => changes.push((at, -(spaces.min(STEP) as isize))),
-            false => {}
+            false => match outdent(line) {
+                0 => {}
+                bytes => changes.push((at, -(bytes as isize))),
+            },
         }
         match text[at..].find('\n') {
             Some(end) if at + end < last => at += end + 1,
@@ -276,5 +291,9 @@ mod tests {
         assert_eq!(shift("a\nb", 1..3, true), ("    a\n    b".into(), 5..11));
         assert_eq!(shift("      a", 7..7, false), ("  a".into(), 3..3));
         assert_eq!(shift("  a\nb", 1..1, false), ("a\nb".into(), 0..0));
+        // Spaces and tabs mixed: four columns go.
+        assert_eq!(shift("  \t- b", 6..6, false), ("- b".into(), 3..3));
+        assert_eq!(shift("\t  - b", 6..6, false), ("  - b".into(), 5..5));
+        assert_eq!(shift(" \t\t- b", 6..6, false), ("\t- b".into(), 4..4));
     }
 }
