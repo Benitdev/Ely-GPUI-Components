@@ -23,6 +23,10 @@ impl CodeEditor {
             .h(self.frame.line)
             .flex();
         let caret = self.buffer.line_of(self.primary().head);
+        let base = match self.frame.rows[ix] {
+            Row::Line(line) => base.debug_selector(move || format!("editor-line-{line}")),
+            _ => base,
+        };
         match self.frame.rows[ix] {
             Row::Line(line) if self.options.focus_line && line != caret => {
                 self.line_row(base.opacity(FADED), ix, line, window, cx)
@@ -32,6 +36,7 @@ impl CodeEditor {
             Row::Removed(hunk, at) => self.removed_row(base, ix, hunk, at, cx),
             Row::Ghost(at) => self.ghost_row(base, ix, at, cx),
             Row::Chat(at) => self.chat_row(base, ix, at, cx),
+            Row::Room => base.into_any_element(),
         }
     }
 

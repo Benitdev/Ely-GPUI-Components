@@ -54,8 +54,7 @@ impl CodeEditor {
 
     /// The first line the list shows, after scrolling.
     pub(crate) fn top_line(&self) -> Option<usize> {
-        // Typewriter room above the first line is no line.
-        let scrolled = -self.scroll.0.borrow().base_handle.offset().y - self.room;
+        let scrolled = -self.scroll.0.borrow().base_handle.offset().y;
         let first = (scrolled / self.frame.line).floor().max(0.0) as usize;
         self.frame.rows[first.min(self.frame.rows.len().saturating_sub(1))..]
             .iter()
@@ -252,8 +251,16 @@ impl Render for CodeEditor {
             _ => Vec::new(),
         };
         let minimap = self.frame.minimap;
+        // Half a view of room rows: the ends center too.
+        self.pad = match self.options.typewriter && line > Pixels::ZERO {
+            true => (self.metrics.height / 2.0 / line).ceil() as usize,
+            false => 0,
+        };
+        let mut shown = vec![Row::Room; self.pad];
+        shown.extend(rows(&self.buffer, &hide, &self.marks));
+        shown.extend(std::iter::repeat_n(Row::Room, self.pad));
         self.frame = Frame {
-            rows: rows(&self.buffer, &hide, &self.marks),
+            rows: shown,
             folds: found,
             brackets: found_brackets,
             advance,
@@ -271,13 +278,6 @@ impl Render for CodeEditor {
                 .scroll_to_item_strict(row, ScrollStrategy::Center);
             self.centered = Some(row);
         }
-        // Half a view of room: a resize keeps the center.
-        let height = self.metrics.height;
-        self.room = match self.options.typewriter {
-            true => height / 2.0,
-            false => gpui::px(0.0),
-        };
-        let room = self.room;
         let sticky = if self.options.sticky {
             self.sticky(cx)
         } else {
@@ -292,9 +292,7 @@ impl Render for CodeEditor {
             }),
         )
         .track_scroll(&self.scroll)
-        .size_full()
-        .pt(room)
-        .pb(room);
+        .size_full();
         let (top, focus, input) = (cx.entity(), self.focus.clone(), cx.entity());
         let unlock = cx.entity();
         let banner = self.options.read_only.then(|| {

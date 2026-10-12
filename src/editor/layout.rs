@@ -19,6 +19,8 @@ pub(crate) enum Row {
     Ghost(usize),
     /// The inline chat's rows; the first draws it.
     Chat(usize),
+    /// Typewriter room past an end.
+    Room,
 }
 
 /// Which lines folds hide.

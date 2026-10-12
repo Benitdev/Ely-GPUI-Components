@@ -158,6 +158,7 @@ impl CodeEditor {
             .iter()
             .rposition(|row| matches!(row, Row::Line(shown) if *shown <= line))
             .unwrap_or(0)
+            + self.pad
     }
 
     /// Scrolls the primary cursor into view: from below when moving down, from above when moving up.

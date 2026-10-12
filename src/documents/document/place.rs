@@ -106,7 +106,7 @@ impl MarkdownDocument {
         if matches!(self.mode, MarkdownMode::Source | MarkdownMode::Split) {
             editor
                 .scroll
-                .scroll_to_item_strict(line, ScrollStrategy::Top);
+                .scroll_to_item_strict(line + editor.pad, ScrollStrategy::Top);
             self.placing(ask);
             // The editor's offset holds it from the next frame.
             return cx.on_next_frame(window, move |document, _, cx| {
@@ -158,6 +158,8 @@ impl MarkdownDocument {
             });
         }
         self.top = None;
+        // The view moved: center again.
+        self.centered = None;
         cx.notify();
     }
 

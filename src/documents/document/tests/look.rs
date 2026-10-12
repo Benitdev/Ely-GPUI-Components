@@ -216,3 +216,67 @@ fn the_last_source_line_centers_and_a_resize_follows(cx: &mut TestAppContext) {
         "top {top} to {resized}; mid-view is {middle}"
     );
 }
+
+/// Typewriter source, caret on line 60 of 120.
+fn centered_source(
+    cx: &mut TestAppContext,
+) -> (
+    gpui::Entity<super::MarkdownDocument>,
+    &mut gpui::VisualTestContext,
+) {
+    let text: String = (0..120).map(|n| format!("Line {n}.\n")).collect();
+    let (document, cx) = open(&text, MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| {
+        document.set_look(typewriter(), cx);
+        document.set_caret(60, 0, cx);
+    });
+    frames(cx);
+    (document, cx)
+}
+
+#[gpui::test]
+fn source_lines_below_the_center_draw(cx: &mut TestAppContext) {
+    let (_, cx) = centered_source(cx);
+    let caret = cx.debug_bounds("editor-line-60").expect("caret line");
+    let next = cx.debug_bounds("editor-line-61").expect("the line below");
+    assert!(next.top() >= caret.bottom() - px(1.0));
+}
+
+#[gpui::test]
+fn platform_text_queries_meet_the_drawn_line(cx: &mut TestAppContext) {
+    use gpui::EntityInputHandler as _;
+    let (document, cx) = centered_source(cx);
+    let drawn = cx.debug_bounds("editor-line-60").expect("caret line");
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    let (anchor, line) = editor.update_in(cx, |editor, window, cx| {
+        let at = editor.text()[..editor.primary().head]
+            .encode_utf16()
+            .count();
+        let anchor = editor.bounds_for_range(at..at, gpui::Bounds::default(), window, cx);
+        let point = gpui::point(editor.metrics.left, drawn.center().y);
+        let index = editor.character_index_for_point(point, window, cx);
+        let line = index.map(|at| editor.buffer.line_of(editor.byte_range(&(at..at)).start));
+        (anchor.expect("anchor"), line)
+    });
+    assert!(
+        (anchor.top() - drawn.top()).abs() < px(2.0),
+        "{anchor:?} vs {drawn:?}"
+    );
+    assert_eq!(line, Some(60));
+}
+
+#[gpui::test]
+fn switching_to_visual_centers_the_caret_block(cx: &mut TestAppContext) {
+    let (document, cx) = open(&long(), MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| {
+        document.set_look(typewriter(), cx);
+        document.set_caret(100, 0, cx);
+    });
+    frames(cx);
+    document.update_in(cx, |document, window, cx| {
+        document.set_mode(MarkdownMode::Visual, window, cx)
+    });
+    frames(cx);
+    let off = off_middle(&document, 50, cx);
+    assert!(off < px(4.0), "{off:?} from the middle");
+}
