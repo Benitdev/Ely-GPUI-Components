@@ -1,6 +1,6 @@
 use gpui::{App, Context, Focusable as _, ListOffset, ScrollStrategy, Window, px};
 
-use super::MarkdownDocument;
+use super::{MarkdownDocument, Placement};
 use crate::documents::{MarkdownMode, modes::joint};
 
 /// Line and column, from zero, of byte `at` in `text`.
@@ -48,10 +48,10 @@ impl MarkdownDocument {
 
     /// The first line in view; block lines share its height.
     pub fn top_line(&self, cx: &App) -> usize {
-        if let Some(line) = self.top {
-            return line;
-        }
         let editor = self.editor.read(cx);
+        if let Some(top) = self.top {
+            return top.line.min(editor.buffer.lines() - 1);
+        }
         match self.mode {
             MarkdownMode::Source | MarkdownMode::Split => editor.top_line().unwrap_or(0),
             MarkdownMode::Visual | MarkdownMode::Preview => {
@@ -74,23 +74,43 @@ impl MarkdownDocument {
 
     /// Scrolls `line` to the top; the caret stays.
     pub fn set_top_line(&mut self, line: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let lines = self.editor.read(cx).buffer.lines();
-        self.top = Some(line.min(lines - 1));
+        self.asks += 1;
+        self.top = Some(Placement {
+            line,
+            ask: self.asks,
+            placing: false,
+        });
         self.place_top(window, cx);
+    }
+
+    /// A placement in flight goes stale; it is placed again.
+    pub(super) fn replace_top(&mut self) {
+        if let Some(top) = &mut self.top {
+            self.asks += 1;
+            (top.ask, top.placing) = (self.asks, false);
+        }
     }
 
     /// Moves the view to the asked top once read.
     pub(super) fn place_top(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(line) = self.top.filter(|_| !self.placing) else {
+        let Some(Placement {
+            line,
+            ask,
+            placing: false,
+        }) = self.top
+        else {
             return;
         };
+        let editor = self.editor.read(cx);
+        let line = line.min(editor.buffer.lines() - 1);
         if matches!(self.mode, MarkdownMode::Source | MarkdownMode::Split) {
-            let scroll = self.editor.read(cx).scroll.clone();
-            scroll.scroll_to_item_strict(line, ScrollStrategy::Top);
-            self.placing = true;
+            editor
+                .scroll
+                .scroll_to_item_strict(line, ScrollStrategy::Top);
+            self.placing(ask);
             // The editor's offset holds it from the next frame.
-            return cx.on_next_frame(window, move |document, window, cx| {
-                document.placed(line, None, window, cx)
+            return cx.on_next_frame(window, move |document, _, cx| {
+                document.placed(ask, None, cx)
             });
         }
         if !self.read_now(cx) {
@@ -110,25 +130,24 @@ impl MarkdownDocument {
             item_ix,
             offset_in_item: px(0.),
         });
-        self.placing = true;
+        self.placing(ask);
         cx.notify();
         // A block's height is known once drawn.
-        cx.on_next_frame(window, move |document, window, cx| {
-            document.placed(line, Some((item_ix, into)), window, cx)
+        cx.on_next_frame(window, move |document, _, cx| {
+            document.placed(ask, Some((item_ix, into)), cx)
         });
     }
 
-    /// A frame after placing `line`; a newer ask goes next.
-    fn placed(
-        &mut self,
-        line: usize,
-        within: Option<(usize, f32)>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.placing = false;
-        if self.top != Some(line) {
-            return self.place_top(window, cx);
+    fn placing(&mut self, ask: u64) {
+        if let Some(top) = self.top.as_mut().filter(|top| top.ask == ask) {
+            top.placing = true;
+        }
+    }
+
+    /// A frame after placing ask `ask`; stale asks do nothing.
+    fn placed(&mut self, ask: u64, within: Option<(usize, f32)>, cx: &mut Context<Self>) {
+        if self.top.is_none_or(|top| top.ask != ask) {
+            return;
         }
         if let Some((item_ix, into)) = within
             && let Some(bounds) = self.list.bounds_for_item(item_ix)
@@ -150,16 +169,10 @@ impl MarkdownDocument {
             .saturating_sub(1)
     }
 
-    /// Line `line` in view and focus, caret at start.
+    /// Line `line` at top and focused, caret at start.
     pub fn reveal(&mut self, line: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.set_caret(line, 0, cx);
-        let at = self.editor.read(cx).primary().head;
-        match self.mode {
-            MarkdownMode::Source | MarkdownMode::Split => {}
-            MarkdownMode::Visual | MarkdownMode::Preview => {
-                self.list.scroll_to_reveal_item(self.block_at(at))
-            }
-        }
+        self.set_top_line(line, window, cx);
         let focus = self.focus_handle(cx);
         window.focus(&focus, cx);
     }

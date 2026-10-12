@@ -7,7 +7,7 @@ use crate::documents::MarkdownMode;
 
 const TEXT: &str = "# Lift\n\nBlend toward white.\n\n- one\n- two\n";
 
-fn open<'a>(
+pub(super) fn open<'a>(
     text: &str,
     mode: MarkdownMode,
     cx: &'a mut TestAppContext,
@@ -32,16 +32,18 @@ fn press(ix: usize, modifiers: Modifiers, cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
-/// A few frames, so deferred scrolls land.
-fn frames(cx: &mut VisualTestContext) {
-    for _ in 0..3 {
+/// Frames with their next-frame callbacks, so scrolls land.
+pub(super) fn frames(cx: &mut VisualTestContext) {
+    for _ in 0..4 {
         cx.run_until_parked();
         cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        cx.update(|window, cx| window.simulate_next_frame(cx));
     }
     cx.run_until_parked();
 }
 
-fn text(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> String {
+pub(super) fn text(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> String {
     document.read_with(cx, |document, cx| document.text(cx))
 }
 
@@ -146,32 +148,6 @@ fn down_at_a_blocks_last_line_opens_the_next(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn reveal_puts_the_caret_on_the_line(cx: &mut TestAppContext) {
-    let (document, cx) = open(TEXT, MarkdownMode::Source, cx);
-    document.update_in(cx, |document, window, cx| document.reveal(4, window, cx));
-    assert_eq!(
-        document.read_with(cx, |document, cx| document.caret(cx)),
-        (4, 0)
-    );
-    cx.simulate_input("x");
-    assert!(
-        text(&document, cx).contains(
-            "
-x- one"
-        ),
-        "keys land on the line"
-    );
-    let outline: Vec<(String, usize)> = document.read_with(cx, |document, cx| {
-        document
-            .outline(cx)
-            .into_iter()
-            .map(|(heading, line)| (heading.title, line))
-            .collect()
-    });
-    assert_eq!(outline, [("Lift".to_string(), 0)]);
-}
-
-#[gpui::test]
 fn reset_starts_undo_afresh(cx: &mut TestAppContext) {
     let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
     document.update(cx, |document, cx| document.set_text("changed", cx));
@@ -253,7 +229,7 @@ fn down_past_the_last_block_keeps_it_open(cx: &mut TestAppContext) {
 }
 
 /// Opens block `ix` as shown, its field set to `typed`.
-fn type_in(
+pub(super) fn type_in(
     document: &Entity<MarkdownDocument>,
     ix: Option<usize>,
     typed: Option<&str>,
@@ -268,7 +244,7 @@ fn type_in(
     cx.run_until_parked();
 }
 
-fn opened(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> String {
+pub(super) fn opened(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> String {
     document.read_with(cx, |document, cx| {
         let open = document.open.as_ref().expect("a block is open");
         open.input.read(cx).text().to_string()
@@ -349,30 +325,6 @@ fn an_added_block_reports_its_caret_after_the_joint(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn caret_and_view_set_apart_and_carry_across_modes(cx: &mut TestAppContext) {
-    let long = (0..60).map(|n| format!("Line {n}\n\n")).collect::<String>();
-    let (document, cx) = open(&long, MarkdownMode::Source, cx);
-    document.update(cx, |document, cx| document.set_caret(4, 3, cx));
-    document.update_in(cx, |document, window, cx| {
-        document.set_top_line(40, window, cx)
-    });
-    frames(cx);
-    let source = document.read_with(cx, |document, cx| document.top_line(cx));
-    assert_eq!(source, 40, "the source scrolled");
-    let caret = document.read_with(cx, |document, cx| document.caret(cx));
-    assert_eq!(caret, (4, 3), "the view moved alone");
-    document.update_in(cx, |document, window, cx| {
-        document.set_mode(MarkdownMode::Visual, window, cx)
-    });
-    frames(cx);
-    let (caret, top) = document.read_with(cx, |document, cx| {
-        (document.caret(cx), document.top_line(cx))
-    });
-    assert_eq!(caret, (4, 3), "one caret for every mode");
-    assert_eq!(top, 40, "the view stays at its line");
-}
-
-#[gpui::test]
 fn the_keyboard_reaches_and_opens_a_block(cx: &mut TestAppContext) {
     let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
     cx.update(|window, cx| window.focus_next(cx));
@@ -413,73 +365,4 @@ fn a_press_after_a_write_back_waits_for_the_long_read(cx: &mut TestAppContext) {
     assert_eq!(opened(&document, cx), "B", "once read, B opens whole");
 }
 
-/// A fenced block of `lines` lines, then a paragraph.
-fn fenced(lines: usize) -> String {
-    let body: String = (0..lines).map(|n| format!("line {n}\n")).collect();
-    format!("```\n{body}```\n\nAfter.\n")
-}
-
-#[gpui::test]
-fn a_top_line_inside_a_tall_block_survives_modes(cx: &mut TestAppContext) {
-    let (document, cx) = open(&fenced(100), MarkdownMode::Source, cx);
-    document.update_in(cx, |document, window, cx| {
-        document.set_top_line(40, window, cx)
-    });
-    frames(cx);
-    document.update_in(cx, |document, window, cx| {
-        document.set_mode(MarkdownMode::Visual, window, cx)
-    });
-    frames(cx);
-    let top = document.read_with(cx, |document, cx| document.top_line(cx));
-    assert_eq!(top, 40);
-}
-
-#[gpui::test]
-fn visual_to_preview_keeps_the_offset_in_a_block(cx: &mut TestAppContext) {
-    let (document, cx) = open(&fenced(100), MarkdownMode::Visual, cx);
-    document.update(cx, |document, cx| {
-        document.list.scroll_to(gpui::ListOffset {
-            item_ix: 0,
-            offset_in_item: px(500.0),
-        });
-        cx.notify();
-    });
-    frames(cx);
-    let before = document.read_with(cx, |document, _| document.list.logical_scroll_top());
-    document.update_in(cx, |document, window, cx| {
-        document.set_mode(MarkdownMode::Preview, window, cx)
-    });
-    frames(cx);
-    let after = document.read_with(cx, |document, _| document.list.logical_scroll_top());
-    assert_eq!(
-        (after.item_ix, after.offset_in_item),
-        (before.item_ix, before.offset_in_item)
-    );
-    assert_eq!(after.offset_in_item, px(500.0));
-}
-
-#[gpui::test]
-fn a_top_line_asked_with_new_text_lands_once_read(cx: &mut TestAppContext) {
-    let (document, cx) = open("old", MarkdownMode::Visual, cx);
-    let fresh: String = (0..100).map(|n| format!("Paragraph {n}\n\n")).collect();
-    document.update_in(cx, |document, window, cx| {
-        document.reset(fresh, cx);
-        document.set_top_line(40, window, cx);
-    });
-    frames(cx);
-    let top = document.read_with(cx, |document, cx| document.top_line(cx));
-    assert_eq!(top, 40);
-}
-
-#[gpui::test]
-fn a_second_top_line_asked_while_placing_wins(cx: &mut TestAppContext) {
-    let fresh: String = (0..100).map(|n| format!("Paragraph {n}\n\n")).collect();
-    let (document, cx) = open(&fresh, MarkdownMode::Source, cx);
-    document.update_in(cx, |document, window, cx| {
-        document.set_mode(MarkdownMode::Visual, window, cx);
-        document.set_top_line(60, window, cx);
-    });
-    frames(cx);
-    let top = document.read_with(cx, |document, cx| document.top_line(cx));
-    assert_eq!(top, 60);
-}
+mod place;

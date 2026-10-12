@@ -35,6 +35,15 @@ pub enum DocumentEvent {
     Parsed,
 }
 
+/// A top line asked, numbered so late callbacks know theirs.
+#[derive(Clone, Copy, Debug)]
+struct Placement {
+    line: usize,
+    ask: u64,
+    /// Scrolled; its frame callback finishes it.
+    placing: bool,
+}
+
 /// The block open as its source, in its own field.
 struct Open {
     range: Range<usize>,
@@ -56,8 +65,8 @@ pub struct MarkdownDocument {
     list: ListState,
     open: Option<Open>,
     /// A top line asked for, until the view holds it.
-    top: Option<usize>,
-    placing: bool,
+    top: Option<Placement>,
+    asks: u64,
     /// Its own write-backs whose changes are still to come.
     writes: usize,
     focus: FocusHandle,
@@ -106,7 +115,7 @@ impl MarkdownDocument {
             list: ListState::new(1, ListAlignment::Top, overdraw),
             open: None,
             top: None,
-            placing: false,
+            asks: 0,
             writes: 0,
             focus: cx.focus_handle(),
             on_link: None,
@@ -203,6 +212,7 @@ impl MarkdownDocument {
             log::error!("markdown document: the text changed under the open block");
             self.drop_open(cx);
         }
+        self.replace_top();
         self.edits += 1;
         cx.emit(DocumentEvent::Changed);
         self.reparse(cx);
