@@ -201,3 +201,43 @@ fn a_newer_match_takes_the_place_of_a_waiting_one(cx: &mut TestAppContext) {
     cx.simulate_input("z");
     assert_eq!(text(&document, cx), "a b z\n");
 }
+
+#[gpui::test]
+fn an_empty_task_ends_the_list(cx: &mut TestAppContext) {
+    let (document, cx) = open("- [x] done", MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| document.set_caret(0, 10, cx));
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    let focus = editor.read_with(cx, gpui::Focusable::focus_handle);
+    cx.update(|window, cx| window.focus(&focus, cx));
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    assert_eq!(text(&document, cx), "- [x] done\n");
+}
+
+#[gpui::test]
+fn shift_tab_takes_a_tab_indent_out(cx: &mut TestAppContext) {
+    let (document, cx) = open("- a\n\t- b\n", MarkdownMode::Visual, cx);
+    press(0, Modifiers::none(), cx);
+    cx.simulate_keystrokes("shift-tab");
+    assert_eq!(opened(&document, cx), "- a\n- b");
+}
+
+#[gpui::test]
+fn a_table_on_an_indented_blank_line_is_a_table(cx: &mut TestAppContext) {
+    let (document, cx) = open(
+        "    
+",
+        MarkdownMode::Source,
+        cx,
+    );
+    document.update(cx, |document, cx| {
+        document.set_caret(0, 4, cx);
+        document.insert_table(cx).expect("inserted");
+    });
+    let column = document.update(cx, |document, cx| {
+        document.edit_table(crate::documents::TableEdit::ColumnRight, cx)
+    });
+    assert_eq!(column, Ok(()), "{}", text(&document, cx));
+    assert!(text(&document, cx).starts_with("| "));
+}

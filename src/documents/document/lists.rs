@@ -50,10 +50,14 @@ pub(super) fn enter(source: &str, at: usize) -> Option<(Range<usize>, String)> {
         "" => " ",
         written => written,
     };
-    let task = matches!(item, mdast::Node::ListItem(item) if item.checked.is_some());
     let body = source[start + after..span(item).end].trim_start();
-    let body = match task {
-        true => body.get(3..).unwrap_or_default(),
+    // A bare box has no `checked`: it is still a task.
+    let boxed = ["[ ]", "[x]", "[X]"]
+        .iter()
+        .any(|task| body.starts_with(task));
+    let task = boxed || matches!(item, mdast::Node::ListItem(item) if item.checked.is_some());
+    let body = match boxed {
+        true => &body[3..],
         false => body,
     };
     let end = source[at..]
@@ -101,6 +105,8 @@ pub(super) fn shift(text: &str, range: Range<usize>, deeper: bool) -> (String, R
         let spaces = line.len() - line.trim_start_matches(' ').len();
         match deeper {
             true => changes.push((at, STEP as isize)),
+            // A leading tab is one step out.
+            false if line.starts_with('\t') => changes.push((at, -1)),
             false if spaces > 0 => changes.push((at, -(spaces.min(STEP) as isize))),
             false => {}
         }

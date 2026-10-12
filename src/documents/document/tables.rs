@@ -214,10 +214,16 @@ impl MarkdownDocument {
         let at = self.editor.read(cx).primary().range().start;
         let end = text[at..].find('\n').map_or(text.len(), |found| at + found);
         let start = text[..at].rfind('\n').map_or(0, |found| found + 1);
-        let before = if text[start..end].trim().is_empty() {
-            ""
-        } else {
-            "\n\n"
+        // A blank line gives way; a written one keeps.
+        let blank = text[start..end].trim().is_empty();
+        let above = text[..start.saturating_sub(1)]
+            .rsplit('\n')
+            .next()
+            .unwrap_or_default();
+        let (from, before) = match (blank, above.trim().is_empty()) {
+            (true, true) => (start, ""),
+            (true, false) => (start, "\n"),
+            (false, _) => (end, "\n\n"),
         };
         let after = if text[end..].starts_with("\n\n") || end == text.len() {
             ""
@@ -225,10 +231,10 @@ impl MarkdownDocument {
             "\n"
         };
         let written = format!("{before}{NEW}{after}");
-        let caret = end + before.len() + 2;
+        let caret = from + before.len() + 2;
         log::info!("markdown document: a table goes in");
         self.editor.update(cx, |editor, cx| {
-            editor.edit([(end..end, written)], cx);
+            editor.edit([(from..end, written)], cx);
             editor.select(std::iter::once(caret..caret), cx);
         });
         Ok(())
