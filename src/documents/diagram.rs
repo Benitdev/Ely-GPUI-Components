@@ -112,10 +112,12 @@ pub fn diagram_svg(source: &str) -> Result<String, SharedString> {
     };
     let tree = usvg::Tree::from_data(drawn.as_bytes(), &options)
         .map_err(|error| SharedString::from(format!("{error}")))?;
-    // A label without a font vanishes: say so.
-    let (written, kept) = (labels(&drawn)?, texts(tree.root()));
-    if kept < written {
-        log::error!("diagram: {kept} of {written} labels found a font");
+    // A letter without a font vanishes: say so.
+    let (mut kept, mut lost) = (0, 0);
+    texts(tree.root(), &mut kept, &mut lost);
+    let written = labels(&drawn)?;
+    if kept < written || lost > 0 {
+        log::error!("diagram: {kept} of {written} labels set, {lost} letters without a font");
         return Err("no installed font could set this diagram's labels".into());
     }
     Ok(tree.to_string(&usvg::WriteOptions::default()))
@@ -135,17 +137,25 @@ fn labels(svg: &str) -> Result<usize, SharedString> {
         .count())
 }
 
-/// Text nodes usvg set.
-fn texts(group: &usvg::Group) -> usize {
-    group
-        .children()
-        .iter()
-        .map(|node| match node {
-            usvg::Node::Group(inner) => texts(inner),
-            usvg::Node::Text(_) => 1,
-            _ => 0,
-        })
-        .sum()
+/// Text nodes usvg set, and letters it found no glyph for.
+fn texts(group: &usvg::Group, kept: &mut usize, lost: &mut usize) {
+    for node in group.children() {
+        match node {
+            usvg::Node::Group(inner) => texts(inner, kept, lost),
+            usvg::Node::Text(text) => {
+                *kept += 1;
+                let glyphs = text
+                    .layouted()
+                    .iter()
+                    .flat_map(|span| &span.positioned_glyphs);
+                // Glyph zero is a font's blank for a missing letter.
+                *lost += glyphs
+                    .filter(|glyph| glyph.id.0 == 0 && !glyph.text.trim().is_empty())
+                    .count();
+            }
+            _ => {}
+        }
+    }
 }
 
 /// The system's fonts, read once.
@@ -257,6 +267,12 @@ mod tests {
         .expect("draws");
         assert!(svg.contains("<path"), "{svg}");
         assert!(!svg.contains("<marker") && !svg.contains("<text"), "{svg}");
+    }
+
+    #[test]
+    fn a_letter_no_font_has_is_an_error() {
+        let why = diagram_svg("flowchart LR\n  A[ABC \u{F0000}] --> B").expect_err("no glyph");
+        assert!(why.contains("font"), "{why}");
     }
 
     #[test]
