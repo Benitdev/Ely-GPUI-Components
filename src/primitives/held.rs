@@ -27,7 +27,7 @@ impl Holders {
         }
     }
 
-    /// One holder leaves; the last one gets the image to free.
+    /// One holder leaves; the last gets the image to free.
     fn leave(&mut self, key: Key) -> Option<Option<Arc<RenderImage>>> {
         let record = self.0.get_mut(&key).expect("a held asset is counted");
         record.0 -= 1;
