@@ -48,7 +48,7 @@ pub use find::{FindOptions, FindWidget, find_all};
 pub use hints::{CompletionItem, CompletionMenu, Signature, SignatureHelp, completions};
 pub use hover::HoverInfo;
 pub use keybindings::{KeySource, Keybinding, KeybindingsEditor, conflicts};
-pub(crate) use keys::bind_keys;
+pub(crate) use keys::{Newline, bind_keys};
 pub(crate) use layout::stack;
 pub use preview::ThemePreview;
 pub use problems::{Problem, ProblemsPanel};

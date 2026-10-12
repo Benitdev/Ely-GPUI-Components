@@ -12,16 +12,19 @@ use crate::{
     theme::{ActiveTheme, Radius, TextSize},
 };
 
-actions!(markdown_document, [Undo, Redo]);
+actions!(markdown_document, [Undo, Redo, Indent, Outdent]);
 
 const CONTEXT: &str = "MarkdownDocument";
 
-/// Undo and redo while no block is open.
+/// Undo and redo; Tab shifts an open block's lines.
 pub(crate) fn bind_keys(cx: &mut App) {
     let context = Some(CONTEXT);
+    let block = Some("MarkdownDocument > ElyInput");
     let mut bindings = vec![
         KeyBinding::new("secondary-z", Undo, context),
         KeyBinding::new("secondary-shift-z", Redo, context),
+        KeyBinding::new("tab", Indent, block),
+        KeyBinding::new("shift-tab", Outdent, block),
     ];
     if !cfg!(target_os = "macos") {
         bindings.push(KeyBinding::new("ctrl-y", Redo, context));
@@ -143,7 +146,14 @@ impl Render for MarkdownDocument {
             .font_weight(FontWeight::NORMAL);
         let blocks = list(self.list.clone(), cx.processor(Self::item)).size_full();
         match self.mode {
-            MarkdownMode::Source => root.child(self.editor.clone()).into_any_element(),
+            MarkdownMode::Source => root
+                .capture_action(cx.listener(|document, _: &crate::editor::Newline, _, cx| {
+                    if document.source_newline(cx) {
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(self.editor.clone())
+                .into_any_element(),
             MarkdownMode::Split => root
                 .flex()
                 .child(div().flex_1().min_w_0().h_full().child(self.editor.clone()))
@@ -172,6 +182,17 @@ impl Render for MarkdownDocument {
                 .capture_action(cx.listener(|document, _: &forms::Redo, window, cx| {
                     cx.stop_propagation();
                     document.history(true, window, cx);
+                }))
+                .capture_action(cx.listener(|document, _: &forms::Enter, _, cx| {
+                    if document.block_newline(cx) {
+                        cx.stop_propagation();
+                    }
+                }))
+                .on_action(cx.listener(|document, _: &Indent, window, cx| {
+                    document.block_shift(true, window, cx);
+                }))
+                .on_action(cx.listener(|document, _: &Outdent, window, cx| {
+                    document.block_shift(false, window, cx);
                 }))
                 .capture_action(cx.listener(|document, _: &Up, window, cx| {
                     if document.step(false, window, cx) {

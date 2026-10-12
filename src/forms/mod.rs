@@ -113,7 +113,7 @@ pub use structure::{
     DirtyIndicator, Form, FormError, FormField, FormLabel, FormSection, InlineForm,
 };
 pub use switch::Switch;
-pub(crate) use syntax::{Syntax, syntax_of};
+pub(crate) use syntax::{Syntax, syntax_fenced, syntax_of};
 pub use tags::TagInput;
 pub(crate) use text::{
     Backspace, Copy, Cut, Delete, DeleteWordLeft, Down, Enter, Redo, Submit, Undo, Up, bind_keys,

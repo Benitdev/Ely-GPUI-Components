@@ -142,6 +142,26 @@ const BY_EXTENSION: &[(&Syntax, &[&str])] = &[
     (&TEX, &["tex", "sty", "bib"]),
 ];
 
+/// How code fenced as `name` reads; none for prose.
+pub(crate) fn syntax_fenced(name: &str) -> Option<&'static Syntax> {
+    let name = name.to_ascii_lowercase();
+    let extension = match name.as_str() {
+        "rust" => "rs",
+        "javascript" | "typescript" => "js",
+        "python" => "py",
+        "ruby" => "rb",
+        "shell" | "console" => "sh",
+        "haskell" => "hs",
+        "clojure" => "clj",
+        "scheme" | "elisp" => "lisp",
+        "erlang" => "erl",
+        "latex" => "tex",
+        "plaintext" | "plain" => "txt",
+        other => other,
+    };
+    syntax_of(&format!("fence.{extension}"))
+}
+
 /// How the file at `path` reads; none for prose.
 pub(crate) fn syntax_of(path: &str) -> Option<&'static Syntax> {
     let name = path.rsplit_once('/').map_or(path, |(_, name)| name);
@@ -158,4 +178,17 @@ pub(crate) fn syntax_of(path: &str) -> Option<&'static Syntax> {
         .iter()
         .find(|(_, exts)| exts.contains(&ext.as_str()));
     Some(found.map_or(&C_LIKE, |(syntax, _)| *syntax))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PYTHON, RUST, SHELL, syntax_fenced};
+
+    #[test]
+    fn fences_read_by_their_language() {
+        assert_eq!(syntax_fenced("Rust"), Some(&RUST));
+        assert_eq!(syntax_fenced("python"), Some(&PYTHON));
+        assert_eq!(syntax_fenced("bash"), Some(&SHELL));
+        assert_eq!(syntax_fenced("text"), None, "prose stays plain");
+    }
 }

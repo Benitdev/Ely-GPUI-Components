@@ -34,7 +34,7 @@ pub use blocks::{Align, BlockData, BlockEditor, BlockEvent, BlockKind, Media};
 pub use contents::outline;
 pub use counts::{ReadingTime, WordCount};
 pub use diagram::Diagram;
-pub use document::{DocumentEvent, DocumentHeading, LARGEST_READ, MarkdownDocument};
+pub use document::{DocumentEvent, DocumentHeading, LARGEST_READ, MarkdownDocument, TableEdit};
 pub use epub::{Chapter, EpubReader};
 pub use format::{Format, format};
 pub(crate) use history::Change;

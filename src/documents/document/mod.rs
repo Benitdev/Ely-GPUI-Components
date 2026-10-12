@@ -1,6 +1,9 @@
 mod edit;
+mod finding;
+mod lists;
 mod parse;
 mod place;
+mod tables;
 #[cfg(all(test, feature = "test-support"))]
 mod tests;
 mod visual;
@@ -16,6 +19,7 @@ use gpui::{
 
 pub use parse::DocumentHeading;
 use parse::{Parsed, alike, parsed};
+pub use tables::TableEdit;
 
 use super::{MarkdownMode, markdown::markdown_highlights, modes::joint, render::OnLink};
 use crate::{

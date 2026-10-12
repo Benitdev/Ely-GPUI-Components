@@ -14,7 +14,7 @@ use super::{
     tree::{Inline, Node, Style, parse},
 };
 use crate::{
-    editor::code_colors,
+    editor::{code_colors, code_colors_with},
     navigation::{Anchor, Sections},
     primitives::{FocusRing as _, Icon, IconName},
     theme::{ActiveTheme, IconSize, Radius, TextSize},
@@ -224,7 +224,12 @@ impl Draw<'_> {
                         text.clone().into(),
                     );
                 }
-                let styles = code_colors(text, cx);
+                // A named fence reads as its language; prose stays plain.
+                let styles = match language.as_deref() {
+                    Some(name) => crate::forms::syntax_fenced(name)
+                        .map_or_else(Vec::new, |syntax| code_colors_with(text, syntax, cx)),
+                    None => code_colors(text, cx),
+                };
                 div()
                     .flex()
                     .flex_col()
