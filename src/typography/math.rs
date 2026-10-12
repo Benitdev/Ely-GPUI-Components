@@ -116,6 +116,18 @@ impl Asset for Typesetter {
     }
 }
 
+/// `source` as black outlined SVG, for export.
+pub fn formula_svg(source: &str, display: bool) -> Result<String, MathError> {
+    let formula = Formula {
+        source: source.to_owned().into(),
+        display,
+        rgba: 0x0000_00ff,
+        font: 1600,
+        scale: 100,
+    };
+    svg(&formula).map(|(svg, _)| svg)
+}
+
 /// The formula as outlined SVG holding all ink; its size.
 fn svg(formula: &Formula) -> Result<(String, Size<Pixels>), MathError> {
     let ast = parsed(&formula.source)?;

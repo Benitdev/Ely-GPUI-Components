@@ -177,3 +177,11 @@ fn a_shared_formula_stays_until_its_last_holder_leaves(cx: &mut gpui::TestAppCon
     flush(cx);
     assert!(!cached("c^2", cx), "the last holder freed it");
 }
+
+#[test]
+fn an_exported_formula_is_black_outlines() {
+    let svg = formula_svg(r"\sqrt{x}", true).expect("typesets");
+    assert!(svg.starts_with("<svg") && !svg.contains("<text"), "{svg}");
+    assert!(svg.contains("0,0,0"), "black: {svg}");
+    assert!(formula_svg(r"\frac{", false).is_err());
+}

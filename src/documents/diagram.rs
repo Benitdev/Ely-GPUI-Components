@@ -1,6 +1,6 @@
 use std::{
     panic::{AssertUnwindSafe, catch_unwind},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 use gpui::{
@@ -95,6 +95,72 @@ fn svg(chart: &Chart) -> Result<String, SharedString> {
     }
 }
 
+/// `source` as light SVG of plain paths, for export.
+pub fn diagram_svg(source: &str) -> Result<String, SharedString> {
+    let chart = Chart {
+        source: source.to_owned().into(),
+        dark: false,
+        ground: "#ffffff".into(),
+        ink: "#000000".into(),
+        scale: 100,
+    };
+    let drawn = svg(&chart)?;
+    // Markers and text become paths any reader draws.
+    let options = usvg::Options {
+        fontdb: fonts(),
+        ..usvg::Options::default()
+    };
+    let tree = usvg::Tree::from_data(drawn.as_bytes(), &options)
+        .map_err(|error| SharedString::from(format!("{error}")))?;
+    // A label without a font vanishes: say so.
+    let (written, kept) = (labels(&drawn)?, texts(tree.root()));
+    if kept < written {
+        log::error!("diagram: {kept} of {written} labels found a font");
+        return Err("no installed font could set this diagram's labels".into());
+    }
+    Ok(tree.to_string(&usvg::WriteOptions::default()))
+}
+
+/// The `<text>` elements holding words.
+fn labels(svg: &str) -> Result<usize, SharedString> {
+    let doc = usvg::roxmltree::Document::parse(svg)
+        .map_err(|error| SharedString::from(format!("{error}")))?;
+    let worded = |node: &usvg::roxmltree::Node| {
+        node.descendants()
+            .any(|word| word.text().is_some_and(|text| !text.trim().is_empty()))
+    };
+    Ok(doc
+        .descendants()
+        .filter(|node| node.has_tag_name("text") && worded(node))
+        .count())
+}
+
+/// Text nodes usvg set.
+fn texts(group: &usvg::Group) -> usize {
+    group
+        .children()
+        .iter()
+        .map(|node| match node {
+            usvg::Node::Group(inner) => texts(inner),
+            usvg::Node::Text(_) => 1,
+            _ => 0,
+        })
+        .sum()
+}
+
+/// The system's fonts, read once.
+fn fonts() -> Arc<usvg::fontdb::Database> {
+    static FONTS: OnceLock<Arc<usvg::fontdb::Database>> = OnceLock::new();
+    FONTS
+        .get_or_init(|| {
+            let mut fonts = usvg::fontdb::Database::new();
+            fonts.load_system_fonts();
+            log::info!("diagram: {} system font faces for export", fonts.len());
+            Arc::new(fonts)
+        })
+        .clone()
+}
+
 /// `#rrggbb` of a theme color.
 fn hex(color: Hsla) -> SharedString {
     let rgb = color.to_rgb();
@@ -180,6 +246,17 @@ mod tests {
     fn a_broken_diagram_says_why() {
         let why = svg(&chart("flowchart LR\n  A -->", false)).expect_err("an error");
         assert!(!why.is_empty());
+    }
+
+    #[test]
+    fn an_exported_diagram_is_plain_paths() {
+        let svg = diagram_svg(
+            "flowchart LR
+  A[Start] --> B",
+        )
+        .expect("draws");
+        assert!(svg.contains("<path"), "{svg}");
+        assert!(!svg.contains("<marker") && !svg.contains("<text"), "{svg}");
     }
 
     #[test]
