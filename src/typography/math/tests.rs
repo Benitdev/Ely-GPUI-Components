@@ -1,3 +1,5 @@
+use gpui::AppContext as _;
+
 use super::*;
 
 fn formula(source: &str, display: bool) -> Formula {
@@ -101,6 +103,12 @@ fn settle(cx: &mut gpui::VisualTestContext) {
     cx.run_until_parked();
 }
 
+/// Draws, then lets gpui release what the frame dropped.
+fn flush(cx: &mut gpui::VisualTestContext) {
+    cx.run_until_parked();
+    cx.update(|_, _| ());
+}
+
 /// Whether `source`'s picture sits in the asset cache.
 fn cached(source: &str, cx: &mut gpui::VisualTestContext) -> bool {
     cx.update(|window, cx| {
@@ -128,13 +136,44 @@ fn a_formula_frees_its_picture_when_it_changes_or_leaves(cx: &mut gpui::TestAppC
     assert!(!cached("b^2", cx), "gone with its element");
 }
 
+/// One formula in a view of its own.
+struct One;
+
+impl gpui::Render for One {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        Latex::parse("one", "c^2").expect("parses")
+    }
+}
+
+/// Views of one formula, each drawn from gpui's view cache.
+struct Pair(Vec<gpui::Entity<One>>);
+
+impl gpui::Render for Pair {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        div().children(
+            self.0.iter().map(|one| {
+                gpui::AnyView::from(one.clone()).cached(gpui::StyleRefinement::default())
+            }),
+        )
+    }
+}
+
 #[gpui::test]
-fn a_shared_formula_draws_on_after_one_user_leaves(cx: &mut gpui::TestAppContext) {
-    let (view, cx) = open(vec!["c^2", "c^2"], cx);
-    view.update(cx, |view, cx| {
-        view.0.pop();
+fn a_shared_formula_stays_until_its_last_holder_leaves(cx: &mut gpui::TestAppContext) {
+    cx.update(crate::theme::Theme::init);
+    let (pair, cx) = cx.add_window_view(|_, cx| Pair(vec![cx.new(|_| One), cx.new(|_| One)]));
+    settle(cx);
+    assert!(cached("c^2", cx), "drawn");
+    pair.update(cx, |pair, cx| {
+        pair.0.pop();
         cx.notify();
     });
-    settle(cx);
-    assert!(cached("c^2", cx), "the one left loads it again");
+    flush(cx);
+    assert!(cached("c^2", cx), "the cached survivor still holds it");
+    pair.update(cx, |pair, cx| {
+        pair.0.clear();
+        cx.notify();
+    });
+    flush(cx);
+    assert!(!cached("c^2", cx), "the last holder freed it");
 }
