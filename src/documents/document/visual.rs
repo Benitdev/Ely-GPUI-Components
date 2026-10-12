@@ -1,7 +1,7 @@
 use gpui::{
-    AnyElement, App, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyBinding,
-    MouseButton, MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
-    actions, div, list,
+    AnyElement, App, ClickEvent, Context, ExternalPaths, FontWeight, InteractiveElement,
+    IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Window, actions, div, list,
 };
 
 use super::MarkdownDocument;
@@ -12,7 +12,7 @@ use crate::{
     theme::{ActiveTheme, Radius, TextSize},
 };
 
-actions!(markdown_document, [Undo, Redo, Indent, Outdent]);
+actions!(markdown_document, [Undo, Redo, Indent, Outdent, Paste]);
 
 const CONTEXT: &str = "MarkdownDocument";
 
@@ -23,6 +23,7 @@ pub(crate) fn bind_keys(cx: &mut App) {
     let mut bindings = vec![
         KeyBinding::new("secondary-z", Undo, context),
         KeyBinding::new("secondary-shift-z", Redo, context),
+        KeyBinding::new("secondary-v", Paste, context),
         KeyBinding::new("tab", Indent, block),
         KeyBinding::new("shift-tab", Outdent, block),
     ];
@@ -144,10 +145,19 @@ impl Render for MarkdownDocument {
         let root = div()
             .size_full()
             .bg(colors.surface)
-            .font_weight(FontWeight::NORMAL);
+            .font_weight(FontWeight::NORMAL)
+            .on_drop(cx.listener(|_, dropped: &ExternalPaths, _, cx| {
+                log::info!("markdown document: {} files dropped", dropped.paths().len());
+                cx.emit(super::Attachment::Files(dropped.paths().to_vec()));
+            }));
         let blocks = list(self.list.clone(), cx.processor(Self::item)).size_full();
         match self.mode {
             MarkdownMode::Source => root
+                .capture_action(cx.listener(|document, _: &crate::editor::Paste, _, cx| {
+                    if document.paste_picture(cx) {
+                        cx.stop_propagation();
+                    }
+                }))
                 .capture_action(cx.listener(|document, _: &crate::editor::Newline, _, cx| {
                     if document.source_newline(cx) {
                         cx.stop_propagation();
@@ -183,6 +193,14 @@ impl Render for MarkdownDocument {
                 .capture_action(cx.listener(|document, _: &forms::Redo, window, cx| {
                     cx.stop_propagation();
                     document.history(true, window, cx);
+                }))
+                .capture_action(cx.listener(|document, _: &forms::Paste, _, cx| {
+                    if document.paste_picture(cx) {
+                        cx.stop_propagation();
+                    }
+                }))
+                .on_action(cx.listener(|document, _: &Paste, _, cx| {
+                    document.paste_picture(cx);
                 }))
                 .capture_action(cx.listener(|document, _: &forms::Enter, _, cx| {
                     if document.block_newline(cx) {

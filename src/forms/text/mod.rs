@@ -13,7 +13,8 @@ use gpui::{
 };
 
 pub(crate) use actions::{
-    Backspace, Copy, Cut, Delete, DeleteWordLeft, Down, Enter, Redo, Submit, Undo, Up, bind_keys,
+    Backspace, Copy, Cut, Delete, DeleteWordLeft, Down, Enter, Paste, Redo, Submit, Undo, Up,
+    bind_keys,
 };
 pub use edit::History;
 use edit::Snapshot;

@@ -365,6 +365,7 @@ fn a_press_after_a_write_back_waits_for_the_long_read(cx: &mut TestAppContext) {
     assert_eq!(opened(&document, cx), "B", "once read, B opens whole");
 }
 
+mod attach;
 mod history;
 mod links;
 mod place;

@@ -1,3 +1,4 @@
+mod attach;
 mod edit;
 mod finding;
 mod lists;
@@ -17,6 +18,7 @@ use gpui::{
     ListState, Subscription, Task, Window,
 };
 
+pub use attach::Attachment;
 pub use parse::DocumentHeading;
 use parse::{Parsed, alike, parsed};
 pub use tables::{TableEdit, TableRefusal};

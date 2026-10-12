@@ -35,7 +35,8 @@ pub use contents::outline;
 pub use counts::{ReadingTime, WordCount};
 pub use diagram::Diagram;
 pub use document::{
-    DocumentEvent, DocumentHeading, LARGEST_READ, MarkdownDocument, TableEdit, TableRefusal,
+    Attachment, DocumentEvent, DocumentHeading, LARGEST_READ, MarkdownDocument, TableEdit,
+    TableRefusal,
 };
 pub use epub::{Chapter, EpubReader};
 pub use format::{Format, format};
