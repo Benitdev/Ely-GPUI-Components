@@ -11,38 +11,8 @@ use crate::documents::markdown::{span, tree, walk};
 /// Spaces one indent step adds.
 const STEP: usize = 4;
 
-/// What Enter makes of a list line.
-#[derive(Debug, PartialEq)]
-pub(super) enum Next {
-    /// A new item: this follows the line break.
-    Item(String),
-    /// An empty item ends the list: the line empties.
-    End,
-}
-
-/// The item after `line`; none outside a list.
-pub(super) fn next(line: &str) -> Option<Next> {
-    let indent = line.len() - line.trim_start_matches(' ').len();
-    let rest = &line[indent..];
-    let ruled = rest.chars().filter(|ch| "-*_".contains(*ch)).count() >= 3
-        && rest.chars().all(|ch| "-*_ ".contains(ch));
-    if ruled {
-        return None;
-    }
-    let (mark, after) = bullet(rest).or_else(|| ordered(rest))?;
-    let body = &rest[after..];
-    let (task, body) = match body.get(..4) {
-        Some("[ ] " | "[x] " | "[X] ") => ("[ ] ", &body[4..]),
-        _ => ("", body),
-    };
-    if body.trim().is_empty() {
-        return Some(Next::End);
-    }
-    Some(Next::Item(format!("{}{mark}{task}", " ".repeat(indent))))
-}
-
-/// Whether `at` sits in a list item, not code.
-fn listed(source: &str, at: usize) -> bool {
+/// Enter at `at`: the edit, none outside list items.
+pub(super) fn enter(source: &str, at: usize) -> Option<(Range<usize>, String)> {
     let root = tree(source);
     let mut nodes = Vec::new();
     walk(&root, &mut nodes);
@@ -50,21 +20,60 @@ fn listed(source: &str, at: usize) -> bool {
         .into_iter()
         .filter(|node| span(node).start <= at && at <= span(node).end)
         .collect();
+    let raw = |node: &&&mdast::Node| matches!(node, mdast::Node::Code(_) | mdast::Node::Math(_));
+    if held.iter().any(|node| raw(&node)) {
+        return None;
+    }
     let item = held
         .iter()
-        .any(|node| matches!(node, mdast::Node::ListItem(_)));
-    item && !held
-        .iter()
-        .any(|node| matches!(node, mdast::Node::Code(_) | mdast::Node::Math(_)))
+        .filter(|node| matches!(node, mdast::Node::ListItem(_)))
+        .min_by_key(|node| span(node).len())?;
+    // The item may start at its indent; the marker follows.
+    let lead = &source[span(item).start..];
+    let start = span(item).start + lead.len() - lead.trim_start_matches([' ', '\t']).len();
+    let first = source[..start].rfind('\n').map_or(0, |found| found + 1);
+    // Quote marks stay; a parent's marker becomes spaces.
+    let container: String = source[first..start]
+        .chars()
+        .map(|ch| {
+            if ch == '>' || ch.is_whitespace() {
+                ch
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let rest = &source[start..];
+    let (marker, after) = bullet(rest).or_else(|| ordered(rest))?;
+    let gap = rest[after..].len() - rest[after..].trim_start_matches([' ', '\t']).len();
+    let gap = match &rest[after..after + gap] {
+        "" => " ",
+        written => written,
+    };
+    let task = matches!(item, mdast::Node::ListItem(item) if item.checked.is_some());
+    let body = source[start + after..span(item).end].trim_start();
+    let body = match task {
+        true => body.get(3..).unwrap_or_default(),
+        false => body,
+    };
+    let end = source[at..]
+        .find('\n')
+        .map_or(source.len(), |found| at + found);
+    if body.trim().is_empty() {
+        // An empty item ends the list.
+        return (at == end).then(|| (start..end, String::new()));
+    }
+    let task = if task { "[ ] " } else { "" };
+    Some((at..at, format!("\n{container}{marker}{gap}{task}")))
 }
 
-/// A bullet marker, and where its text starts.
+/// A bullet marker and its length.
 fn bullet(rest: &str) -> Option<(String, usize)> {
     let mark = rest.chars().next().filter(|ch| "-*+".contains(*ch))?;
-    rest[1..].starts_with(' ').then(|| (format!("{mark} "), 2))
+    Some((mark.to_string(), 1))
 }
 
-/// A number marker, counted on; where text starts.
+/// A number marker, counted on, and its length.
 fn ordered(rest: &str) -> Option<(String, usize)> {
     let digits = rest.chars().take_while(char::is_ascii_digit).count();
     if !(1..=9).contains(&digits) {
@@ -74,11 +83,8 @@ fn ordered(rest: &str) -> Option<(String, usize)> {
         .chars()
         .next()
         .filter(|ch| ".)".contains(*ch))?;
-    if !rest[digits + 1..].starts_with(' ') {
-        return None;
-    }
     let number: u64 = rest[..digits].parse().expect("ascii digits");
-    Some((format!("{}{close} ", number + 1), digits + 2))
+    Some((format!("{}{close}", number + 1), digits + 1))
 }
 
 /// Lines `range` touches, a step in or out.
@@ -152,22 +158,13 @@ impl MarkdownDocument {
         else {
             return false;
         };
-        if !listed(&text[block.clone()], caret.start - block.start) {
+        let at = caret.start - block.start;
+        let Some((range, typed)) = enter(&text[block.clone()], at) else {
             return false;
-        }
-        let start = text[..caret.start].rfind('\n').map_or(0, |at| at + 1);
-        let end = text[caret.start..]
-            .find('\n')
-            .map_or(text.len(), |at| caret.start + at);
-        let (edit, after) = match next(&text[start..end]) {
-            Some(Next::Item(prefix)) => {
-                let typed = format!("\n{prefix}");
-                let after = caret.start + typed.len();
-                ((caret.clone(), typed), after)
-            }
-            Some(Next::End) if caret.start == end => ((start..end, String::new()), start),
-            _ => return false,
         };
+        let range = range.start + block.start..range.end + block.start;
+        let after = range.start + typed.len();
+        let edit = (range, typed);
         log::info!("markdown document: a list goes on in source");
         self.editor.update(cx, |editor, cx| {
             editor.edit([edit], cx);
@@ -186,17 +183,11 @@ impl MarkdownDocument {
             let input = input.read(cx);
             (input.text().to_string(), input.selection())
         };
-        if !caret.is_empty() || !listed(&text, caret.start) {
+        if !caret.is_empty() {
             return false;
         }
-        let start = text[..caret.start].rfind('\n').map_or(0, |at| at + 1);
-        let end = text[caret.start..]
-            .find('\n')
-            .map_or(text.len(), |at| caret.start + at);
-        let (range, typed) = match next(&text[start..end]) {
-            Some(Next::Item(prefix)) => (caret, format!("\n{prefix}")),
-            Some(Next::End) if caret.start == end => (start..end, String::new()),
-            _ => return false,
+        let Some((range, typed)) = enter(&text, caret.start) else {
+            return false;
         };
         log::info!("markdown document: a list goes on in a block");
         input.update(cx, |input, cx| {
@@ -226,24 +217,51 @@ impl MarkdownDocument {
 
 #[cfg(test)]
 mod tests {
-    use super::{Next, next, shift};
+    use super::{enter, shift};
+
+    /// Enter at the end of `source`'s line holding `at`.
+    fn entered(source: &str, at: &str) -> Option<String> {
+        let at = source.find(at).expect("in the text") + at.len();
+        let (range, typed) = enter(source, at)?;
+        Some(format!(
+            "{}{typed}{}",
+            &source[..range.start],
+            &source[range.end..]
+        ))
+    }
 
     #[test]
     fn items_go_on_with_their_marker() {
-        let item = |line| match next(line) {
-            Some(Next::Item(prefix)) => prefix,
-            other => panic!("{line:?} made {other:?}"),
-        };
-        assert_eq!(item("- a"), "- ");
-        assert_eq!(item("  * a"), "  * ");
-        assert_eq!(item("9. a"), "10. ");
-        assert_eq!(item("3) a"), "4) ");
-        assert_eq!(item("- [x] done"), "- [ ] ");
-        assert_eq!(next("- "), Some(Next::End));
-        assert_eq!(next("1. [ ] "), Some(Next::End));
-        for plain in ["text", "-a", "* * *", "---", "1.a", ""] {
-            assert_eq!(next(plain), None, "{plain:?}");
+        assert_eq!(entered("- a", "a").as_deref(), Some("- a\n- "));
+        assert_eq!(entered("  * a", "a").as_deref(), Some("  * a\n  * "));
+        assert_eq!(entered("9. a", "a").as_deref(), Some("9. a\n10. "));
+        assert_eq!(entered("3) a", "a").as_deref(), Some("3) a\n4) "));
+        assert_eq!(
+            entered("- [x] done", "done").as_deref(),
+            Some("- [x] done\n- [ ] ")
+        );
+        assert_eq!(entered("- a\n- ", "- a\n- ").as_deref(), Some("- a\n"));
+        let plain = [
+            ("text", "text"),
+            ("-a", "-a"),
+            ("* * *", "* * *"),
+            ("```\n- a\n```", "- a"),
+            ("1.a", "1.a"),
+        ];
+        for (plain, at) in plain {
+            assert_eq!(entered(plain, at), None, "{plain:?}");
         }
+    }
+
+    #[test]
+    fn quotes_tabs_and_nesting_carry_on() {
+        assert_eq!(entered("> - a", "a").as_deref(), Some("> - a\n> - "));
+        assert_eq!(entered("-\ta", "a").as_deref(), Some("-\ta\n-\t"));
+        assert_eq!(
+            entered("- a\n\t- b", "b").as_deref(),
+            Some("- a\n\t- b\n\t- ")
+        );
+        assert_eq!(entered("- - a", "a").as_deref(), Some("- - a\n  - "));
     }
 
     #[test]

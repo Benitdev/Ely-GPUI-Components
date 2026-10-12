@@ -79,8 +79,8 @@ pub struct MarkdownDocument {
     asks: u64,
     /// Its own write-backs whose changes are still to come.
     writes: usize,
-    /// A match asked for before its text was read.
-    showing: Option<Range<usize>>,
+    /// A match asked before its text was read; its version.
+    showing: Option<(Range<usize>, u64)>,
     focus: FocusHandle,
     on_link: Option<OnLink>,
     _subscriptions: Vec<Subscription>,

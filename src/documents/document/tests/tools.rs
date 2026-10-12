@@ -147,3 +147,57 @@ fn preview_takes_no_edits(cx: &mut TestAppContext) {
     assert_eq!(refused, (false, preview, preview));
     assert_eq!(text(&document, cx), "| A |\n| - |\n| 1 |\n");
 }
+
+#[gpui::test]
+fn a_quoted_list_goes_on_in_source_and_in_a_block(cx: &mut TestAppContext) {
+    let (document, cx) = open("> - a\n", MarkdownMode::Visual, cx);
+    press(0, Modifiers::none(), cx);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(opened(&document, cx), "> - a\n> - ");
+    cx.simulate_keystrokes("escape");
+    document.update_in(cx, |document, window, cx| {
+        document.set_mode(MarkdownMode::Source, window, cx);
+        document.set_text("> - a", cx);
+        document.set_caret(0, 5, cx);
+    });
+    cx.run_until_parked();
+    cx.simulate_keystrokes("enter");
+    assert_eq!(text(&document, cx), "> - a\n> - ");
+}
+
+/// A text long enough to be read off the window.
+fn long() -> String {
+    "para\n\n".repeat(super::super::AT_ONCE / 6 + 1)
+}
+
+#[gpui::test]
+fn a_waiting_match_lapses_when_the_text_changes(cx: &mut TestAppContext) {
+    let (document, cx) = open("x\n", MarkdownMode::Visual, cx);
+    document.update_in(cx, |document, window, cx| {
+        document.set_text(long(), cx);
+        document.show_match(0..1, window, cx);
+    });
+    document.update(cx, |document, cx| {
+        document.set_text(format!("y{}", long()), cx)
+    });
+    super::frames(cx);
+    let opened = document.read_with(cx, |document, _| document.open.is_some());
+    assert!(!opened, "the old match does not land on the new text");
+}
+
+#[gpui::test]
+fn a_newer_match_takes_the_place_of_a_waiting_one(cx: &mut TestAppContext) {
+    let (document, cx) = open("x\n", MarkdownMode::Visual, cx);
+    document.update_in(cx, |document, window, cx| {
+        document.set_text(long(), cx);
+        document.show_match(0..1, window, cx);
+    });
+    document.update(cx, |document, cx| document.set_text("a b a\n", cx));
+    cx.run_until_parked();
+    document.update_in(cx, |document, window, cx| {
+        document.show_match(4..5, window, cx)
+    });
+    super::frames(cx);
+    cx.simulate_input("z");
+    assert_eq!(text(&document, cx), "a b z\n");
+}

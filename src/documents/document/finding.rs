@@ -15,6 +15,8 @@ impl MarkdownDocument {
                 .matches('\n')
                 .count()
         };
+        // A newer request takes the place of one waiting.
+        self.showing = None;
         match self.mode {
             MarkdownMode::Source | MarkdownMode::Split => {
                 self.editor
@@ -26,8 +28,9 @@ impl MarkdownDocument {
                     self.reparse(true, cx);
                 }
                 if !self.read_now(cx) {
-                    // A long text: shown once read.
-                    self.showing = Some(range);
+                    // Shown once read, if nothing else changed it.
+                    let expected = self.edits + self.writes as u64;
+                    self.showing = Some((range, expected));
                     return cx.notify();
                 }
                 let ix = self.block_at(range.start);
@@ -55,13 +58,9 @@ impl MarkdownDocument {
         if self.showing.is_none() || !self.read_now(cx) {
             return;
         }
-        let range = self.showing.take().expect("checked above");
-        let text = self.editor.read(cx).text();
-        let fits = range.end <= text.len()
-            && text.is_char_boundary(range.start)
-            && text.is_char_boundary(range.end);
-        if !fits {
-            return log::warn!("markdown document: a waiting match outlived its text");
+        let (range, expected) = self.showing.take().expect("checked above");
+        if self.edits != expected {
+            return log::info!("markdown document: a waiting match lapsed with its text");
         }
         self.show_match(range, window, cx);
     }
