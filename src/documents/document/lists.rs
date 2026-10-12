@@ -51,7 +51,7 @@ pub(super) fn enter(source: &str, at: usize) -> Option<(Range<usize>, String)> {
         written => written,
     };
     let body = source[start + after..span(item).end].trim_start();
-    // A bare box has no `checked`: it is still a task.
+    // A bare box lacks `checked` yet is a task.
     let boxed = ["[ ]", "[x]", "[X]"]
         .iter()
         .any(|task| body.starts_with(task));
