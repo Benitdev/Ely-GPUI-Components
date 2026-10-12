@@ -7,7 +7,7 @@ mod visual;
 
 pub(crate) use visual::bind_keys;
 
-use std::{ops::Range, path::Path, rc::Rc, sync::Arc};
+use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, ListAlignment,
@@ -25,6 +25,12 @@ use crate::{
 
 /// Texts this long parse at once; longer ones elsewhere.
 const AT_ONCE: usize = 128 << 10;
+
+/// Longer texts are never read: source alone.
+pub const LARGEST_READ: usize = 2 << 20;
+
+/// Typing waits this long for a pause before a read.
+const PAUSE: Duration = Duration::from_millis(300);
 
 /// What the document tells its owner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,7 +127,7 @@ impl MarkdownDocument {
             on_link: None,
             _subscriptions: subscriptions,
         };
-        document.reparse(cx);
+        document.reparse(true, cx);
         document
     }
 
@@ -148,6 +154,9 @@ impl MarkdownDocument {
     pub fn set_mode(&mut self, mode: MarkdownMode, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         log::info!("markdown document: {:?} to {mode:?}", self.mode);
+        if !self.read_now(cx) {
+            self.reparse(true, cx);
+        }
         let listed = |mode| matches!(mode, MarkdownMode::Visual | MarkdownMode::Preview);
         // Visual and preview share one list and its scroll.
         let top = (!(listed(self.mode) && listed(mode))).then(|| self.top_line(cx));
@@ -215,17 +224,26 @@ impl MarkdownDocument {
         self.replace_top();
         self.edits += 1;
         cx.emit(DocumentEvent::Changed);
-        self.reparse(cx);
+        // Typed source reads after a pause.
+        let typed = matches!(self.mode, MarkdownMode::Source | MarkdownMode::Split);
+        self.reparse(!typed, cx);
     }
 
-    /// Reads the text again, at once when short.
-    fn reparse(&mut self, cx: &mut Context<Self>) {
+    /// Reads the text: short ones now, else after a pause.
+    fn reparse(&mut self, now: bool, cx: &mut Context<Self>) {
         let (text, edits) = (self.editor.read(cx).text().to_string(), self.edits);
-        if text.len() <= AT_ONCE {
+        if text.len() > LARGEST_READ {
+            self._parsing = None;
+            return log::info!("markdown document: {} bytes, too long to read", text.len());
+        }
+        if now && text.len() <= AT_ONCE {
             self._parsing = None;
             return self.adopt(parsed(&text), edits, cx);
         }
         self._parsing = Some(cx.spawn(async move |document, cx| {
+            if !now {
+                cx.background_executor().timer(PAUSE).await;
+            }
             let read = cx.background_spawn(async move { parsed(&text) }).await;
             document
                 .update(cx, |document, cx| document.adopt(read, edits, cx))

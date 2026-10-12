@@ -366,3 +366,33 @@ fn a_press_after_a_write_back_waits_for_the_long_read(cx: &mut TestAppContext) {
 }
 
 mod place;
+
+#[gpui::test]
+fn typed_source_reads_after_a_pause(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Source, cx);
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    editor.update(cx, |editor, cx| editor.edit([(0..0, "x".to_string())], cx));
+    cx.run_until_parked();
+    assert!(
+        !document.read_with(cx, |document, cx| document.read_now(cx)),
+        "no read per key"
+    );
+    cx.executor().advance_clock(super::PAUSE);
+    cx.run_until_parked();
+    assert!(
+        document.read_with(cx, |document, cx| document.read_now(cx)),
+        "read after the pause"
+    );
+}
+
+#[gpui::test]
+fn a_text_past_the_largest_read_is_never_read(cx: &mut TestAppContext) {
+    let long = "a\n".repeat(super::LARGEST_READ / 2 + 1);
+    let (document, cx) = open(&long, MarkdownMode::Source, cx);
+    cx.executor().advance_clock(super::PAUSE);
+    cx.run_until_parked();
+    let (read, outline) = document.read_with(cx, |document, cx| {
+        (document.read_now(cx), document.outline(cx).len())
+    });
+    assert!(!read && outline == 0);
+}

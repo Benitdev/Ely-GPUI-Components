@@ -36,7 +36,7 @@ impl MarkdownDocument {
         };
         let written = self.commit(cx);
         if written.is_some() {
-            self.reparse(cx);
+            self.reparse(true, cx);
         }
         if !self.read_now(cx) {
             return log::warn!("markdown document: pressed while the text is read again");
