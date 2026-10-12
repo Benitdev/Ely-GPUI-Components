@@ -180,7 +180,7 @@ fn guarded<T>(lay: impl FnOnce() -> T) -> Result<T, MathError> {
 
 /// `svg` reframed around its ink and layout box.
 fn framed(svg: &str, width: f32, height: f32) -> Result<(String, Size<Pixels>), MathError> {
-    let tree = usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default())
+    let tree = usvg::Tree::from_data(svg.as_bytes(), &crate::documents::svg_options())
         .map_err(|error| MathError::said(format!("{error}")))?;
     let ink = tree.root().abs_stroke_bounding_box();
     let left = ink.left().min(0.0);

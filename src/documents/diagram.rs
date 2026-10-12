@@ -54,7 +54,7 @@ impl Asset for Drawer {
         let renderer = cx.svg_renderer();
         async move {
             let svg = svg(&chart)?;
-            let tree = usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default())
+            let tree = usvg::Tree::from_data(svg.as_bytes(), &options())
                 .map_err(|error| SharedString::from(format!("{error}")))?;
             let shape = size(px(tree.size().width()), px(tree.size().height()));
             let picture = renderer
@@ -107,13 +107,17 @@ pub fn diagram_svg(source: &str) -> Result<String, SharedString> {
     flatten(&svg(&chart)?)
 }
 
-/// `svg` with markers and text as paths any reader draws.
-pub(crate) fn flatten(svg: &str) -> Result<String, SharedString> {
-    let options = usvg::Options {
+/// usvg reading with the system's fonts.
+pub(crate) fn options() -> usvg::Options<'static> {
+    usvg::Options {
         fontdb: fonts(),
         ..usvg::Options::default()
-    };
-    let tree = usvg::Tree::from_data(svg.as_bytes(), &options)
+    }
+}
+
+/// `svg` with markers and text as paths any reader draws.
+pub(crate) fn flatten(svg: &str) -> Result<String, SharedString> {
+    let tree = usvg::Tree::from_data(svg.as_bytes(), &options())
         .map_err(|error| SharedString::from(format!("{error}")))?;
     // A letter without a font vanishes: say so.
     let (mut kept, mut lost) = (0, 0);
