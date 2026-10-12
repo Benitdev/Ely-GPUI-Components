@@ -198,7 +198,7 @@ fn an_exported_formula_outlines_its_text_or_says_why() {
 
 #[test]
 fn an_exported_formula_frames_its_outlined_text() {
-    // Wide or tall faces from the system, where fonts have them.
+    // Wide or tall system faces, where installed.
     for source in [r"\text{한글}", r"\text{𓀀} + x"] {
         let Ok(svg) = formula_svg(source, false) else {
             continue;

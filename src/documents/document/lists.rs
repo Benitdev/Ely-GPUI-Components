@@ -91,7 +91,7 @@ fn ordered(rest: &str) -> Option<(String, usize)> {
     Some((format!("{}{close}", number + 1), digits + 1))
 }
 
-/// Leading bytes that make one step, tabs to stops of four.
+/// Leading bytes making one step; tabs stop every four.
 fn outdent(line: &str) -> usize {
     let mut columns = 0;
     for (bytes, ch) in line.char_indices() {
