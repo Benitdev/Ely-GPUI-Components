@@ -387,12 +387,13 @@ fn typed_source_reads_after_a_pause(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_text_past_the_largest_read_is_never_read(cx: &mut TestAppContext) {
+    let (document, cx) = open("# Old\n", MarkdownMode::Source, cx);
     let long = "a\n".repeat(super::LARGEST_READ / 2 + 1);
-    let (document, cx) = open(&long, MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| document.set_text(long, cx));
     cx.executor().advance_clock(super::PAUSE);
     cx.run_until_parked();
-    let (read, outline) = document.read_with(cx, |document, cx| {
-        (document.read_now(cx), document.outline(cx).len())
+    let (blocks, outline) = document.read_with(cx, |document, cx| {
+        (document.parsed.blocks.len(), document.outline(cx).len())
     });
-    assert!(!read && outline == 0);
+    assert_eq!((blocks, outline), (0, 0), "the old read is gone");
 }

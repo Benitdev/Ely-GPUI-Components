@@ -234,7 +234,13 @@ impl MarkdownDocument {
         let (text, edits) = (self.editor.read(cx).text().to_string(), self.edits);
         if text.len() > LARGEST_READ {
             self._parsing = None;
-            return log::info!("markdown document: {} bytes, too long to read", text.len());
+            log::info!("markdown document: {} bytes, too long to read", text.len());
+            // Nothing read: no blocks, no headings.
+            let unread = Parsed {
+                text,
+                ..Parsed::default()
+            };
+            return self.adopt(unread, edits, cx);
         }
         if now && text.len() <= AT_ONCE {
             self._parsing = None;
