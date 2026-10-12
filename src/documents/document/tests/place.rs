@@ -211,10 +211,14 @@ fn the_selection_reads_in_source_and_in_an_open_block(cx: &mut TestAppContext) {
         document.read_with(cx, |document, cx| document.selected(cx)),
         "One"
     );
-    document.update_in(cx, |document, window, cx| {
-        document.set_mode(MarkdownMode::Visual, window, cx)
-    });
-    frames(cx);
+    for mode in [MarkdownMode::Preview, MarkdownMode::Visual] {
+        document.update_in(cx, |document, window, cx| {
+            document.set_mode(mode, window, cx)
+        });
+        frames(cx);
+        let selected = document.read_with(cx, |document, cx| document.selected(cx));
+        assert_eq!(selected, "", "{mode:?} shows no source selection");
+    }
     super::type_in(&document, Some(1), None, cx);
     document.update(cx, |document, cx| {
         let open = document.open.as_ref().expect("a block is open");

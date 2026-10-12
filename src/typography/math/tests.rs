@@ -193,3 +193,21 @@ fn an_exported_formula_outlines_its_text_or_says_why() {
     let why = formula_svg("\\text{\u{F0000}}", false).expect_err("no font");
     assert!(why.to_string().contains("font"), "{why}");
 }
+
+#[test]
+fn an_exported_formula_frames_its_outlined_text() {
+    // Wide or tall faces from the system, where fonts have them.
+    for source in [r"\text{한글}", r"\text{𓀀} + x"] {
+        let Ok(svg) = formula_svg(source, false) else {
+            continue;
+        };
+        let tree =
+            usvg::Tree::from_data(svg.as_bytes(), &usvg::Options::default()).expect("parses");
+        let (ink, shape) = (tree.root().abs_stroke_bounding_box(), tree.size());
+        let inside = ink.left() >= -0.01
+            && ink.top() >= -0.01
+            && ink.right() <= shape.width() + 0.01
+            && ink.bottom() <= shape.height() + 0.01;
+        assert!(inside, "{source}: {ink:?} in {shape:?}");
+    }
+}

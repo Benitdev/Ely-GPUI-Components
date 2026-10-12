@@ -125,13 +125,20 @@ pub fn formula_svg(source: &str, display: bool) -> Result<String, MathError> {
         font: 1600,
         scale: 100,
     };
+    let (svg, width, height) = laid(&formula)?;
     // RaTeX writes text where it has no outline.
-    let (svg, _) = svg(&formula)?;
-    crate::documents::flatten(&svg).map_err(MathError::said)
+    let outlined = crate::documents::flatten(&svg).map_err(MathError::said)?;
+    framed(&outlined, width, height).map(|(svg, _)| svg)
 }
 
 /// The formula as outlined SVG holding all ink; its size.
 fn svg(formula: &Formula) -> Result<(String, Size<Pixels>), MathError> {
+    let (svg, width, height) = laid(formula)?;
+    framed(&svg, width, height)
+}
+
+/// RaTeX's SVG and the layout box's width and height.
+fn laid(formula: &Formula) -> Result<(String, f32, f32), MathError> {
     let ast = parsed(&formula.source)?;
     let [r, g, b, a] = formula
         .rgba
@@ -144,7 +151,7 @@ fn svg(formula: &Formula) -> Result<(String, Size<Pixels>), MathError> {
         })
         .with_color(Color::new(r, g, b, a));
     let font = f64::from(formula.font) / 100.0;
-    let laid = guarded(|| {
+    let typeset = guarded(|| {
         let list = to_display_list(&layout(&ast, &options));
         let svg = render_to_svg(
             &list,
@@ -158,8 +165,8 @@ fn svg(formula: &Formula) -> Result<(String, Size<Pixels>), MathError> {
         );
         (list.width * font, (list.height + list.depth) * font, svg)
     })?;
-    let (width, height, svg) = laid;
-    framed(&svg, width as f32, height as f32)
+    let (width, height, svg) = typeset;
+    Ok((svg, width as f32, height as f32))
 }
 
 /// Runs RaTeX's layout; a panic becomes an error.

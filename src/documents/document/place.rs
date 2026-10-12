@@ -31,6 +31,10 @@ impl MarkdownDocument {
     /// The selected Markdown: the source's, or the open block's.
     pub fn selected(&self, cx: &App) -> String {
         let Some(open) = &self.open else {
+            // Rendered modes show no source selection.
+            if !matches!(self.mode, MarkdownMode::Source | MarkdownMode::Split) {
+                return String::new();
+            }
             let editor = self.editor.read(cx);
             return editor.text()[editor.primary().range()].to_string();
         };
