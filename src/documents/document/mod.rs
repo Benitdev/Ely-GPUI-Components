@@ -170,6 +170,8 @@ impl MarkdownDocument {
         }
         let focus = self.focus_handle(cx);
         window.focus(&focus, cx);
+        // Preview to visual keeps one handle: no focus event.
+        self.focused(window, cx);
         cx.notify();
     }
 

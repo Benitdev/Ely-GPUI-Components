@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use gpui::{AppContext as _, Context, Focusable as _, Window};
+use gpui::{App, AppContext as _, Context, Focusable as _, Window};
 
 use super::{DocumentEvent, MarkdownDocument, Open};
 use crate::{
@@ -29,6 +29,24 @@ impl MarkdownDocument {
         if self.mode == MarkdownMode::Visual && self.open.is_none() && empty {
             self.open(None, false, window, cx);
         }
+    }
+
+    /// The open block still holds what it opened with.
+    pub(super) fn untouched(&self, cx: &App) -> bool {
+        self.open.as_ref().is_some_and(|open| {
+            open.input.read(cx).text() == &self.editor.read(cx).text()[open.range.clone()]
+        })
+    }
+
+    /// Undo or redo in the document's one history.
+    pub(super) fn history(&mut self, redo: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit(cx);
+        self.editor.update(cx, |editor, cx| match redo {
+            true => editor.redo(cx),
+            false => editor.undo(cx),
+        });
+        window.focus(&self.focus, cx);
+        self.focused(window, cx);
     }
 
     /// Opens block `ix` as shown, or one past the end.

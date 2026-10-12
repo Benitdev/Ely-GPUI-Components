@@ -7,7 +7,7 @@ use gpui::{
 use super::MarkdownDocument;
 use crate::{
     documents::{MarkdownMode, render::draw_nodes},
-    forms::{Down, Up},
+    forms::{self, Down, Up},
     primitives::FocusRing as _,
     theme::{ActiveTheme, Radius, TextSize},
 };
@@ -158,13 +158,24 @@ impl Render for MarkdownDocument {
             MarkdownMode::Visual => root
                 .key_context(CONTEXT)
                 .track_focus(&self.focus)
-                .on_action(cx.listener(|document, _: &Undo, _, cx| {
-                    document.commit(cx);
-                    document.editor.update(cx, |editor, cx| editor.undo(cx));
+                .on_action(cx.listener(|document, _: &Undo, window, cx| {
+                    document.history(false, window, cx);
                 }))
-                .on_action(cx.listener(|document, _: &Redo, _, cx| {
-                    document.commit(cx);
-                    document.editor.update(cx, |editor, cx| editor.redo(cx));
+                .on_action(cx.listener(|document, _: &Redo, window, cx| {
+                    document.history(true, window, cx);
+                }))
+                // An untouched block leaves undo to the document.
+                .capture_action(cx.listener(|document, _: &forms::Undo, window, cx| {
+                    if document.untouched(cx) {
+                        cx.stop_propagation();
+                        document.history(false, window, cx);
+                    }
+                }))
+                .capture_action(cx.listener(|document, _: &forms::Redo, window, cx| {
+                    if document.untouched(cx) {
+                        cx.stop_propagation();
+                        document.history(true, window, cx);
+                    }
                 }))
                 .capture_action(cx.listener(|document, _: &Up, window, cx| {
                     if document.step(false, window, cx) {
