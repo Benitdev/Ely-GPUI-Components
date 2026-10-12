@@ -103,6 +103,8 @@ pub struct CodeEditor {
     pub(crate) buffer: Buffer,
     pub(crate) selections: Vec<Selection>,
     pub(crate) history: History<Snapshot>,
+    /// Undo keeps at most this many bytes of text.
+    pub(crate) history_bytes: usize,
     pub(crate) focus: FocusHandle,
     pub(crate) scroll: UniformListScrollHandle,
     pub(crate) folded: BTreeSet<usize>,
@@ -172,6 +174,7 @@ impl CodeEditor {
             buffer: Buffer::new(text),
             selections: vec![Selection::caret(0)],
             history: History::default(),
+            history_bytes: super::prose::HISTORY_BYTES,
             focus,
             scroll: UniformListScrollHandle::new(),
             folded: BTreeSet::new(),
@@ -432,12 +435,7 @@ impl CodeEditor {
         if before.text != self.buffer.text() {
             if self.composing.is_none() {
                 self.history.record(before, typing);
-                let dropped = self
-                    .history
-                    .trim(super::prose::HISTORY_BYTES, |step| step.text.len());
-                if dropped > 0 {
-                    log::info!("code editor: {dropped} oldest undo steps dropped");
-                }
+                self.cap_history();
             }
             self.marks.ghost = None;
             self.folded.retain(|line| *line < self.buffer.lines());

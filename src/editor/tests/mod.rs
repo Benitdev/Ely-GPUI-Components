@@ -1,3 +1,4 @@
+mod history;
 mod stale;
 
 use std::{cell::Cell, rc::Rc, time::Duration};

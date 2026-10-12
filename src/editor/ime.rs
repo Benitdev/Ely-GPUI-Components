@@ -67,6 +67,7 @@ impl CodeEditor {
             && start.text != self.buffer.text()
         {
             self.history.record(start, false);
+            self.cap_history();
         }
     }
 

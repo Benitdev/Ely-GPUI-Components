@@ -144,16 +144,26 @@ impl<S> History<S> {
         Some(next)
     }
 
-    /// Drops oldest undo steps past `budget`; returns how many.
+    /// The size all steps hold, as `size` measures one.
+    pub fn held(&self, size: impl Fn(&S) -> usize) -> usize {
+        self.undo.iter().chain(&self.redo).map(size).sum()
+    }
+
+    /// Drops oldest undo, then farthest redo, past `budget`; how many.
     pub fn trim(&mut self, budget: usize, size: impl Fn(&S) -> usize) -> usize {
-        let mut held: usize = self.undo.iter().chain(&self.redo).map(&size).sum();
-        let mut dropped = 0;
-        while held > budget && dropped < self.undo.len() {
-            held -= size(&self.undo[dropped]);
-            dropped += 1;
+        let mut held = self.held(&size);
+        let (mut undone, mut redone) = (0, 0);
+        while held > budget && undone < self.undo.len() {
+            held -= size(&self.undo[undone]);
+            undone += 1;
         }
-        self.undo.drain(..dropped);
-        dropped
+        while held > budget && redone < self.redo.len() {
+            held -= size(&self.redo[redone]);
+            redone += 1;
+        }
+        self.undo.drain(..undone);
+        self.redo.drain(..redone);
+        undone + redone
     }
 }
 
@@ -172,6 +182,22 @@ mod tests {
         assert_eq!(history.undo("cccc".into()), Some("bbbb".to_string()));
         assert_eq!(history.undo("bbbb".into()), None, "the oldest went");
         assert_eq!(history.trim(100, String::len), 0);
+    }
+
+    #[test]
+    fn trimming_drops_the_farthest_redo_when_undo_is_spent() {
+        let mut history = History::default();
+        history.record("small".to_string(), false);
+        // Undo leaves the large text to redo.
+        assert_eq!(history.undo("x".repeat(20)), Some("small".to_string()));
+        history.redo.insert(0, "y".repeat(20));
+        assert_eq!(history.trim(25, String::len), 1);
+        assert_eq!(
+            history.redo("small".into()),
+            Some("x".repeat(20)),
+            "the nearest stays"
+        );
+        assert_eq!(history.redo("x".repeat(20)), None);
     }
 
     #[test]

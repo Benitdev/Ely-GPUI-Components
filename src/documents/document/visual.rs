@@ -1,18 +1,14 @@
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Focusable as _, FontWeight, InteractiveElement,
-    IntoElement, KeyBinding, MouseButton, ParentElement, Render, Styled, Window, actions, div,
-    list,
+    AnyElement, App, ClickEvent, Context, FontWeight, InteractiveElement, IntoElement, KeyBinding,
+    MouseButton, MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
+    actions, div, list,
 };
 
-use super::{DocumentEvent, MarkdownDocument, Open};
+use super::MarkdownDocument;
 use crate::{
-    documents::{
-        MarkdownMode,
-        markdown::markdown_highlights,
-        modes::{at_edge, joint},
-        render::draw_nodes,
-    },
-    forms::{Down, InputEvent, TextInput, Up},
+    documents::{MarkdownMode, render::draw_nodes},
+    forms::{Down, Up},
+    primitives::FocusRing as _,
     theme::{ActiveTheme, Radius, TextSize},
 };
 
@@ -34,104 +30,6 @@ pub(crate) fn bind_keys(cx: &mut App) {
 }
 
 impl MarkdownDocument {
-    /// Opens block `ix`, or a new one past the end.
-    pub(super) fn open(
-        &mut self,
-        ix: Option<usize>,
-        at_start: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.commit(cx);
-        if !self.read_now() {
-            return log::warn!("markdown document: pressed while the text is read again");
-        }
-        let text = self.editor.read(cx).text();
-        let (range, append) = match ix {
-            Some(ix) => (self.parsed.blocks[ix].range.clone(), false),
-            None => (text.len()..text.len(), true),
-        };
-        let source = text[range.clone()].to_string();
-        let input = cx.new(|cx| {
-            TextInput::new(window, cx)
-                .multi_line(1, usize::MAX)
-                .highlighter(markdown_highlights)
-        });
-        input.update(cx, |input, cx| {
-            input.set_text(source, cx);
-            if at_start {
-                input.select(0..0, cx);
-            }
-        });
-        window.focus(&input.focus_handle(cx), cx);
-        let subscriptions =
-            vec![
-                cx.subscribe(&input, |document, _, event: &InputEvent, cx| match event {
-                    InputEvent::Blur => document.commit(cx),
-                    InputEvent::Changed => cx.emit(DocumentEvent::Changed),
-                    _ => {}
-                }),
-            ];
-        log::info!("markdown document: block {range:?} opens");
-        self.open = Some(Open {
-            range,
-            input,
-            append,
-            _subscriptions: subscriptions,
-        });
-        cx.notify();
-    }
-
-    /// Writes the open block back as one undo step.
-    pub(super) fn commit(&mut self, cx: &mut Context<Self>) {
-        let Some(open) = self.open.take() else {
-            return;
-        };
-        cx.notify();
-        let typed = open.input.read(cx).text().to_string();
-        let text = self.editor.read(cx).text();
-        let written = match open.append {
-            true if typed.is_empty() => return,
-            true => format!("{}{typed}", joint(text)),
-            false => typed,
-        };
-        self.rest = open.range.start + written.len();
-        if text[open.range.clone()] == written {
-            return;
-        }
-        log::info!("markdown document: block {:?} written back", open.range);
-        self.editor
-            .update(cx, |editor, cx| editor.edit([(open.range, written)], cx));
-    }
-
-    /// Up past the open block's top, or down past it.
-    fn step(&mut self, down: bool, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let Some(open) = &self.open else {
-            return false;
-        };
-        if open.append || !at_edge(open.input.read(cx), down) {
-            return false;
-        }
-        let start = open.range.start;
-        let here = |blocks: &[super::parse::Block]| {
-            blocks.partition_point(|block| block.range.start <= start)
-        };
-        // The block next door, before writing back.
-        let next = |blocks: &[super::parse::Block]| match down {
-            true => (here(blocks) < blocks.len()).then(|| here(blocks)),
-            false => here(blocks).checked_sub(2),
-        };
-        if next(&self.parsed.blocks).is_none() {
-            return false;
-        }
-        self.commit(cx);
-        let Some(target) = next(&self.parsed.blocks) else {
-            return false;
-        };
-        self.open(Some(target), down, window, cx);
-        true
-    }
-
     /// List item `ix`: a block, or the end.
     fn item(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
@@ -142,38 +40,27 @@ impl MarkdownDocument {
             theme.mono_family.clone(),
         );
         let editing = self.mode == MarkdownMode::Visual;
-        let Some(block) = self.parsed.blocks.get(ix) else {
-            return match (&self.open, editing) {
-                (Some(open), _) if open.append => div()
-                    .px_3()
-                    .py_2()
-                    .rounded(radius)
-                    .bg(colors.sunken)
-                    .child(open.input.clone())
-                    .into_any_element(),
-                (_, true) => div()
-                    .id("more")
-                    .min_h_8()
-                    .cursor_text()
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|document, _, window, cx| {
-                            window.prevent_default();
-                            document.open(None, false, window, cx);
-                        }),
-                    )
-                    .into_any_element(),
-                (_, false) => div().into_any_element(),
-            };
-        };
-        if let Some(open) = self.open.as_ref().filter(|open| open.range == block.range) {
-            return div()
+        let open = self.open.as_ref();
+        let field = |open: &super::Open| {
+            div()
                 .px_3()
                 .py_2()
                 .rounded(radius)
                 .bg(colors.sunken)
                 .child(open.input.clone())
-                .into_any_element();
+                .into_any_element()
+        };
+        let Some(block) = self.parsed.blocks.get(ix) else {
+            return match (open, editing) {
+                (Some(open), _) if open.append => field(open),
+                (_, true) => self
+                    .pressable(div().id("more").min_h_8(), None, cx)
+                    .into_any_element(),
+                (_, false) => div().into_any_element(),
+            };
+        };
+        if let Some(open) = open.filter(|open| open.range == block.range) {
+            return field(open);
         }
         let shown = match &block.nodes {
             Some(nodes) => div()
@@ -202,31 +89,46 @@ impl MarkdownDocument {
             .py_1()
             .rounded(radius)
             .child(shown);
-        if !editing {
-            return block.into_any_element();
+        match editing {
+            true => self.pressable(block, Some(ix), cx).into_any_element(),
+            false => block.into_any_element(),
         }
-        block
+    }
+
+    /// `element` opens block `ix` on a press, Enter or Space.
+    fn pressable(
+        &self,
+        element: gpui::Stateful<gpui::Div>,
+        ix: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let hover = cx.theme().colors.hover.opacity(0.5);
+        element
+            .tab_index(0)
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .focus_ring(cx)
             .cursor_text()
-            .hover(|block| block.bg(colors.hover.opacity(0.5)))
+            .hover(move |element| element.bg(hover))
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |document, event: &gpui::MouseDownEvent, window, cx| {
+                cx.listener(move |document, event: &MouseDownEvent, window, cx| {
                     // Cmd or Ctrl leaves the press to a link.
                     if event.modifiers.secondary() {
                         return;
                     }
                     window.prevent_default();
                     cx.stop_propagation();
-                    document.open(Some(ix), false, window, cx);
+                    document.open(ix, false, window, cx);
                 }),
             )
-            .into_any_element()
-    }
-
-    fn blocks(&self, cx: &mut Context<Self>) -> AnyElement {
-        list(self.list.clone(), cx.processor(Self::item))
-            .size_full()
-            .into_any_element()
+            .on_click(
+                cx.listener(move |document, event: &ClickEvent, window, cx| {
+                    if event.is_keyboard() {
+                        document.open(ix, false, window, cx);
+                    }
+                }),
+            )
     }
 }
 
@@ -237,14 +139,21 @@ impl Render for MarkdownDocument {
             .size_full()
             .bg(colors.surface)
             .font_weight(FontWeight::NORMAL);
+        let blocks = list(self.list.clone(), cx.processor(Self::item)).size_full();
         match self.mode {
             MarkdownMode::Source => root.child(self.editor.clone()).into_any_element(),
             MarkdownMode::Split => root
                 .flex()
                 .child(div().flex_1().min_w_0().h_full().child(self.editor.clone()))
-                .child(div().flex_1().min_w_0().h_full().child(self.blocks(cx)))
+                .child(div().flex_1().min_w_0().h_full().child(blocks))
                 .into_any_element(),
-            MarkdownMode::Visual | MarkdownMode::Preview => root
+            MarkdownMode::Preview => root
+                .track_focus(&self.focus)
+                .px_2()
+                .py_3()
+                .child(blocks)
+                .into_any_element(),
+            MarkdownMode::Visual => root
                 .key_context(CONTEXT)
                 .track_focus(&self.focus)
                 .on_action(cx.listener(|document, _: &Undo, _, cx| {
@@ -276,7 +185,7 @@ impl Render for MarkdownDocument {
                 )
                 .px_2()
                 .py_3()
-                .child(self.blocks(cx))
+                .child(blocks)
                 .into_any_element(),
         }
     }

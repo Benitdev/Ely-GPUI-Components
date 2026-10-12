@@ -32,6 +32,15 @@ fn press(ix: usize, modifiers: Modifiers, cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
+/// A few frames, so deferred scrolls land.
+fn frames(cx: &mut VisualTestContext) {
+    for _ in 0..3 {
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+    }
+    cx.run_until_parked();
+}
+
 fn text(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> String {
     document.read_with(cx, |document, cx| document.text(cx))
 }
@@ -241,4 +250,146 @@ fn down_past_the_last_block_keeps_it_open(cx: &mut TestAppContext) {
         document.text(cx)[open.range.clone()].to_string()
     });
     assert_eq!(opened, "Last.");
+}
+
+/// Opens block `ix` as shown, its field set to `typed`.
+fn type_in(
+    document: &Entity<MarkdownDocument>,
+    ix: Option<usize>,
+    typed: Option<&str>,
+    cx: &mut VisualTestContext,
+) {
+    document.update_in(cx, |document, window, cx| {
+        document.open(ix, false, window, cx);
+        if let (Some(typed), Some(open)) = (typed, &document.open) {
+            open.input.update(cx, |input, cx| input.set_text(typed, cx));
+        }
+    });
+    cx.run_until_parked();
+}
+
+fn opened(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> String {
+    document.read_with(cx, |document, cx| {
+        let open = document.open.as_ref().expect("a block is open");
+        open.input.read(cx).text().to_string()
+    })
+}
+
+#[gpui::test]
+fn a_press_after_deleting_a_block_opens_the_one_pressed(cx: &mut TestAppContext) {
+    let (document, cx) = open(
+        "A
+
+B
+
+C",
+        MarkdownMode::Visual,
+        cx,
+    );
+    type_in(&document, Some(0), Some(""), cx);
+    type_in(&document, Some(2), None, cx);
+    assert_eq!(opened(&document, cx), "C");
+}
+
+#[gpui::test]
+fn a_press_after_splitting_a_block_opens_the_one_pressed(cx: &mut TestAppContext) {
+    let (document, cx) = open(
+        "A
+
+B
+
+C",
+        MarkdownMode::Visual,
+        cx,
+    );
+    type_in(
+        &document,
+        Some(0),
+        Some(
+            "A
+
+New",
+        ),
+        cx,
+    );
+    type_in(&document, Some(1), None, cx);
+    assert_eq!(opened(&document, cx), "B");
+}
+
+#[gpui::test]
+fn the_caret_survives_an_undo_inside_a_character(cx: &mut TestAppContext) {
+    let (document, cx) = open("éabcd", MarkdownMode::Visual, cx);
+    type_in(&document, Some(0), Some("x"), cx);
+    cx.simulate_keystrokes("escape");
+    cx.dispatch_action(visual::Undo);
+    assert_eq!(text(&document, cx), "éabcd");
+    let caret = document.read_with(cx, |document, cx| document.caret(cx));
+    assert_eq!(caret, (0, 0), "the restored caret");
+}
+
+#[gpui::test]
+fn preview_takes_no_undo_or_redo(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
+    document.update(cx, |document, cx| document.set_text("Changed", cx));
+    document.update_in(cx, |document, window, cx| {
+        document.set_mode(MarkdownMode::Preview, window, cx)
+    });
+    cx.dispatch_action(visual::Undo);
+    assert_eq!(text(&document, cx), "Changed");
+}
+
+#[gpui::test]
+fn an_added_block_reports_its_caret_after_the_joint(cx: &mut TestAppContext) {
+    for start in ["A", "A\n", "A\n\n"] {
+        let (document, cx) = open(start, MarkdownMode::Visual, cx);
+        type_in(&document, None, Some("B"), cx);
+        let caret = document.read_with(cx, |document, cx| document.caret(cx));
+        assert_eq!(caret, (2, 1), "after {start:?}");
+    }
+}
+
+#[gpui::test]
+fn caret_and_view_set_apart_and_carry_across_modes(cx: &mut TestAppContext) {
+    let long = (0..60).map(|n| format!("Line {n}\n\n")).collect::<String>();
+    let (document, cx) = open(&long, MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| document.set_caret(4, 3, cx));
+    document.update(cx, |document, cx| document.set_top_line(40, cx));
+    frames(cx);
+    let source = document.read_with(cx, |document, cx| document.top_line(cx));
+    assert_eq!(source, 40, "the source scrolled");
+    let caret = document.read_with(cx, |document, cx| document.caret(cx));
+    assert_eq!(caret, (4, 3), "the view moved alone");
+    document.update_in(cx, |document, window, cx| {
+        document.set_mode(MarkdownMode::Visual, window, cx)
+    });
+    frames(cx);
+    let (caret, top) = document.read_with(cx, |document, cx| {
+        (document.caret(cx), document.top_line(cx))
+    });
+    assert_eq!(caret, (4, 3), "one caret for every mode");
+    assert_eq!(top, 40, "the view stays at its line");
+}
+
+#[gpui::test]
+fn the_keyboard_reaches_and_opens_a_block(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
+    cx.update(|window, cx| window.focus_next(cx));
+    cx.simulate_keystrokes("enter");
+    frames(cx);
+    cx.simulate_event(gpui::KeyUpEvent {
+        keystroke: gpui::Keystroke::parse("enter").expect("a key"),
+    });
+    frames(cx);
+    assert_eq!(opened(&document, cx), "# Lift");
+}
+
+#[gpui::test]
+fn a_change_under_an_open_block_closes_it(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
+    type_in(&document, Some(2), Some("- three"), cx);
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    editor.update(cx, |editor, cx| editor.edit([(0..0, "x".to_string())], cx));
+    cx.run_until_parked();
+    assert!(document.read_with(cx, |document, _| document.open.is_none()));
+    assert_eq!(text(&document, cx), format!("x{TEXT}"));
 }

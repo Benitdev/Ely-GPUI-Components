@@ -46,6 +46,16 @@ impl CodeEditor {
         self.restart_blink(cx);
     }
 
+    /// Keeps undo within its byte budget, logging what went.
+    pub(crate) fn cap_history(&mut self) {
+        let dropped = self
+            .history
+            .trim(self.history_bytes, |step| step.text.len());
+        if dropped > 0 {
+            log::info!("code editor: {dropped} far undo steps dropped");
+        }
+    }
+
     /// A line's colors, as the owner or as code.
     pub(crate) fn line_colors(&self, text: &str, cx: &App) -> Vec<(Range<usize>, HighlightStyle)> {
         let Some(LineHighlighter(highlight)) = &self.options.highlighter else {

@@ -336,6 +336,7 @@ impl CodeEditor {
         }
         if let Some(previous) = self.history.undo(self.snapshot()) {
             self.restore(previous, cx);
+            self.cap_history();
         }
     }
 
@@ -345,6 +346,7 @@ impl CodeEditor {
         }
         if let Some(next) = self.history.redo(self.snapshot()) {
             self.restore(next, cx);
+            self.cap_history();
         }
     }
 

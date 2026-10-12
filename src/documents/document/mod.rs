@@ -1,4 +1,6 @@
+mod edit;
 mod parse;
+mod place;
 #[cfg(all(test, feature = "test-support"))]
 mod tests;
 mod visual;
@@ -54,8 +56,8 @@ pub struct MarkdownDocument {
     _parsing: Option<Task<()>>,
     list: ListState,
     open: Option<Open>,
-    /// Where the caret rests while no block is open.
-    rest: usize,
+    /// Its own write-backs whose changes are still to come.
+    writes: usize,
     focus: FocusHandle,
     on_link: Option<OnLink>,
     _subscriptions: Vec<Subscription>,
@@ -102,7 +104,7 @@ impl MarkdownDocument {
             _parsing: None,
             list: ListState::new(1, ListAlignment::Top, overdraw),
             open: None,
-            rest: 0,
+            writes: 0,
             focus: cx.focus_handle(),
             on_link: None,
             _subscriptions: subscriptions,
@@ -130,11 +132,13 @@ impl MarkdownDocument {
         self.mode
     }
 
-    /// Shows the text as `mode`; an open block writes first.
+    /// Shows `mode` at the same line; an open block writes.
     pub fn set_mode(&mut self, mode: MarkdownMode, window: &mut Window, cx: &mut Context<Self>) {
         self.commit(cx);
         log::info!("markdown document: {:?} to {mode:?}", self.mode);
+        let top = self.top_line(cx);
         self.mode = mode;
+        self.set_top_line(top, cx);
         let focus = self.focus_handle(cx);
         window.focus(&focus, cx);
         cx.notify();
@@ -165,7 +169,6 @@ impl MarkdownDocument {
     /// Replaces the text, undo afresh; open typing drops.
     pub fn reset(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
         self.drop_open(cx);
-        self.rest = 0;
         self.editor.update(cx, |editor, cx| editor.reset(text, cx));
     }
 
@@ -185,77 +188,14 @@ impl MarkdownDocument {
         self.read == self.edits
     }
 
-    /// The caret's line and column, from zero.
-    pub fn caret(&self, cx: &App) -> (usize, usize) {
-        let editor = self.editor.read(cx);
-        let at = match (&self.open, self.mode) {
-            (_, MarkdownMode::Source | MarkdownMode::Split) => editor.primary().head,
-            (Some(open), _) => {
-                let input = open.input.read(cx);
-                let line = editor
-                    .buffer
-                    .line_of(open.range.start.min(editor.text().len()));
-                let typed = &input.text()[..input.cursor()];
-                let column = match typed.rfind('\n') {
-                    Some(newline) => typed[newline + 1..].chars().count(),
-                    None => {
-                        let start = editor.buffer.line_range(line).start;
-                        editor.text()[start..open.range.start].chars().count()
-                            + typed.chars().count()
-                    }
-                };
-                return (line + typed.matches('\n').count(), column);
-            }
-            (None, _) => self.rest,
-        };
-        editor.buffer.point(at.min(editor.text().len()))
-    }
-
-    /// The first line in view.
-    pub fn top_line(&self, cx: &App) -> usize {
-        let editor = self.editor.read(cx);
-        match self.mode {
-            MarkdownMode::Source | MarkdownMode::Split => editor.top_line().unwrap_or(0),
-            MarkdownMode::Visual | MarkdownMode::Preview => {
-                let ix = self.list.logical_scroll_top().item_ix;
-                self.parsed.blocks.get(ix).map_or(0, |block| {
-                    editor
-                        .buffer
-                        .line_of(block.range.start.min(editor.text().len()))
-                })
-            }
-        }
-    }
-
-    /// Brings line `line` into view and focus, caret at start.
-    pub fn reveal(&mut self, line: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.commit(cx);
-        let lines = self.editor.read(cx).buffer.lines();
-        let at = self
-            .editor
-            .read(cx)
-            .buffer
-            .line_range(line.min(lines - 1))
-            .start;
-        self.rest = at;
-        match self.mode {
-            MarkdownMode::Source | MarkdownMode::Split => self
-                .editor
-                .update(cx, |editor, cx| editor.select(std::iter::once(at..at), cx)),
-            MarkdownMode::Visual | MarkdownMode::Preview => {
-                let blocks = &self.parsed.blocks;
-                let ix = blocks
-                    .partition_point(|block| block.range.start <= at)
-                    .saturating_sub(1);
-                self.list.scroll_to_reveal_item(ix);
-            }
-        }
-        let focus = self.focus_handle(cx);
-        window.focus(&focus, cx);
-        cx.notify();
-    }
-
     fn changed(&mut self, cx: &mut Context<Self>) {
+        // Only the document writes while a block is open.
+        if self.writes > 0 {
+            self.writes -= 1;
+        } else if self.open.is_some() {
+            log::error!("markdown document: the text changed under the open block");
+            self.drop_open(cx);
+        }
         self.edits += 1;
         cx.emit(DocumentEvent::Changed);
         self.reparse(cx);
