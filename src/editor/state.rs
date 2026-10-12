@@ -122,8 +122,8 @@ pub struct CodeEditor {
     /// The text before an input method's composition began, while it runs.
     pub(crate) composing: Option<Snapshot>,
     pub(crate) metrics: Metrics,
-    /// The caret row typewriter scrolling last centered.
-    pub(crate) centered: Option<usize>,
+    /// The caret row, view and line heights last centered.
+    pub(crate) centered: Option<(usize, Pixels, Pixels)>,
     /// Typewriter room rows at each end.
     pub(crate) pad: usize,
     pub(crate) dragging: bool,

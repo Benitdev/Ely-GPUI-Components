@@ -280,3 +280,63 @@ fn switching_to_visual_centers_the_caret_block(cx: &mut TestAppContext) {
     let off = off_middle(&document, 50, cx);
     assert!(off < px(4.0), "{off:?} from the middle");
 }
+
+/// How far line 100 sits from mid-view.
+fn source_off(
+    document: &gpui::Entity<super::MarkdownDocument>,
+    cx: &mut gpui::VisualTestContext,
+) -> gpui::Pixels {
+    let drawn = cx.debug_bounds("editor-line-100").expect("line drawn");
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    let middle = editor.read_with(cx, |editor, _| {
+        editor.metrics.top + editor.metrics.height / 2.0
+    });
+    (drawn.center().y - middle).abs()
+}
+
+/// Typewriter source, caret on line 100.
+fn source_at_100(
+    cx: &mut TestAppContext,
+) -> (
+    gpui::Entity<super::MarkdownDocument>,
+    &mut gpui::VisualTestContext,
+) {
+    let (document, cx) = open(&long(), MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| {
+        document.set_look(typewriter(), cx);
+        document.set_caret(100, 0, cx);
+    });
+    frames(cx);
+    (document, cx)
+}
+
+#[gpui::test]
+fn a_mode_round_trip_centers_the_source_line(cx: &mut TestAppContext) {
+    let (document, cx) = source_at_100(cx);
+    for mode in [MarkdownMode::Visual, MarkdownMode::Source] {
+        document.update_in(cx, |document, window, cx| {
+            document.set_mode(mode, window, cx)
+        });
+        frames(cx);
+    }
+    let off = source_off(&document, cx);
+    assert!(off < px(4.0), "{off:?} from the middle");
+}
+
+#[gpui::test]
+fn revealing_the_caret_line_keeps_it_centered(cx: &mut TestAppContext) {
+    let (document, cx) = source_at_100(cx);
+    document.update_in(cx, |document, window, cx| document.reveal(100, window, cx));
+    frames(cx);
+    let off = source_off(&document, cx);
+    assert!(off < px(4.0), "{off:?} from the middle");
+}
+
+#[gpui::test]
+fn a_small_resize_centers_the_source_line(cx: &mut TestAppContext) {
+    let (document, cx) = source_at_100(cx);
+    cx.simulate_resize(gpui::size(px(1000.0), px(1070.0)));
+    frames(cx);
+    let off = source_off(&document, cx);
+    assert!(off < px(4.0), "{off:?} from the middle");
+}

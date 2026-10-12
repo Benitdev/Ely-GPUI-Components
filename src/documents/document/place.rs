@@ -160,6 +160,10 @@ impl MarkdownDocument {
         self.top = None;
         // The view moved: center again.
         self.centered = None;
+        self.editor.update(cx, |editor, cx| {
+            editor.centered = None;
+            cx.notify();
+        });
         cx.notify();
     }
 

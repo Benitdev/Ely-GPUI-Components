@@ -272,11 +272,11 @@ impl Render for CodeEditor {
         self.metrics.advance = advance;
         self.metrics.line = line;
         // Typewriter: the caret's row centers as it moves.
-        let row = self.primary_row();
-        if self.options.typewriter && self.centered != Some(row) {
+        let centered = (self.primary_row(), self.metrics.height, line);
+        if self.options.typewriter && self.centered != Some(centered) {
             self.scroll
-                .scroll_to_item_strict(row, ScrollStrategy::Center);
-            self.centered = Some(row);
+                .scroll_to_item_strict(centered.0, ScrollStrategy::Center);
+            self.centered = Some(centered);
         }
         let sticky = if self.options.sticky {
             self.sticky(cx)
