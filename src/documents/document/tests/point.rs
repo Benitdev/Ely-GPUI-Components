@@ -6,11 +6,7 @@ use gpui::{Entity, Modifiers, MouseButton, Pixels, TestAppContext, VisualTestCon
 
 use super::{open, type_in};
 use crate::{
-    documents::{
-        DocumentEvent, DocumentTarget, MarkdownDocument, MarkdownMode, TargetBlock,
-        document::parse::parsed,
-        tree::{Inline, Node},
-    },
+    documents::{DocumentEvent, DocumentTarget, MarkdownDocument, MarkdownMode, TargetBlock},
     theme::{ActiveTheme, TextSize},
 };
 
@@ -191,42 +187,6 @@ fn press_lines(k: usize, line: usize, button: MouseButton, cx: &mut VisualTestCo
     press_at(x, y, button, cx);
 }
 
-/// The source byte under drawn `shown` in block 0.
-fn read_back(source: &str, shown: &str) -> Option<usize> {
-    fn find<'a>(nodes: &'a [Node], shown: &str) -> Option<&'a Inline> {
-        nodes.iter().find_map(|node| match node {
-            Node::Paragraph(inline) | Node::Heading(_, inline) if inline.text.contains(shown) => {
-                Some(inline)
-            }
-            Node::Quote(body) | Node::Alert { body, .. } | Node::Footnote { body, .. } => {
-                find(body, shown)
-            }
-            _ => None,
-        })
-    }
-    let parsed = parsed(source);
-    let block = &parsed.blocks[0];
-    let inline = find(block.nodes.as_ref().expect("drawn"), shown).expect("shown");
-    let at = inline.text.find(shown).expect("shown");
-    let written = inline.source_at(&source[block.range.start..], at)?;
-    Some(block.range.start + written)
-}
-
-#[test]
-fn quote_marks_escapes_trims_and_alert_markers_read_back() {
-    let cases = [
-        ("> alpha\n> beta", "eta"),
-        ("> [!NOTE]\n> alpha beta", "beta"),
-        ("a \\*star\\* z", "*star"),
-        ("a ` xy ` z", "xy"),
-        ("<div>alpha beta</div>\n", "eta"),
-        ("> <div>\n> alpha beta</div>\n", "beta"),
-    ];
-    for (source, shown) in cases {
-        assert_eq!(read_back(source, shown), source.find(shown), "{source:?}");
-    }
-}
-
 #[gpui::test]
 fn a_secondary_press_in_a_quote_lands_past_its_mark(cx: &mut TestAppContext) {
     let source = "> alpha\n> beta";
@@ -327,4 +287,105 @@ fn a_write_back_that_changes_the_pressed_block_points_nowhere(cx: &mut TestAppCo
         "the pressed paragraph became code"
     );
     assert_ne!(caret(&document, cx), written.find("eta").unwrap());
+}
+
+#[gpui::test]
+fn crlf_lines_press_where_they_were_written(cx: &mut TestAppContext) {
+    let source = "```
+alpha
+beta
+```
+";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    press_lines(2, 0, MouseButton::Right, cx);
+    let at = source.find("pha").unwrap();
+    let expected = DocumentTarget {
+        in_code: true,
+        ..target(at, TargetBlock::Code)
+    };
+    assert_eq!(*events.borrow(), [expected]);
+    press_lines(2, 0, MouseButton::Left, cx);
+    assert_eq!(opened_caret(&document, cx), at);
+}
+
+#[gpui::test]
+fn crlf_front_matter_presses_where_written(cx: &mut TestAppContext) {
+    let source = "---
+title: value
+author: person
+---
+";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    press_lines(7, 0, MouseButton::Right, cx);
+    let at = source.find("value").unwrap();
+    assert_eq!(*events.borrow(), [target(at, TargetBlock::FrontMatter)]);
+    press_lines(7, 0, MouseButton::Left, cx);
+    assert_eq!(opened_caret(&document, cx), at);
+}
+
+#[gpui::test]
+fn a_crlf_definition_presses_where_written(cx: &mut TestAppContext) {
+    let source = "[ref]: https://ely.dev
+  \"title\"
+";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    press_on(0, 10, MouseButton::Right, cx);
+    assert_eq!(*events.borrow(), [target(10, TargetBlock::Definition)]);
+}
+
+#[gpui::test]
+fn a_changed_definition_points_nowhere(cx: &mut TestAppContext) {
+    let source = "[ref]: https://old.dev
+
+Go [there][ref]
+";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    type_in(&document, Some(0), Some("[ref]: https://new.dev"), cx);
+    press_on(1, 4, MouseButton::Right, cx);
+    assert_eq!(
+        super::text(&document, cx),
+        source.replace("old.dev", "new.dev")
+    );
+    assert!(
+        events.borrow().is_empty(),
+        "the link changed under the press"
+    );
+}
+
+#[gpui::test]
+fn a_quoted_greater_than_presses_on_itself(cx: &mut TestAppContext) {
+    let source = "> <div>
+> >alpha beta</div>";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    let bounds = cx.debug_bounds("markdown-block-0").expect("drawn");
+    let (body, _) = sizes(cx);
+    let x = bounds.left() + px(31.0) + body * 0.6 * 0.25;
+    press_at(x, bounds.top() + px(10.0), MouseButton::Right, cx);
+    let at = source.find(">alpha").unwrap();
+    assert_eq!(*events.borrow(), [target(at, TargetBlock::Quote)]);
+}
+
+#[gpui::test]
+fn an_escaped_backslash_presses_on_itself(cx: &mut TestAppContext) {
+    let source = r"a \\ z";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    press_on(0, 2, MouseButton::Right, cx);
+    let at = source.find(r"\ z").unwrap();
+    assert_eq!(*events.borrow(), [target(at, TargetBlock::Paragraph)]);
+}
+
+#[gpui::test]
+fn an_html_space_moved_by_a_tag_presses_on_its_word(cx: &mut TestAppContext) {
+    let source = "<div>alpha <b> beta</b></div>";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    press_on(0, 8, MouseButton::Right, cx);
+    let at = source.find("eta").unwrap();
+    assert_eq!(*events.borrow(), [target(at, TargetBlock::Html)]);
 }

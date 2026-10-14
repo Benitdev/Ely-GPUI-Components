@@ -1,15 +1,24 @@
 use std::ops::Range;
 
-use super::{Inline, Run, html, sources::Follow};
+use super::{Escapes, Inline, Run, html, sources::LineMap};
 
 /// An HTML block's text, as a browser shows it.
 pub(super) fn html_block_text(written: &str, source: &str, span: Range<usize>) -> Inline {
-    let (mut run, mut follow) = (Run::default(), Follow::new(written, source, span.clone()));
+    let (mut run, map) = (Run::default(), LineMap::new(source, span.start, written));
     let mut rest = written;
     // Each text run keeps where it was written.
-    let mut words = |run: &mut Run, rest: &str, text: &str| {
-        if let Some(at) = follow.to(written.len() - rest.len()) {
-            run.text.sources.push((run.text.text.len(), at..span.end));
+    let words = |run: &mut Run, rest: &str, text: &str| {
+        let from = written.len() - rest.len();
+        let at = |value| map.as_ref()?.at(value);
+        // Blank text draws nothing where it stands.
+        if text.chars().all(html::spacing) {
+            return run.words(text);
+        }
+        match at(from).zip(at(from + text.len())) {
+            Some((start, end)) => {
+                (run.text.sources).push((run.text.text.len(), start..end, Escapes::Html))
+            }
+            None => log::warn!("markdown: an HTML block's text lost its source"),
         }
         run.words(text);
     };
@@ -278,23 +287,32 @@ mod tests {
 
     #[test]
     fn hostile_html_reads_in_linear_time() {
-        let started = web_time::Instant::now();
-        for source in [
-            "<".repeat(1 << 17),
-            "<a".repeat(1 << 16),
-            "<!--".repeat(1 << 16),
-            "<b>".repeat(1 << 16),
-            "<b>".repeat(1 << 15) + &"</i>".repeat(1 << 15),
-            "<script></script>".repeat(1 << 13),
-            "<div>a ".repeat(1 << 16),
-            "<b> ".repeat(1 << 16),
-            "<li><b>x ".repeat(1 << 15),
-            "<p><i>x ".repeat(1 << 15),
-        ] {
-            let block = format!("<div>\n{source}");
-            parse(&block);
-        }
-        let spent = started.elapsed();
-        assert!(spent.as_secs() < 2, "took {spent:?}");
+        let sources = |n: usize| {
+            [
+                "<".repeat(2 * n),
+                "<a".repeat(n),
+                "<!--".repeat(n),
+                "<b>".repeat(n),
+                "<b>".repeat(n / 2) + &"</i>".repeat(n / 2),
+                "<script></script>".repeat(n / 8),
+                "<div>a ".repeat(n),
+                "<b> ".repeat(n),
+                "<li><b>x ".repeat(n / 2),
+                "<p><i>x ".repeat(n / 2),
+            ]
+        };
+        let time = |n| {
+            let started = web_time::Instant::now();
+            for source in sources(n) {
+                parse(&format!(
+                    "<div>
+{source}"
+                ));
+            }
+            started.elapsed()
+        };
+        let (small, large) = (time(1 << 14), time(1 << 16));
+        // Four times the input, at most eight the time.
+        assert!(large < small * 8, "{small:?} then {large:?}");
     }
 }

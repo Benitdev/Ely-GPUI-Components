@@ -1,11 +1,21 @@
-use std::{iter::Peekable, ops::Range, str::CharIndices};
+use std::ops::Range;
 
-use markdown::mdast::Node;
+use markdown::{decode_named, mdast::Node};
 
-use super::{Inline, Node as Drawn, span};
+use super::{Inline, Node as Drawn, html, span};
 
-/// A leaf's written span; code and math inside their marks.
-pub(super) fn written(node: &Node, source: &str) -> Option<Range<usize>> {
+/// How a piece's source turns into its text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Escapes {
+    Plain,
+    /// Backslash escapes and references, as Markdown reads them.
+    Markdown,
+    /// References, as HTML reads them.
+    Html,
+}
+
+/// A leaf's written span and how it reads.
+pub(super) fn written(node: &Node, source: &str) -> Option<(Range<usize>, Escapes)> {
     let whole = match node {
         Node::Text(_)
         | Node::Break(_)
@@ -17,14 +27,31 @@ pub(super) fn written(node: &Node, source: &str) -> Option<Range<usize>> {
         | Node::InlineMath(_) => span(node),
         _ => return None,
     };
-    let marks = match node {
-        Node::InlineCode(_) | Node::InlineMath(_) => {
-            let text = &source[whole.clone()];
-            text.len() - text.trim_start_matches(['`', '$']).len()
-        }
-        _ => 0,
+    Some(match node {
+        Node::Text(_) => (whole, Escapes::Markdown),
+        Node::InlineCode(_) => (inside(source, whole, '`'), Escapes::Plain),
+        Node::InlineMath(_) => (inside(source, whole, '$'), Escapes::Plain),
+        _ => (whole, Escapes::Plain),
+    })
+}
+
+/// A code span's text, one end space cut each side.
+fn inside(source: &str, whole: Range<usize>, mark: char) -> Range<usize> {
+    let written = &source[whole.clone()];
+    let open = written.len() - written.trim_start_matches(mark).len();
+    let close = written.len() - written.trim_end_matches(mark).len();
+    let text = &written[open..written.len().saturating_sub(close).max(open)];
+    let blank = |ch: char| matches!(ch, ' ' | '\n' | '\r');
+    let cut = text.starts_with(blank) && text.ends_with(blank) && !text.chars().all(blank);
+    let width = |crlf: bool| if crlf { 2 } else { 1 };
+    let (head, tail) = match cut {
+        true => (
+            width(text.starts_with("\r\n")),
+            width(text.ends_with("\r\n")),
+        ),
+        false => (0, 0),
     };
-    Some(whole.start + marks..whole.end)
+    whole.start + open + head..whole.start + open + text.len() - tail
 }
 
 /// Where a block's text lines start: past a fence line.
@@ -36,27 +63,93 @@ pub(super) fn body(source: &str, node: &Node) -> usize {
             .iter()
             .any(|fence| written.starts_with(fence));
     match fenced {
-        true => written
-            .find('\n')
-            .map_or(whole.end, |end| whole.start + end + 1),
+        true => lines(written)
+            .nth(1)
+            .map_or(whole.end, |line| whole.start + line.start),
         false => whole.start,
     }
 }
 
+/// `text`'s lines without their endings, split as CommonMark splits.
+fn lines(text: &str) -> impl Iterator<Item = Range<usize>> + '_ {
+    let mut next = Some(0);
+    std::iter::from_fn(move || {
+        let start = next?;
+        let rest = &text[start..];
+        let Some(end) = rest.find(['\n', '\r']) else {
+            next = None;
+            return Some(start..text.len());
+        };
+        let width = if rest[end..].starts_with("\r\n") {
+            2
+        } else {
+            1
+        };
+        next = Some(start + end + width);
+        Some(start..start + end)
+    })
+}
+
 /// Source byte under drawn byte `at`; lines start at `from`.
 pub(crate) fn lines_at(source: &str, from: usize, drawn: &str, at: usize) -> Option<usize> {
-    let line = drawn[..at].matches('\n').count();
-    let column = at - drawn[..at].rfind('\n').map_or(0, |end| end + 1);
-    let shown = drawn.split('\n').nth(line)?;
-    let mut start = from;
-    for _ in 0..line {
-        start += source.get(start..)?.find('\n')? + 1;
+    LineMap::new(source, from, drawn)?.at(at)
+}
+
+/// Each drawn line set against the written line it ends.
+pub(super) struct LineMap(Vec<Line>);
+
+struct Line {
+    drawn: Range<usize>,
+    /// Where its written line starts, and its shared end.
+    written: usize,
+    common: usize,
+    kept: usize,
+    /// The char before the shared end, as a cut tab.
+    before: usize,
+}
+
+impl LineMap {
+    pub(super) fn new(source: &str, from: usize, drawn: &str) -> Option<Self> {
+        let written = source.get(from..)?;
+        let lines = lines(drawn).zip(lines(written)).map(|(line, place)| {
+            let (shown, text) = (&drawn[line.clone()], &written[place.clone()]);
+            let kept: usize = match text.ends_with(shown) {
+                true => shown.len(),
+                false => (shown.chars().rev())
+                    .zip(text.chars().rev())
+                    .take_while(|(a, b)| a == b)
+                    .map(|(a, _)| a.len_utf8())
+                    .sum(),
+            };
+            let common = text.len() - kept;
+            let before =
+                (text[..common].chars().next_back()).map_or(0, |ch| common - ch.len_utf8());
+            Line {
+                drawn: line,
+                written: from + place.start,
+                common,
+                kept,
+                before,
+            }
+        });
+        Some(Self(lines.collect()))
     }
-    let written = source[start..].split('\n').next()?.trim_end_matches('\r');
-    // Each drawn line ends its written one.
-    written
-        .ends_with(shown)
-        .then(|| start + written.len() - shown.len() + column)
+
+    /// Source byte under drawn byte `at`.
+    pub(super) fn at(&self, at: usize) -> Option<usize> {
+        let line = self
+            .0
+            .get(self.0.partition_point(|line| line.drawn.end < at))?;
+        let column = at.saturating_sub(line.drawn.start);
+        let shared = line.drawn.len() - line.kept;
+        Some(
+            line.written
+                + match column.checked_sub(shared) {
+                    Some(into) => line.common + into,
+                    None => line.before,
+                },
+        )
+    }
 }
 
 impl Drawn {
@@ -64,7 +157,7 @@ impl Drawn {
     pub(crate) fn rebase(&mut self, start: usize) {
         match self {
             Drawn::Paragraph(inline) | Drawn::Heading(_, inline) => {
-                for (_, span) in &mut inline.sources {
+                for (_, span, _) in &mut inline.sources {
                     *span = span.start - start..span.end - start;
                 }
             }
@@ -90,109 +183,140 @@ impl Drawn {
 impl Inline {
     /// Source byte under drawn byte `at`, in some piece.
     pub(crate) fn source_at(&self, source: &str, at: usize) -> Option<usize> {
-        let piece = self.sources.partition_point(|(start, _)| *start <= at);
-        let (start, span) = self.sources.get(piece.checked_sub(1)?)?;
+        let piece = self.sources.partition_point(|(start, ..)| *start <= at);
+        let (start, span, escapes) = self.sources.get(piece.checked_sub(1)?)?;
         let end = self
             .sources
             .get(piece)
-            .map_or(self.text.len(), |(next, _)| *next);
+            .map_or(self.text.len(), |(next, ..)| *next);
         let drawn = self.text.get(*start..end.max(*start))?;
         let written = source.get(span.clone())?;
         // Unreadable text lands at its start.
-        Some(span.start + align(drawn, written, at - start).unwrap_or(0))
+        Some(span.start + align(drawn, written, *escapes, at - start).unwrap_or(0))
     }
 }
 
-/// Where drawn byte `at` was written, past marks.
-fn align(drawn: &str, written: &str, at: usize) -> Option<usize> {
-    let mut reading = Reading::new(written, 0);
-    for (byte, shown) in drawn.char_indices() {
-        let found = reading.take(shown)?;
-        if byte >= at {
+/// A source char as read, and where it was written.
+struct Read {
+    ch: char,
+    at: usize,
+    /// Written as itself, not escaped or referenced.
+    raw: bool,
+    /// A container mark or indent at a line's start.
+    lead: bool,
+}
+
+impl Read {
+    fn ends_line(&self) -> bool {
+        self.raw && matches!(self.ch, '\n' | '\r')
+    }
+}
+
+/// `written`'s chars, escapes and references read.
+fn read(written: &str, escapes: Escapes) -> Vec<Read> {
+    let mut out = Vec::with_capacity(written.len());
+    let (mut at, mut line_start) = (0, false);
+    while let Some(ch) = written[at..].chars().next() {
+        let rest = &written[at..];
+        let decoded = match (escapes, ch) {
+            (Escapes::Markdown, '\\') => (rest[1..].chars().next())
+                .filter(char::is_ascii_punctuation)
+                .map(|punct| (punct.to_string(), 2, at + 1)),
+            (Escapes::Markdown, '&') => reference(rest).map(|(value, used)| (value, used, at)),
+            (Escapes::Html, '&') => {
+                html::reference(rest, false).map(|(value, used)| (value, used, at))
+            }
+            _ => None,
+        };
+        if let Some((value, used, place)) = decoded {
+            out.extend(value.chars().map(|ch| Read {
+                ch,
+                at: place,
+                raw: false,
+                lead: false,
+            }));
+            (at, line_start) = (at + used, false);
+            continue;
+        }
+        let ends = matches!(ch, '\n' | '\r');
+        let lead = line_start && !ends && matches!(ch, ' ' | '\t' | '>');
+        out.push(Read {
+            ch,
+            at,
+            raw: true,
+            lead,
+        });
+        (at, line_start) = (at + ch.len_utf8(), ends || lead);
+    }
+    out
+}
+
+/// A reference at `text`'s start, as Markdown reads it.
+fn reference(text: &str) -> Option<(String, usize)> {
+    let body = text.strip_prefix('&')?;
+    let (end, _) = body.char_indices().take(34).find(|(_, ch)| *ch == ';')?;
+    let name = &body[..end];
+    let code = |digits: &str, radix: u32, most: usize| {
+        let fits =
+            (1..=most).contains(&digits.len()) && digits.chars().all(|ch| ch.is_digit(radix));
+        let code = u32::from_str_radix(digits, radix).ok().filter(|_| fits)?;
+        let ch = char::from_u32(code).filter(|ch| *ch != '\0');
+        Some(ch.unwrap_or(char::REPLACEMENT_CHARACTER).to_string())
+    };
+    let value = match name.strip_prefix('#') {
+        Some(hex) if hex.starts_with(['x', 'X']) => code(&hex[1..], 16, 6)?,
+        Some(digits) => code(digits, 10, 7)?,
+        None if name.chars().all(|ch| ch.is_ascii_alphanumeric()) => decode_named(name, true)?,
+        None => return None,
+    };
+    Some((value, end + 2))
+}
+
+/// Where drawn byte `at` was written, matched from the end.
+fn align(drawn: &str, written: &str, escapes: Escapes, at: usize) -> Option<usize> {
+    if at >= drawn.len() {
+        return Some(written.len());
+    }
+    let source = read(written, escapes);
+    let mut j = source.len();
+    let mut shown = drawn.char_indices().rev().peekable();
+    while let Some((byte, d)) = shown.next() {
+        let found = loop {
+            let s = source[..j].last()?;
+            // A join: a line's end and the marks after it.
+            if d.is_whitespace() && (s.ends_line() || s.lead) {
+                while source[..j].last().is_some_and(|s| s.lead) {
+                    j -= 1;
+                }
+                j -= 1;
+                let crlf = source[j].ch == '\n' && j > 0;
+                if crlf && source[j - 1].ends_line() && source[j - 1].ch == '\r' {
+                    j -= 1;
+                }
+                if d == '\n' && shown.peek().is_some_and(|(_, ch)| *ch == '\r') {
+                    let (cr, _) = shown.next().expect("peeked");
+                    if cr == at {
+                        return Some(source[j].at);
+                    }
+                }
+                break source[j].at;
+            }
+            if d == s.ch {
+                j -= 1;
+                break s.at;
+            }
+            // White space, line ends and marks the text dropped.
+            if s.raw && (matches!(s.ch, ' ' | '\t') || s.ends_line() || s.lead) {
+                j -= 1;
+                continue;
+            }
+            return None;
+        };
+        if byte == at {
             return Some(found);
         }
     }
-    Some(reading.end)
-}
-
-/// Finds drawn chars, front to back, in written text.
-struct Reading<'a> {
-    written: Peekable<CharIndices<'a>>,
-    base: usize,
-    /// Past the last char found.
-    end: usize,
-}
-
-impl<'a> Reading<'a> {
-    fn new(written: &'a str, base: usize) -> Self {
-        Self {
-            written: written.char_indices().peekable(),
-            base,
-            end: base,
-        }
-    }
-
-    /// Where `shown` was written; true if a char holds it.
-    fn at(&mut self, shown: char) -> Option<(usize, bool)> {
-        loop {
-            let Some(&(byte, written)) = self.written.peek() else {
-                return shown.is_whitespace().then_some((self.end, false));
-            };
-            let byte = self.base + byte;
-            match (shown, written) {
-                (a, b) if a == b => return Some((byte, true)),
-                (a, b) if a.is_whitespace() => return Some((byte, b.is_whitespace())),
-                // Joins, indents, escapes and quote marks.
-                (_, ' ' | '\t' | '\r' | '\n' | '\\' | '>') => {
-                    self.written.next();
-                }
-                _ => return None,
-            }
-        }
-    }
-
-    fn take(&mut self, shown: char) -> Option<usize> {
-        let (byte, held) = self.at(shown)?;
-        if held {
-            let (_, written) = self.written.next().expect("a held char");
-            self.end = byte + written.len_utf8();
-        }
-        Some(byte)
-    }
-}
-
-/// A node's value bytes mapped to source, front to back.
-pub(super) struct Follow<'a> {
-    value: &'a str,
-    done: usize,
-    reading: Option<Reading<'a>>,
-}
-
-impl<'a> Follow<'a> {
-    pub(super) fn new(value: &'a str, source: &'a str, span: Range<usize>) -> Self {
-        let reading = Reading::new(&source[span.clone()], span.start);
-        Self {
-            value,
-            done: 0,
-            reading: Some(reading),
-        }
-    }
-
-    /// Where value byte `at` was written.
-    pub(super) fn to(&mut self, at: usize) -> Option<usize> {
-        let reading = self.reading.as_mut()?;
-        let lost = self.value[self.done..at]
-            .chars()
-            .any(|shown| reading.take(shown).is_none());
-        self.done = at;
-        if lost {
-            log::warn!("markdown: a block's text lost its source");
-            self.reading = None;
-            return None;
-        }
-        let next = self.value[at..].chars().next()?;
-        self.reading.as_mut()?.at(next).map(|(byte, _)| byte)
-    }
+    None
 }
 
 #[cfg(test)]
@@ -226,10 +350,11 @@ mod tests {
     }
 
     #[test]
-    fn text_that_does_not_read_back_lands_at_its_start() {
+    fn references_read_back_and_emoji_end_the_reading() {
         let source = "a &amp; b";
-        assert_eq!(under(source, "b"), 0, "the reference ends the reading");
-        let source = "x :smile: y";
-        assert_eq!(under(source, "y"), 0);
+        assert_eq!(under(source, "b"), source.find('b').unwrap());
+        let source = "ab :smile: y";
+        assert_eq!(under(source, "y"), source.find('y').unwrap());
+        assert_eq!(under(source, "b"), 0, "before the emoji: its start");
     }
 }

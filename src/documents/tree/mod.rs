@@ -13,6 +13,7 @@ mod stack;
 
 pub use blocks::{AlertKind, DocumentHeading, alert, is_toc};
 use html_block::html_block_text;
+pub use sources::Escapes;
 pub(crate) use sources::lines_at;
 use stack::close;
 
@@ -38,7 +39,7 @@ pub struct Inline {
     pub styles: Vec<(Range<usize>, Style)>,
     pub links: Vec<(Range<usize>, String)>,
     /// Where each piece was written: drawn start, source span.
-    pub sources: Vec<(usize, Range<usize>)>,
+    pub sources: Vec<(usize, Range<usize>, Escapes)>,
 }
 
 /// A block of a markdown document.
@@ -342,8 +343,9 @@ impl<'a> Reader<'a> {
         if !matches!(node, mdast::Node::Text(_) | mdast::Node::Html(_)) {
             run.shortcodes.split();
         }
-        if let Some(written) = sources::written(node, self.source) {
-            run.text.sources.push((run.text.text.len(), written));
+        if let Some((written, escapes)) = sources::written(node, self.source) {
+            let at = run.text.text.len();
+            run.text.sources.push((at, written, escapes));
         }
         let text = &mut run.text;
         let (children, (name, style), url) = match node {

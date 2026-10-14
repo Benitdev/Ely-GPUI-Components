@@ -300,7 +300,7 @@ fn decoded(text: &str, attribute: bool) -> String {
 const LONGEST: usize = 32;
 
 /// A reference at `text`'s start, as HTML reads it.
-fn reference(text: &str, attribute: bool) -> Option<(String, usize)> {
+pub(super) fn reference(text: &str, attribute: bool) -> Option<(String, usize)> {
     let body = text.strip_prefix('&')?;
     if let Some(number) = body.strip_prefix('#') {
         let (digits, radix) = match number.strip_prefix(['x', 'X']) {

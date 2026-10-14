@@ -69,7 +69,7 @@ impl Reader<'_> {
         let mdast::Node::Blockquote(quote) = node else {
             return None;
         };
-        let (kind, parts) = alert(quote, self.source)?;
+        let (kind, parts) = alert(quote)?;
         let mut body = Vec::new();
         self.blocks(&parts, &mut body);
         Some(Node::Alert { kind, body })
@@ -77,11 +77,11 @@ impl Reader<'_> {
 }
 
 /// A quote's alert kind and its blocks after the marker.
-pub fn alert(quote: &mdast::Blockquote, source: &str) -> Option<(AlertKind, Vec<mdast::Node>)> {
+pub fn alert(quote: &mdast::Blockquote) -> Option<(AlertKind, Vec<mdast::Node>)> {
     let [mdast::Node::Paragraph(paragraph), rest @ ..] = &quote.children[..] else {
         return None;
     };
-    let (kind, after) = marker(&paragraph.children, source)?;
+    let (kind, after) = marker(&paragraph.children)?;
     if after.is_empty() && rest.is_empty() {
         return None;
     }
@@ -101,7 +101,7 @@ pub fn is_toc(node: &mdast::Node, source: &str) -> bool {
 }
 
 /// A plain first line naming a kind, and what follows.
-fn marker(children: &[mdast::Node], source: &str) -> Option<(AlertKind, Vec<mdast::Node>)> {
+fn marker(children: &[mdast::Node]) -> Option<(AlertKind, Vec<mdast::Node>)> {
     let mut line = String::new();
     for (at, child) in children.iter().enumerate() {
         let head = match child {
@@ -116,7 +116,6 @@ fn marker(children: &[mdast::Node], source: &str) -> Option<(AlertKind, Vec<mdas
                     let after = after.strip_prefix("\r\n").unwrap_or(&after[1..]);
                     let mut kept = text.clone();
                     kept.value = after.to_string();
-                    past_line(&mut kept, source);
                     (!after.is_empty()).then_some(mdast::Node::Text(kept))
                 }
             },
@@ -127,25 +126,6 @@ fn marker(children: &[mdast::Node], source: &str) -> Option<(AlertKind, Vec<mdas
         return Some((AlertKind::marked(&line)?, after.collect()));
     }
     Some((AlertKind::marked(&line)?, Vec::new()))
-}
-
-/// `text` starts past its first line, as its value does.
-fn past_line(text: &mut mdast::Text, source: &str) {
-    let start = &mut text
-        .position
-        .as_mut()
-        .expect("parsed text has a place")
-        .start;
-    let written = &source[start.offset..];
-    let end = written.find(['\n', '\r']).expect("its line end is written");
-    let width = if written[end..].starts_with("\r\n") {
-        2
-    } else {
-        1
-    };
-    start.offset += end + width;
-    start.line += 1;
-    start.column = 1;
 }
 
 #[cfg(test)]

@@ -3,11 +3,10 @@ use std::rc::Rc;
 use gpui::{Context, MouseButton, Window};
 use markdown::mdast;
 
-use super::{DocumentEvent, MarkdownDocument, edit::Landing, edit::moved};
+use super::{DocumentEvent, MarkdownDocument, edit::Landing, edit::moved, parse::Block};
 use crate::documents::{
     render::{OnPoint, Place, Pointed},
-    tree::lines_at,
-    tree::{alert, is_toc},
+    tree::{Node, alert, is_toc, lines_at},
 };
 
 /// A top-level block's kind.
@@ -36,7 +35,7 @@ impl TargetBlock {
             mdast::Node::Paragraph(_) if is_toc(node, source) => Self::Toc,
             mdast::Node::Paragraph(_) => Self::Paragraph,
             mdast::Node::Heading(heading) => Self::Heading(heading.depth),
-            mdast::Node::Blockquote(quote) if alert(quote, source).is_some() => Self::Alert,
+            mdast::Node::Blockquote(quote) if alert(quote).is_some() => Self::Alert,
             mdast::Node::Blockquote(_) => Self::Quote,
             mdast::Node::List(_) => Self::List,
             mdast::Node::Code(_) => Self::Code,
@@ -95,6 +94,12 @@ impl MarkdownDocument {
         })
     }
 
+    /// A block's kind, text and what it draws.
+    fn drawn(&self, block: &Block) -> (TargetBlock, String, Option<Vec<Node>>) {
+        let text = self.parsed.text[block.range.clone()].to_string();
+        (block.kind, text, block.nodes.clone())
+    }
+
     /// Caret to `at`, else block `ix`; the owner hears.
     pub(super) fn point(
         &mut self,
@@ -109,7 +114,7 @@ impl MarkdownDocument {
             block => block.flatten(),
         };
         let kind = block.map(|block| block.kind);
-        let pressed = block.map(|block| self.parsed.text[block.range.clone()].to_string());
+        let pressed = block.map(|block| self.drawn(block));
         let at = at.or(block.map(|block| block.range.start));
         let written = self.commit(cx);
         if written.is_some() {
@@ -128,7 +133,7 @@ impl MarkdownDocument {
         // A write-back may change the pressed block.
         let now = (self.parsed.blocks.iter())
             .find(|block| block.range.start <= at && at <= block.range.end)
-            .map(|block| self.parsed.text[block.range.clone()].to_string());
+            .map(|block| self.drawn(block));
         if written.is_some() && pressed.is_some() && now != pressed {
             return log::warn!("markdown document: the write-back changed the pressed block");
         }
