@@ -226,12 +226,28 @@ fn inline_html_shows_as_typora_shows_it() {
 }
 
 #[test]
-fn a_tag_left_open_ends_with_its_container() {
-    let text = line("**a <u>b** c</u> d");
-    assert_eq!(text.text, "a b c d");
-    assert!(text.styles.contains(&(2..3, Style::Underline)), "{text:?}");
-    assert!(text.styles.contains(&(0..3, Style::Strong)), "{text:?}");
-    assert_eq!(text.styles.len(), 2, "the stray close is ignored: {text:?}");
+fn tags_and_emphasis_cross_as_a_browser_repairs_them() {
+    let opened_inside = line("**a <u>b** c</u> d");
+    assert_eq!(opened_inside.text, "a b c d");
+    let mut styles = opened_inside.styles.clone();
+    styles.sort_by_key(|(range, _)| (range.start, range.end));
+    assert_eq!(styles, [(0..3, Style::Strong), (2..5, Style::Underline)]);
+    let closed_inside = line("a <u>*text</u> outside* end");
+    assert_eq!(closed_inside.text, "a text outside end");
+    let mut styles = closed_inside.styles.clone();
+    styles.sort_by_key(|(range, _)| (range.start, range.end));
+    assert_eq!(styles, [(2..6, Style::Underline), (2..14, Style::Emphasis)]);
+    assert!(line("a </u> b").styles.is_empty(), "a stray close");
+}
+
+#[test]
+fn a_closing_br_breaks_as_html_reads_it() {
+    assert_eq!(line("before<br></br>after").text, "before\n\nafter");
+}
+
+#[test]
+fn shortcodes_mean_what_github_means() {
+    assert_eq!(line(":cricket: :cricket_game:").text, "🦗 🏏");
 }
 
 #[test]

@@ -57,32 +57,32 @@ pub(crate) fn tag(html: &str) -> Option<Tag> {
 fn attributes(mut rest: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     loop {
-        rest = rest.trim_start();
+        rest = rest.trim_start_matches(spacing);
         // A slash between attributes closes the tag itself.
         if let Some(after) = rest.strip_prefix('/') {
             rest = after;
             continue;
         }
         let named = rest
-            .find(|ch: char| ch.is_whitespace() || ch == '=' || ch == '/')
+            .find(|ch: char| spacing(ch) || ch == '=' || ch == '/')
             .unwrap_or(rest.len());
         if named == 0 {
             return out;
         }
         let name = rest[..named].to_ascii_lowercase();
-        rest = rest[named..].trim_start();
+        rest = rest[named..].trim_start_matches(spacing);
         let Some(after) = rest.strip_prefix('=') else {
             out.push((name, String::new()));
             continue;
         };
-        let after = after.trim_start();
+        let after = after.trim_start_matches(spacing);
         let (value, left) = match after.chars().next() {
             Some(quote @ ('"' | '\'')) => match after[1..].find(quote) {
                 Some(end) => (&after[1..1 + end], &after[2 + end..]),
                 None => (&after[1..], ""),
             },
             _ => {
-                let end = after.find(char::is_whitespace).unwrap_or(after.len());
+                let end = after.find(spacing).unwrap_or(after.len());
                 (&after[..end], &after[end..])
             }
         };
@@ -91,14 +91,19 @@ fn attributes(mut rest: &str) -> Vec<(String, String)> {
     }
 }
 
-/// `text` with its character references decoded.
+/// HTML's whitespace, which is ASCII alone.
+fn spacing(ch: char) -> bool {
+    matches!(ch, ' ' | '\t' | '\n' | '\r' | '\x0C')
+}
+
+/// An attribute value with references decoded as HTML does.
 fn decoded(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        match reference(rest) {
+        match attribute_reference(rest) {
             Some((value, len)) => {
                 out.push_str(&value);
                 rest = &rest[len..];
@@ -113,10 +118,79 @@ fn decoded(text: &str) -> String {
     out
 }
 
+/// Longest reference name HTML knows, in bytes.
+const LONGEST: usize = 32;
+
+/// A reference at `text`'s start, as HTML reads values.
+fn attribute_reference(text: &str) -> Option<(String, usize)> {
+    let body = text.strip_prefix('&')?;
+    if let Some(number) = body.strip_prefix('#') {
+        let (digits, radix) = match number.strip_prefix(['x', 'X']) {
+            Some(hex) => (hex, 16),
+            None => (number, 10),
+        };
+        let len = digits
+            .find(|ch: char| !ch.is_digit(radix))
+            .unwrap_or(digits.len());
+        if len == 0 {
+            return None;
+        }
+        let code = digits[..len].chars().try_fold(0u32, |code, ch| {
+            code.checked_mul(radix)?.checked_add(ch.to_digit(radix)?)
+        });
+        let ended = usize::from(digits[len..].starts_with(';'));
+        let used = 2 + (number.len() - digits.len()) + len + ended;
+        return Some((numeric(code).to_string(), used));
+    }
+    let len = body
+        .find(|ch: char| !ch.is_ascii_alphanumeric())
+        .unwrap_or(body.len());
+    let name = &body[..len];
+    if (1..=LONGEST).contains(&len)
+        && body[len..].starts_with(';')
+        && let Some(value) = decode_named(name, true)
+    {
+        return Some((value, len + 2));
+    }
+    let bare = !body[len..].starts_with(['=', ';']);
+    (bare && legacy(name)).then(|| (decode_named(name, true).expect("a legacy name"), len + 1))
+}
+
+/// A name HTML decodes without its semicolon.
+fn legacy(name: &str) -> bool {
+    if matches!(name, "AMP" | "LT" | "GT" | "QUOT" | "COPY" | "REG") {
+        return true;
+    }
+    decode_named(name, false).is_some_and(|value| {
+        let mut chars = value.chars();
+        let one = chars.next().filter(|_| chars.next().is_none());
+        one.is_some_and(|ch| matches!(ch, '&' | '<' | '>' | '"' | '\u{A0}'..='\u{FF}'))
+    })
+}
+
+/// The character a numeric reference names, as HTML maps it.
+fn numeric(code: Option<u32>) -> char {
+    // Windows-1252 for the C1 block, as browsers do.
+    const C1: [u32; 32] = [
+        0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160,
+        0x2039, 0x0152, 0x8D, 0x017D, 0x8F, 0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013,
+        0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178,
+    ];
+    match code {
+        Some(code @ 0x80..=0x9F) => char::from_u32(C1[(code - 0x80) as usize]),
+        Some(0) | None => None,
+        Some(code) => char::from_u32(code),
+    }
+    .unwrap_or(char::REPLACEMENT_CHARACTER)
+}
+
 /// The reference `text` starts with, as CommonMark reads one.
 fn reference(text: &str) -> Option<(String, usize)> {
     let body = text.strip_prefix('&')?;
-    let end = body.find(';')?;
+    let end = body
+        .bytes()
+        .take(LONGEST + 1)
+        .position(|byte| byte == b';')?;
     let name = &body[..end];
     let value = match name.strip_prefix('#') {
         Some(number) => {
@@ -187,10 +261,11 @@ fn literal_codes(source: &str) -> Vec<(usize, &str, &'static str)> {
             continue;
         }
         if ch == ':' {
-            let found = after
-                .find(':')
-                .map(|end| &after[..end])
-                .filter(|code| !code.is_empty() && code.chars().all(shortcode_char))
+            let len = after
+                .find(|ch: char| !shortcode_char(ch))
+                .unwrap_or(after.len());
+            let found = Some(&after[..len])
+                .filter(|code| !code.is_empty() && after[len..].starts_with(':'))
                 .and_then(|code| emojis::get_by_shortcode(code).map(|found| (code, found)));
             if let Some((code, found)) = found {
                 out.push((colons, code, found.as_str()));
@@ -251,6 +326,43 @@ mod tests {
             query.attribute("href"),
             Some("https://x.test/?q=1&p=2&r=3&nope;")
         );
+    }
+
+    #[test]
+    fn values_decode_as_a_browser_decodes_them() {
+        let href = |html: &str| {
+            tag(html)
+                .expect("a tag")
+                .attribute("href")
+                .map(str::to_owned)
+        };
+        let cases = [
+            ("<a href=\"?q=1&#38page=2\">", "?q=1&page=2"),
+            ("<a href=\"/&#128;&#x9F;&#129;\">", "/€Ÿ\u{81}"),
+            (
+                "<a href=\"&#0;&#x110000;&#xD800;\">",
+                "\u{FFFD}\u{FFFD}\u{FFFD}",
+            ),
+            (
+                "<a href=\"&amp page&ampx&amp=&notin;&AMP\">",
+                "& page&ampx&amp=∉&",
+            ),
+            ("<a href=/a\u{A0}b>", "/a\u{A0}b"),
+        ];
+        for (html, want) in cases {
+            assert_eq!(href(html).as_deref(), Some(want), "{html}");
+        }
+    }
+
+    #[test]
+    fn long_runs_scan_in_linear_time() {
+        let (amps, colons) = ("&".repeat(1 << 18), ":zq".repeat(1 << 16));
+        let started = web_time::Instant::now();
+        assert_eq!(decoded(&amps).len(), amps.len());
+        assert_eq!(emoji(&amps, &amps).len(), amps.len());
+        assert_eq!(emoji(&colons, &colons).len(), colons.len());
+        let spent = started.elapsed();
+        assert!(spent.as_secs() < 2, "256 KiB took {spent:?}");
     }
 
     #[test]

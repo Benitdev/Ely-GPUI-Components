@@ -117,18 +117,14 @@ impl Run {
         let Some(style) = html::inline_style(&tag.name) else {
             return;
         };
-        // Only tags inside the innermost container match.
-        let floor = self
-            .open
-            .iter()
-            .rposition(|opened| opened.tag.is_none())
-            .map_or(0, |at| at + 1);
+        // A close meets its open anywhere, as a browser repairs.
         if tag.closing {
-            let found = self.open[floor..]
+            let found = self
+                .open
                 .iter()
                 .rposition(|opened| opened.tag.as_ref() == Some(&tag.name));
             if let Some(at) = found {
-                let (opened, end) = (self.open.remove(floor + at), self.text.text.len());
+                let (opened, end) = (self.open.remove(at), self.text.text.len());
                 close(&mut self.text, &opened, end);
             }
             return;
@@ -367,16 +363,14 @@ impl<'a> Reader<'a> {
             self.inline_into(child, run, images);
         }
         run.verbatim = outer;
-        // Tags left open end with their container.
+        // Tags opened inside stay open past it.
         let at = run
             .open
             .iter()
             .rposition(|opened| opened.tag.is_none())
             .expect("the container opened above");
-        let end = run.text.text.len();
-        for opened in run.open.drain(at..) {
-            close(&mut run.text, &opened, end);
-        }
+        let (opened, end) = (run.open.remove(at), run.text.text.len());
+        close(&mut run.text, &opened, end);
     }
 }
 
