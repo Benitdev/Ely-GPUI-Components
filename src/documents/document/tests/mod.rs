@@ -366,6 +366,7 @@ fn a_press_after_a_write_back_waits_for_the_long_read(cx: &mut TestAppContext) {
 }
 
 mod attach;
+mod format;
 mod history;
 mod links;
 mod look;

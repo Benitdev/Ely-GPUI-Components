@@ -14,7 +14,7 @@ mod stack;
 pub use blocks::{AlertKind, DocumentHeading, alert, is_toc};
 use html_block::html_block_text;
 pub use sources::Escapes;
-pub(crate) use sources::lines_at;
+pub(crate) use sources::{inside, lines_at};
 use stack::close;
 
 /// How a stretch of inline text prints.

@@ -1,6 +1,7 @@
 mod attach;
 mod edit;
 mod finding;
+mod format;
 mod lists;
 mod look;
 mod parse;
@@ -22,6 +23,7 @@ use gpui::{
 
 pub use crate::documents::tree::DocumentHeading;
 pub use attach::Attachment;
+pub use format::{FormatRefusal, InlineFormat};
 pub use look::DocumentLook;
 use parse::{Parsed, alike, parsed};
 pub use point::{DocumentTarget, TargetBlock};

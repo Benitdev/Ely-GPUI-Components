@@ -38,7 +38,7 @@ pub(super) fn written(node: &Node, source: &str) -> Option<(Range<usize>, Escape
 }
 
 /// A code span's text, one end space cut each side.
-fn inside(source: &str, whole: Range<usize>, mark: char) -> Range<usize> {
+pub(crate) fn inside(source: &str, whole: Range<usize>, mark: char) -> Range<usize> {
     let written = &source[whole.clone()];
     let open = written.len() - written.trim_start_matches(mark).len();
     let close = written.len() - written.trim_end_matches(mark).len();
