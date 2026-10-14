@@ -164,7 +164,7 @@ pub(super) fn edit_table(text: &str, at: usize, edit: TableEdit) -> Result<Chang
     Ok((vec![(range, out)], caret..caret))
 }
 
-/// The table at the caret gone, as the block command removes it.
+/// Removes the table at the caret, as Delete does.
 pub(super) fn delete(text: &str, at: usize) -> Result<Change, EditRefusal> {
     let root = file_tree(text);
     let mut nodes = Vec::new();

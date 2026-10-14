@@ -411,3 +411,24 @@ fn delete_table_takes_the_table_or_refuses_outside(cx: &mut TestAppContext) {
     assert_eq!(*heard.borrow(), [outside]);
     assert_eq!(text(&document, cx), source);
 }
+
+#[gpui::test]
+fn undo_follows_a_table_edit_that_closes_the_block(cx: &mut TestAppContext) {
+    let source = "before\n\n| A |\n| - |\n| 1 |\n\nafter\n";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    press(1, Modifiers::none(), cx);
+    document.update(cx, |document, cx| {
+        document
+            .edit_table(crate::documents::TableEdit::Delete, cx)
+            .expect("taken")
+    });
+    cx.run_until_parked();
+    assert_eq!(text(&document, cx), "before\n\nafter\n");
+    let held = cx.update(|window, cx| {
+        let handle = gpui::Focusable::focus_handle(document.read(cx), cx);
+        handle.contains_focused(window, cx)
+    });
+    assert!(held, "focus stays in the document");
+    cx.simulate_keystrokes("secondary-z");
+    assert_eq!(text(&document, cx), source);
+}

@@ -141,6 +141,17 @@ impl MarkdownDocument {
         cx.notify();
     }
 
+    /// Takes the focus a dropped block still holds.
+    pub(super) fn take_orphan(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(orphan) = self.orphan.take() else {
+            return;
+        };
+        if self.open.is_none() && orphan.is_focused(window) {
+            log::info!("markdown document: a dropped block's focus passes to the document");
+            window.focus(&self.focus_handle(cx), cx);
+        }
+    }
+
     /// Keeps the block open while an overlay holds focus.
     fn lend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (Some(open), Some(holder)) = (self.open.as_mut(), window.focused(cx)) else {
@@ -168,6 +179,7 @@ impl MarkdownDocument {
     /// Writes the open block as one step; the edit made.
     pub(super) fn commit(&mut self, cx: &mut Context<Self>) -> Option<(Range<usize>, usize)> {
         let open = self.open.take()?;
+        self.orphan = Some(open.input.focus_handle(cx));
         cx.notify();
         let typed = open.input.read(cx).text().to_string();
         let caret = open.input.read(cx).cursor();

@@ -195,6 +195,7 @@ impl MarkdownDocument {
 
 impl Render for MarkdownDocument {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.take_orphan(window, cx);
         // A top line asked before its text was read.
         self.place_top(window, cx);
         self.show_waiting(window, cx);

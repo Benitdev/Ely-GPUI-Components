@@ -12,7 +12,7 @@ use crate::{
 
 actions!(lend_tests, [Bold, Away]);
 
-/// A menu bar over a document, as an app lays them out.
+/// A menu bar over a document.
 struct Host {
     document: Entity<MarkdownDocument>,
     away: FocusHandle,

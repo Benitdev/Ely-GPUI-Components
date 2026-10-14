@@ -97,6 +97,8 @@ pub struct MarkdownDocument {
     editing: bool,
     list: ListState,
     open: Option<Open>,
+    /// A dropped block's focus, for the document to take.
+    orphan: Option<FocusHandle>,
     /// A top line asked for, until the view holds it.
     top: Option<Placement>,
     asks: u64,
@@ -169,6 +171,7 @@ impl MarkdownDocument {
             editing: false,
             list: ListState::new(1, ListAlignment::Top, overdraw),
             open: None,
+            orphan: None,
             top: None,
             asks: 0,
             writes: 0,
@@ -344,7 +347,8 @@ impl MarkdownDocument {
 
     /// Closes the open block without writing it.
     fn drop_open(&mut self, cx: &mut Context<Self>) {
-        if self.open.take().is_some() {
+        if let Some(open) = self.open.take() {
+            self.orphan = Some(open.input.focus_handle(cx));
             log::info!("markdown document: the open block closed unwritten");
             cx.notify();
         }
