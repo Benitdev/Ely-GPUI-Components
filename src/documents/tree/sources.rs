@@ -12,6 +12,8 @@ pub enum Escapes {
     Markdown,
     /// References, as HTML reads them.
     Html,
+    /// Escaped pipes, as a table cell's code reads them.
+    Pipes,
 }
 
 /// A leaf's written span and how it reads.
@@ -208,7 +210,7 @@ struct Read {
 
 impl Read {
     fn ends_line(&self) -> bool {
-        self.raw && matches!(self.ch, '\n' | '\r')
+        matches!(self.ch, '\n' | '\r')
     }
 }
 
@@ -225,6 +227,9 @@ fn read(written: &str, escapes: Escapes) -> Vec<Read> {
             (Escapes::Markdown, '&') => reference(rest).map(|(value, used)| (value, used, at)),
             (Escapes::Html, '&') => {
                 html::reference(rest, false).map(|(value, used)| (value, used, at))
+            }
+            (Escapes::Pipes, '\\') => {
+                (rest[1..].starts_with('|')).then(|| ("|".to_string(), 2, at + 1))
             }
             _ => None,
         };
@@ -260,7 +265,10 @@ fn reference(text: &str) -> Option<(String, usize)> {
         let fits =
             (1..=most).contains(&digits.len()) && digits.chars().all(|ch| ch.is_digit(radix));
         let code = u32::from_str_radix(digits, radix).ok().filter(|_| fits)?;
-        let ch = char::from_u32(code).filter(|ch| *ch != '\0');
+        // Controls become U+FFFD, as markdown-rs reads them.
+        let ch = char::from_u32(code).filter(|ch| {
+            !matches!(ch, '\0'..='\u{08}' | '\u{0B}' | '\u{0E}'..='\u{1F}' | '\u{7F}'..='\u{9F}')
+        });
         Some(ch.unwrap_or(char::REPLACEMENT_CHARACTER).to_string())
     };
     let value = match name.strip_prefix('#') {
@@ -279,34 +287,23 @@ fn align(drawn: &str, written: &str, escapes: Escapes, at: usize) -> Option<usiz
     }
     let source = read(written, escapes);
     let mut j = source.len();
-    let mut shown = drawn.char_indices().rev().peekable();
-    while let Some((byte, d)) = shown.next() {
+    for (byte, d) in drawn.char_indices().rev() {
         let found = loop {
             let s = source[..j].last()?;
-            // A join: a line's end and the marks after it.
-            if d.is_whitespace() && (s.ends_line() || s.lead) {
-                while source[..j].last().is_some_and(|s| s.lead) {
-                    j -= 1;
-                }
-                j -= 1;
-                let crlf = source[j].ch == '\n' && j > 0;
-                if crlf && source[j - 1].ends_line() && source[j - 1].ch == '\r' {
-                    j -= 1;
-                }
-                if d == '\n' && shown.peek().is_some_and(|(_, ch)| *ch == '\r') {
-                    let (cr, _) = shown.next().expect("peeked");
-                    if cr == at {
-                        return Some(source[j].at);
-                    }
-                }
-                break source[j].at;
-            }
             if d == s.ch {
                 j -= 1;
                 break s.at;
             }
+            // A join: a line's end drawn as white space.
+            if d.is_whitespace() && s.ends_line() {
+                j -= 1;
+                if s.ch == '\n' && j > 0 && source[j - 1].ch == '\r' && source[j - 1].raw == s.raw {
+                    j -= 1;
+                }
+                break source[j].at;
+            }
             // White space, line ends and marks the text dropped.
-            if s.raw && (matches!(s.ch, ' ' | '\t') || s.ends_line() || s.lead) {
+            if s.lead || matches!(s.ch, ' ' | '\t') || s.ends_line() {
                 j -= 1;
                 continue;
             }

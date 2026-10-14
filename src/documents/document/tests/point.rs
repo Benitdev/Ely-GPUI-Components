@@ -11,7 +11,7 @@ use crate::{
 };
 
 /// Presses block `ix` on its first line's character `k`.
-fn press_on(ix: usize, k: usize, button: MouseButton, cx: &mut VisualTestContext) {
+pub(super) fn press_on(ix: usize, k: usize, button: MouseButton, cx: &mut VisualTestContext) {
     let bounds = cx
         .debug_bounds(Box::leak(format!("markdown-block-{ix}").into_boxed_str()))
         .expect("the block is drawn");
@@ -29,7 +29,7 @@ fn press_on(ix: usize, k: usize, button: MouseButton, cx: &mut VisualTestContext
     cx.run_until_parked();
 }
 
-fn heard(
+pub(super) fn heard(
     document: &Entity<MarkdownDocument>,
     cx: &mut VisualTestContext,
 ) -> Rc<RefCell<Vec<DocumentTarget>>> {
@@ -50,7 +50,10 @@ fn caret(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> usi
     document.read_with(cx, |document, cx| document.editor.read(cx).primary().head)
 }
 
-fn opened_caret(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> usize {
+pub(super) fn opened_caret(
+    document: &Entity<MarkdownDocument>,
+    cx: &mut VisualTestContext,
+) -> usize {
     document.read_with(cx, |document, cx| {
         document
             .open
@@ -62,7 +65,7 @@ fn opened_caret(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext)
     })
 }
 
-fn target(at: usize, block: TargetBlock) -> DocumentTarget {
+pub(super) fn target(at: usize, block: TargetBlock) -> DocumentTarget {
     DocumentTarget {
         at,
         block: Some(block),
@@ -165,21 +168,21 @@ fn a_secondary_press_past_the_end_goes_to_the_end(cx: &mut TestAppContext) {
 }
 
 /// Base and small text sizes, in pixels.
-fn sizes(cx: &mut VisualTestContext) -> (Pixels, Pixels) {
+pub(super) fn sizes(cx: &mut VisualTestContext) -> (Pixels, Pixels) {
     cx.update(|window, cx| {
         let size = |size| cx.theme().text_size(size).to_pixels(window.rem_size());
         (size(TextSize::Base), size(TextSize::Sm))
     })
 }
 
-fn press_at(x: Pixels, y: Pixels, button: MouseButton, cx: &mut VisualTestContext) {
+pub(super) fn press_at(x: Pixels, y: Pixels, button: MouseButton, cx: &mut VisualTestContext) {
     cx.simulate_mouse_down(point(x, y), button, Modifiers::none());
     cx.simulate_mouse_up(point(x, y), button, Modifiers::none());
     cx.run_until_parked();
 }
 
 /// Presses block 0's code glyph `k` on `line`.
-fn press_lines(k: usize, line: usize, button: MouseButton, cx: &mut VisualTestContext) {
+pub(super) fn press_lines(k: usize, line: usize, button: MouseButton, cx: &mut VisualTestContext) {
     let bounds = cx.debug_bounds("markdown-block-0").expect("drawn");
     let (body, small) = sizes(cx);
     let x = bounds.left() + px(25.0) + small * 0.6 * (k as f32 + 0.25);

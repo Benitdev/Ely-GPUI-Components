@@ -120,6 +120,8 @@ struct Run {
     named: HashMap<String, usize>,
     /// Inside an autolink: its text stays as written.
     verbatim: bool,
+    /// In a table cell, whose code reads `\|` as `|`.
+    table: bool,
     /// The current DOM text node's shortcodes.
     shortcodes: emoji::Shortcodes,
     /// White space owed, and the open elements before it.
@@ -306,7 +308,10 @@ impl<'a> Reader<'a> {
         {
             return out.push(Node::Math(math.value.clone()));
         }
-        let mut run = Run::default();
+        let mut run = Run {
+            table: matches!(node, mdast::Node::TableCell(_)),
+            ..Run::default()
+        };
         for child in children {
             self.inline_into(child, &mut run, &mut Images::Split(out));
         }
@@ -344,6 +349,11 @@ impl<'a> Reader<'a> {
             run.shortcodes.split();
         }
         if let Some((written, escapes)) = sources::written(node, self.source) {
+            let escapes = match (escapes, node) {
+                (Escapes::Markdown, _) if run.verbatim => Escapes::Plain,
+                (_, mdast::Node::InlineCode(_)) if run.table => Escapes::Pipes,
+                _ => escapes,
+            };
             let at = run.text.text.len();
             run.text.sources.push((at, written, escapes));
         }

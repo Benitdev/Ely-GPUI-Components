@@ -121,3 +121,61 @@ fn a_decoded_line_end_reads_without_a_written_one() {
     let alert = parsed("> [!NOTE]&#10;alpha beta");
     assert_eq!(alert.blocks[0].kind, TargetBlock::Alert);
 }
+
+#[test]
+fn kept_leading_marks_still_map() {
+    let source = "a `fox\n  y` z";
+    assert_eq!(read_back(source, "ox"), source.find("ox"));
+}
+
+#[test]
+fn decoded_line_end_maps_nearby_text() {
+    for (source, shown) in [
+        ("ab &#10; y", "b"),
+        ("ab &#13; y", "b"),
+        ("ab &NewLine; y", "b"),
+        ("<div>ab &#10; y</div>", "b"),
+        ("<div>ab &#9; y</div>", "b"),
+    ] {
+        assert_eq!(read_back(source, shown), source.find(shown), "{source:?}");
+    }
+}
+
+#[test]
+fn numeric_references_match_the_parser() {
+    for source in ["ab &#128; y", "ab &#1; y", "ab &#xFDD0; y"] {
+        assert_eq!(read_back(source, "b"), source.find('b'), "{source:?}");
+    }
+}
+
+#[test]
+fn html_trailing_encoded_space_maps_previous_word() {
+    for source in [
+        "<div>ab&#32;</div>",
+        "<div>ab&#32;<b>word</b></div>",
+        "<div>ab &#32; word</div>",
+    ] {
+        assert_eq!(read_back(source, "b"), source.find('b'), "{source:?}");
+    }
+}
+
+#[test]
+fn code_pipe_in_a_table_maps_previous_text() {
+    let source = "| `ab\\|cd` |\n| --- |\n| cell |\n";
+    let parsed = parsed(source);
+    let nodes = parsed.blocks[0].nodes.as_ref().unwrap();
+    let Node::Table { head, .. } = &nodes[0] else {
+        panic!("table")
+    };
+    let Node::Paragraph(inline) = &head[0][0] else {
+        panic!("text")
+    };
+    assert_eq!(inline.text, "ab|cd");
+    assert_eq!(inline.source_at(source, 1), source.find('b'));
+}
+
+#[test]
+fn autolink_does_not_decode_literal_reference() {
+    let source = "<https://example.com/?a=&amp;b=2>";
+    assert_eq!(read_back(source, "xample"), source.find("xample"));
+}
