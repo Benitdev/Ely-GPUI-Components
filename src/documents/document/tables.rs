@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     MarkdownDocument,
-    block::{eol, line_end, line_start, next_line, prev_line},
+    block::{eol, line_end, line_start, next_line, prev_line, settled},
     format::{Change, EditRefusal},
 };
 use crate::documents::{
@@ -264,7 +264,7 @@ impl MarkdownDocument {
         }
         self.commit(cx);
         let text = self.editor.read(cx).text().to_string();
-        let at = self.editor.read(cx).primary().range().start;
+        let at = settled(&text, self.editor.read(cx).primary().range().start);
         let (start, end, eol) = (line_start(&text, at), line_end(&text, at), eol(&text));
         // A blank line gives way; a written one keeps.
         let blank = text[start..end].trim().is_empty();

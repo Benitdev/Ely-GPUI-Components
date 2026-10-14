@@ -251,19 +251,23 @@ fn path<'a>(text: &str, root: &'a Node, at: usize) -> Vec<&'a Node> {
     path
 }
 
+/// Whether `at` falls between a CR and its LF.
+fn splits(text: &str, at: usize) -> bool {
+    text[..at].ends_with('\r') && text[at..].starts_with('\n')
+}
+
 /// `at`, before the CR when it splits a CRLF.
-fn settled(text: &str, at: usize) -> usize {
-    let split = text[..at].ends_with('\r') && text[at..].starts_with('\n');
-    if split { at - 1 } else { at }
+pub(super) fn settled(text: &str, at: usize) -> usize {
+    if splits(text, at) { at - 1 } else { at }
 }
 
 pub(super) fn line_start(text: &str, at: usize) -> usize {
-    let at = settled(text, at);
+    debug_assert!(!splits(text, at), "line_start inside a CRLF");
     text[..at].rfind(['\n', '\r']).map_or(0, |at| at + 1)
 }
 
 pub(super) fn line_end(text: &str, at: usize) -> usize {
-    let at = settled(text, at);
+    debug_assert!(!splits(text, at), "line_end inside a CRLF");
     at + text[at..].find(['\n', '\r']).unwrap_or(text.len() - at)
 }
 

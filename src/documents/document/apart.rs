@@ -6,7 +6,7 @@ use gpui::{AppContext as _, Context};
 
 use super::{
     DocumentEvent, LARGEST_READ, MarkdownDocument,
-    block::{self, BlockCommand},
+    block::{self, BlockCommand, settled},
     format::{Change, EditRefusal, InlineFormat, toggle},
     tables::{self, TableEdit},
 };
@@ -109,7 +109,8 @@ impl MarkdownDocument {
     fn snapshot(&self, cx: &Context<Self>) -> Snapshot {
         let text = self.editor.read(cx).text();
         let Some(open) = &self.open else {
-            return (text.to_string(), 0, self.editor.read(cx).primary().range());
+            let picked = self.editor.read(cx).primary().range();
+            return settle((text.to_string(), 0, picked));
         };
         let input = open.input.read(cx);
         let (before, after) = match open.append {
@@ -122,7 +123,7 @@ impl MarkdownDocument {
         let picked = input.selection();
         let offset = before.len();
         let full = format!("{before}{}{after}", input.text());
-        (full, offset, offset + picked.start..offset + picked.end)
+        settle((full, offset, offset + picked.start..offset + picked.end))
     }
 
     /// Writes `change`: into the open block while it stays inside.
@@ -178,4 +179,10 @@ impl MarkdownDocument {
         });
         Ok(())
     }
+}
+
+/// The editor splits lines on LF only; reads start off a CRLF.
+fn settle((full, offset, picked): Snapshot) -> Snapshot {
+    let picked = settled(&full, picked.start)..settled(&full, picked.end);
+    (full, offset, picked)
 }

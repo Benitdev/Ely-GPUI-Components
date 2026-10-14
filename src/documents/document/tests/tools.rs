@@ -355,3 +355,33 @@ fn tidy_in_an_open_table_keeps_it_open(cx: &mut TestAppContext) {
         "| A    | B    |\n| ---- | ---- |\n| 1    | 2    |"
     );
 }
+
+const CRLF: &str = "Intro\r\nNext\r\n";
+
+/// A code block in CRLF text after `keys`.
+fn code_block_after(keys: &str, cx: &mut TestAppContext) -> String {
+    let (document, cx) = open(CRLF, MarkdownMode::Source, cx);
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    let focus = editor.read_with(cx, gpui::Focusable::focus_handle);
+    cx.update(|window, cx| window.focus(&focus, cx));
+    cx.simulate_keystrokes(keys);
+    document.update(cx, |document, cx| {
+        document
+            .block(crate::documents::BlockCommand::CodeBlock, cx)
+            .expect("taken")
+    });
+    cx.run_until_parked();
+    text(&document, cx)
+}
+
+const FENCE_AFTER_INTRO: &str = "Intro\r\n\r\n```\r\n\r\n```\r\n\r\nNext\r\n";
+
+#[gpui::test]
+fn a_block_after_end_in_crlf_text_reads_the_line(cx: &mut TestAppContext) {
+    assert_eq!(code_block_after("end", cx), FENCE_AFTER_INTRO);
+}
+
+#[gpui::test]
+fn a_selection_from_inside_a_crlf_reads_the_line(cx: &mut TestAppContext) {
+    assert_eq!(code_block_after("end shift-right", cx), FENCE_AFTER_INTRO);
+}
