@@ -124,3 +124,12 @@ fn delete_image_takes_the_picture_away_in_one_step(cx: &mut TestAppContext) {
     editor.update(cx, |editor, cx| editor.undo(cx));
     assert_eq!(text(&document, cx), source);
 }
+
+#[gpui::test]
+fn text_pastes_at_the_caret_with_no_block_open(cx: &mut TestAppContext) {
+    let (document, cx) = open("First.\n", MarkdownMode::Visual, cx);
+    press_on(0, 0, MouseButton::Right, cx);
+    cx.write_to_clipboard(gpui::ClipboardItem::new_string("New ".into()));
+    cx.simulate_keystrokes("secondary-v");
+    assert_eq!(text(&document, cx), "New First.\n");
+}

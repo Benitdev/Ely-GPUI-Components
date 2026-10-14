@@ -281,7 +281,13 @@ impl Render for MarkdownDocument {
                     }
                 }))
                 .on_action(cx.listener(|document, _: &Paste, _, cx| {
-                    document.paste_picture(cx);
+                    if document.paste_picture(cx) {
+                        return;
+                    }
+                    match cx.read_from_clipboard().and_then(|item| item.text()) {
+                        Some(text) => _ = document.insert(&text, cx),
+                        None => log::info!("markdown document: nothing to paste"),
+                    }
                 }))
                 .capture_action(cx.listener(|document, _: &forms::Enter, _, cx| {
                     if document.block_newline(cx) {
