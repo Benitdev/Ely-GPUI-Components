@@ -102,8 +102,10 @@ struct Run {
     named: HashMap<String, usize>,
     /// Inside an autolink: its text stays as written.
     verbatim: bool,
-    /// White space an HTML block owes the next word.
-    owed: Option<char>,
+    /// Filtered tags open: their text keeps shortcodes.
+    filtered: usize,
+    /// White space owed, and the open elements before it.
+    owed: Option<(char, usize)>,
 }
 
 impl Run {
@@ -122,19 +124,30 @@ impl Run {
         self.named.get(name).copied().unwrap_or(0)
     }
 
-    /// Inside HTML `<code>`, where shortcodes stay text.
-    fn in_code(&self) -> bool {
-        self.count("code") > 0
+    /// Outside autolinks, `<code>` and filtered tags.
+    fn reads_emoji(&self) -> bool {
+        !self.verbatim && self.count("code") == 0 && self.filtered == 0
     }
 
     /// Text as shown: shortcodes read, lines joined.
     fn push_text(&mut self, written: &str) {
-        let shown = match self.verbatim || self.in_code() {
-            true => written.to_string(),
-            false => html::emoji(written),
-        };
+        match self.reads_emoji() {
+            true => self.push_plain(&html::emoji(written)),
+            false => self.push_plain(written),
+        }
+    }
+
+    fn push_plain(&mut self, shown: &str) {
         let soft = shown.replace("\r\n", " ").replace(['\r', '\n'], " ");
         self.text.text.push_str(&soft);
+    }
+
+    /// Counts a filtered tag opened or closed.
+    fn filter(&mut self, tag: &html::Tag) {
+        self.filtered = match tag.closing {
+            true => self.filtered.saturating_sub(1),
+            false => self.filtered + 1,
+        };
     }
 
     fn push(&mut self, opened: Opened) {
@@ -156,7 +169,8 @@ impl Run {
             return self.text.text.push('\n');
         }
         if html::filtered(&tag.name) {
-            return self.push_text(&html::text(written));
+            self.filter(&tag);
+            return self.push_plain(&html::text(written));
         }
         let Some(style) = html::inline_style(&tag.name) else {
             return;
@@ -196,6 +210,9 @@ impl Run {
             .rposition(|opened| opened.name == name)
             .expect("a counted name is open");
         let end = self.text.text.len();
+        if let Some((_, from)) = &mut self.owed {
+            *from = (*from).min(at);
+        }
         let closed = self.open.split_off(at);
         for opened in &closed {
             close(&mut self.text, opened, end);

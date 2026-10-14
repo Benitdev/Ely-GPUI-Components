@@ -90,7 +90,7 @@ impl Reader<'_> {
         Some(Node::Alert { kind, body })
     }
 
-    /// An HTML block's text; comments, scripts and styles drop.
+    /// An HTML block's text, as a browser shows it.
     pub(super) fn html_block(&self, written: &str, out: &mut Vec<Node>) {
         let mut run = Run::default();
         let mut rest = written;
@@ -116,14 +116,21 @@ impl Reader<'_> {
             let (written, after) = rest.split_at(end);
             rest = after;
             match html::tag(written) {
-                Some(tag) if html::filtered(&tag.name) => run.words(written),
+                Some(tag) if html::filtered(&tag.name) => {
+                    run.filter(&tag);
+                    run.spaced(&html::text(written));
+                }
                 // A block closes what opened inside it.
                 Some(tag) if html::breaks(&tag.name) => {
                     run.line();
                     match tag.closing {
                         true => run.end(&tag.name),
-                        false if tag.name != "hr" => run.start(&tag.name, None, None),
-                        false => {}
+                        false => {
+                            run.implied(&tag.name);
+                            if tag.name != "hr" {
+                                run.start(&tag.name, None, None);
+                            }
+                        }
                     }
                 }
                 // A line's end drops its space.
@@ -147,36 +154,70 @@ impl Run {
     /// HTML text: references decoded, white space collapsed.
     fn words(&mut self, written: &str) {
         let decoded = html::text(written);
-        let shown = match self.in_code() {
-            true => decoded,
-            false => html::emoji(&decoded),
-        };
+        match self.reads_emoji() {
+            true => self.spaced(&html::emoji(&decoded)),
+            false => self.spaced(&decoded),
+        }
+    }
+
+    /// Text with its white space collapsed.
+    fn spaced(&mut self, shown: &str) {
         for ch in shown.chars() {
             if !html::spacing(ch) {
                 self.pay();
                 self.text.text.push(ch);
             } else if self.owed.is_none() && !self.text.text.ends_with('\n') {
-                self.owed = (!self.text.text.is_empty()).then_some(' ');
+                let open = self.open.len();
+                self.owed = (!self.text.text.is_empty()).then_some((' ', open));
             }
         }
     }
 
     /// A line owed where a block element starts or ends.
     fn line(&mut self) {
+        let from = self.owed.map_or(self.open.len(), |(_, from)| from);
         let text = &self.text.text;
-        self.owed = (!(text.is_empty() || text.ends_with('\n'))).then_some('\n');
+        self.owed = (!(text.is_empty() || text.ends_with('\n'))).then_some(('\n', from));
     }
 
     /// Writes the white space owed, before a word or tag.
     fn pay(&mut self) {
-        let Some(owed) = self.owed.take() else {
+        let Some((owed, from)) = self.owed.take() else {
             return;
         };
-        let at = self.text.text.len();
         self.text.text.push(owed);
-        // Reopened elements start after it.
-        for opened in self.open.iter_mut().filter(|opened| opened.start == at) {
-            opened.start = self.text.text.len();
+        let start = self.text.text.len();
+        // What opened after it starts after it.
+        for opened in &mut self.open[from..] {
+            opened.start = start;
+        }
+    }
+
+    /// Ends what a block's start tag closes, as HTML5 does.
+    fn implied(&mut self, name: &str) {
+        let items: &[&str] = match name {
+            "li" => &["li"],
+            "dd" | "dt" => &["dd", "dt"],
+            _ => &[],
+        };
+        // The search stops at a special element.
+        let stops = |name: &str| html::breaks(name) && !matches!(name, "address" | "div" | "p");
+        let found = items
+            .iter()
+            .any(|item| self.count(item) > 0)
+            .then(|| {
+                let mut names = self.open.iter().rev().map(|opened| opened.name.as_str());
+                names.find(|name| items.contains(name) || stops(name))
+            })
+            .flatten()
+            .filter(|name| items.contains(name))
+            .map(str::to_string);
+        if let Some(item) = found {
+            self.end(&item);
+        }
+        // A table start closes it, so it is in scope.
+        if name != "tr" && self.count("p") > 0 {
+            self.end("p");
         }
     }
 }
@@ -347,6 +388,45 @@ mod tests {
         );
         let bold = html("<div><b>x</div>y").expect("text");
         assert_eq!(bold.styles, [(0..1, Style::Strong), (2..3, Style::Strong)]);
+        let kept = html("<div><mark><p>x</p>y</mark></div>").expect("text");
+        assert_eq!(kept.styles, [(0..3, Style::Mark)]);
+    }
+
+    #[test]
+    fn a_block_start_ends_what_html5_ends() {
+        let mark = [(0..1, Style::Mark)];
+        for source in [
+            "<ul><li><mark>x<li>y</ul>z",
+            "<div><p><mark>x<div>y</div>z</div>",
+            "<dl><dt><mark>x<dd>y</dl>z",
+        ] {
+            let line = html(source).expect("text");
+            assert_eq!(
+                (line.text.as_str(), &line.styles[..]),
+                ("x\ny\nz", &mark[..])
+            );
+        }
+        let kbd = html("<div><p><kbd>x<p>y</div>z").expect("text");
+        assert_eq!(kbd.styles, [(0..1, Style::Code)]);
+        let nested = html("<ul><li><mark>a<ul><li>b</li></ul></li></ul>").expect("text");
+        assert_eq!(
+            nested.styles,
+            [(0..3, Style::Mark)],
+            "a list stops the search"
+        );
+    }
+
+    #[test]
+    fn filtered_tags_keep_shortcodes_and_names_end_as_html5_ends_them() {
+        let block = html("<script title=\":smile:\">:smile:</script>").expect("text");
+        assert_eq!(block.text, "<script title=\":smile:\">:smile:</script>");
+        assert_eq!(html("<div>:smile:</div>").expect("text").text, "😄");
+        let attribute = html("a <script title=\":smile:\">x</script> c").expect("text");
+        assert_eq!(attribute.text, "a <script title=\":smile:\">x</script> c");
+        let body = html("a <script>:smile:</script> :smile:").expect("text");
+        assert_eq!(body.text, "a <script>:smile:</script> 😄");
+        let named = "<div>a<script:custom>x</script:custom>b<script!>y</script!>c</div>";
+        assert_eq!(html(named).expect("text").text, "axbyc");
     }
 
     #[test]
@@ -359,6 +439,10 @@ mod tests {
             "<b>".repeat(1 << 16),
             "<b>".repeat(1 << 15) + &"</i>".repeat(1 << 15),
             "<script></script>".repeat(1 << 13),
+            "<div>a ".repeat(1 << 16),
+            "<b> ".repeat(1 << 16),
+            "<li><b>x ".repeat(1 << 15),
+            "<p><i>x ".repeat(1 << 15),
         ] {
             let block = format!("<div>\n{source}");
             parse(&block);

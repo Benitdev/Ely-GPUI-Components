@@ -1,6 +1,11 @@
+use std::sync::Arc;
+
 use gpui::{App, Context, Focusable as _, ListOffset, ScrollStrategy, Window, px};
 
-use super::{DocumentHeading, MarkdownDocument, Placement};
+use super::{
+    MarkdownDocument, Placement,
+    edit::{between, moved},
+};
 use crate::documents::{MarkdownMode, modes::joint};
 
 /// Line and column, from zero, of byte `at` in `text`.
@@ -189,27 +194,25 @@ impl MarkdownDocument {
             .saturating_sub(1)
     }
 
-    /// Reveals the pressed heading, found again in the text.
+    /// Reveals the pressed heading, moved by the edit since.
     pub(super) fn reveal_at(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let headings = &self.parsed.headings;
-        let Some(ix) = headings.iter().position(|heading| heading.at == at) else {
+        if !self.parsed.headings.iter().any(|heading| heading.at == at) {
             return log::warn!("markdown document: a heading read away");
-        };
-        let pressed = headings[ix].clone();
-        let same = |heading: &&DocumentHeading| {
-            (heading.depth, &heading.title) == (pressed.depth, &pressed.title)
-        };
-        let nth = headings[..ix].iter().filter(same).count();
+        }
+        // The heading list drew from this read.
+        let drawn = Arc::clone(&self.parsed);
         if self.commit(cx).is_some() || !self.read_now(cx) {
             self.reparse(true, cx);
         }
         if !self.read_now(cx) {
             return log::warn!("markdown document: a heading pressed while the text is read again");
         }
-        let Some(found) = self.parsed.headings.iter().filter(same).nth(nth) else {
+        let edit = between(&drawn.text, self.editor.read(cx).text());
+        let headings = &self.parsed.headings;
+        let Some(found) = moved(at, &edit).filter(|at| headings.iter().any(|h| h.at == *at)) else {
             return log::warn!("markdown document: the pressed heading changed as one wrote");
         };
-        let line = self.editor.read(cx).buffer.line_of(found.at);
+        let line = self.editor.read(cx).buffer.line_of(found);
         self.reveal(line, window, cx);
     }
 

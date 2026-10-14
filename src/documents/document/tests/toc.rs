@@ -1,6 +1,6 @@
-use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
+use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
 
-use super::{MarkdownMode, frames, open, type_in};
+use super::{MarkdownDocument, MarkdownMode, frames, open, type_in};
 
 const LISTED: &str = "[toc]\n\n# A\n\ntext\n\n## B\n";
 
@@ -11,8 +11,74 @@ fn press_entry(ix: usize, modifiers: Modifiers, cx: &mut VisualTestContext) {
         .expect("the entry is drawn");
     let at = point(bounds.left() + px(2.0), bounds.top() + px(2.0));
     cx.simulate_mouse_down(at, MouseButton::Left, modifiers);
+    frames(cx);
     cx.simulate_mouse_up(at, MouseButton::Left, modifiers);
     cx.run_until_parked();
+}
+
+#[gpui::test]
+fn a_heading_written_above_with_the_same_title_is_not_the_pressed_one(cx: &mut TestAppContext) {
+    let text = "before\n\n[toc]\n\n# A\n\ntext\n\n## B\n";
+    let (document, cx) = open(text, MarkdownMode::Visual, cx);
+    type_in(&document, Some(0), Some("## B"), cx);
+    frames(cx);
+    press_entry(1, Modifiers::secondary_key(), cx);
+    let (caret, now) =
+        document.read_with(cx, |document, cx| (document.caret(cx), document.text(cx)));
+    assert_eq!(now, "## B\n\n[toc]\n\n# A\n\ntext\n\n## B\n");
+    assert_eq!(caret, (8, 0));
+}
+
+#[gpui::test]
+fn a_twin_typed_above_while_the_text_waits_is_not_the_pressed_one(cx: &mut TestAppContext) {
+    let (document, cx) = open(LISTED, MarkdownMode::Split, cx);
+    document.update(cx, |document, cx| {
+        document.editor.update(cx, |editor, cx| {
+            editor.edit([(0..0, "## B\n\n".to_string())], cx);
+        });
+    });
+    cx.run_until_parked();
+    assert!(!document.read_with(cx, |document, cx| document.read_now(cx)));
+    press_entry(1, Modifiers::none(), cx);
+    assert_eq!(
+        document.read_with(cx, |document, cx| document.caret(cx)),
+        (8, 0)
+    );
+}
+
+const TWINS: &str = "[toc]\n\n## B\n\ntext\n\n## B\n";
+
+/// Deletes the first twin while the text waits.
+fn delete_first_twin(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) {
+    document.update(cx, |document, cx| {
+        document.editor.update(cx, |editor, cx| {
+            editor.edit([(7..13, String::new())], cx);
+        });
+    });
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn a_deleted_twin_leaves_the_other_found(cx: &mut TestAppContext) {
+    let (document, cx) = open(TWINS, MarkdownMode::Split, cx);
+    delete_first_twin(&document, cx);
+    press_entry(1, Modifiers::none(), cx);
+    assert_eq!(
+        document.read_with(cx, |document, cx| document.caret(cx)),
+        (4, 0)
+    );
+}
+
+#[gpui::test]
+fn a_press_on_a_deleted_twin_moves_nothing(cx: &mut TestAppContext) {
+    let (document, cx) = open(TWINS, MarkdownMode::Split, cx);
+    delete_first_twin(&document, cx);
+    let before = document.read_with(cx, |document, cx| document.caret(cx));
+    press_entry(0, Modifiers::none(), cx);
+    assert_eq!(
+        document.read_with(cx, |document, cx| document.caret(cx)),
+        before
+    );
 }
 
 #[gpui::test]

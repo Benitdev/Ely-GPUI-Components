@@ -12,8 +12,27 @@ use crate::{
     forms::{InputEvent, TextInput},
 };
 
+/// The one edit from `old` to `new`, by shared ends.
+pub(super) fn between(old: &str, new: &str) -> Option<(Range<usize>, usize)> {
+    let head: usize = old
+        .chars()
+        .zip(new.chars())
+        .take_while(|(a, b)| a == b)
+        .map(|(ch, _)| ch.len_utf8())
+        .sum();
+    let room = old.len().min(new.len()) - head;
+    let mut tail = 0;
+    for (a, b) in old.chars().rev().zip(new.chars().rev()) {
+        if a != b || tail + a.len_utf8() > room {
+            break;
+        }
+        tail += a.len_utf8();
+    }
+    (old != new).then(|| (head..old.len() - tail, new.len() - tail - head))
+}
+
 /// Where byte `at` lies after `edit`, if it survives.
-fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<usize> {
+pub(super) fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<usize> {
     match edit {
         None => Some(at),
         Some((replaced, _)) if at < replaced.start => Some(at),
@@ -180,5 +199,16 @@ mod tests {
         assert_eq!(super::moved(1, &edit), Some(1), "before stays");
         assert_eq!(super::moved(3, &edit), None, "inside is gone");
         assert_eq!(super::moved(7, &None), Some(7));
+    }
+
+    #[test]
+    fn two_texts_part_at_their_shared_ends() {
+        assert_eq!(super::between("abc", "abc"), None);
+        assert_eq!(super::between("before\nB", "## B\nB"), Some((0..6, 4)));
+        assert_eq!(super::between("ab", "aXb"), Some((1..1, 1)));
+        assert_eq!(super::between("aa", "aaa"), Some((2..2, 1)));
+        assert_eq!(super::between("aXYb", "ab"), Some((1..3, 0)));
+        assert_eq!(super::between("é😄", "é"), Some((2..6, 0)));
+        assert_eq!(super::between("x😄", "y😄"), Some((0..1, 1)));
     }
 }

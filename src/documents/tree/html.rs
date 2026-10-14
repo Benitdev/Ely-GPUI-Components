@@ -125,7 +125,7 @@ pub(crate) fn tag(html: &str) -> Option<Tag> {
         return None;
     }
     let named = inner
-        .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '-'))
+        .find(|ch: char| spacing(ch) || ch == '/')
         .unwrap_or(inner.len());
     Some(Tag {
         name: inner[..named].to_ascii_lowercase(),
