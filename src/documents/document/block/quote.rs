@@ -1,0 +1,119 @@
+//! Quotes on and off, as Typora's `toggleIndent`.
+
+use std::ops::Range;
+
+use markdown::mdast::Node;
+
+use super::{Here, change, eol, inside, line_end, line_start, next_line, prefix};
+use crate::documents::{
+    alert,
+    document::format::{Change, EditRefusal},
+    markdown::span,
+};
+
+pub(super) fn run(here: &Here) -> Result<Change, EditRefusal> {
+    let caret = here.selection.clone();
+    let ix = match here.leaf() {
+        Some(_) => here.path.len() - 2,
+        None => here.path.len() - 1,
+    };
+    if let Node::Blockquote(_) = here.path[ix]
+        && whole(here, ix)
+    {
+        return Ok(change(unwrap(here, ix), caret));
+    }
+    if here.leaf().is_none() && here.selection.is_empty() {
+        if !here.blank() {
+            return Err(EditRefusal::Outside);
+        }
+        let line = line_start(here.text, caret.start);
+        let at = inside(here.text, line, &here.containers(here.path.len()))
+            .expect("a blank line holds its prefix");
+        return Ok(change(vec![(at..at, "> ".to_string())], caret));
+    }
+    let (k, blocks) = here.blocks().ok_or(EditRefusal::Outside)?;
+    Ok(change(wrap(here, k, &blocks), caret))
+}
+
+/// Whether the selection takes in the whole quote at `ix`.
+fn whole(here: &Here, ix: usize) -> bool {
+    if here.selection.is_empty() {
+        return true;
+    }
+    let quote = here.path[ix];
+    let end = here.path_at(here.selection.end);
+    let kids = quote.children().map(Vec::as_slice).unwrap_or_default();
+    let first = here.path.get(ix + 1).copied();
+    let last = end.get(ix + 1).copied();
+    end.get(ix).is_some_and(|node| std::ptr::eq(*node, quote))
+        && first.is_some_and(|first| kids.first().is_some_and(|kid| std::ptr::eq(kid, first)))
+        && last.is_some_and(|last| kids.last().is_some_and(|kid| std::ptr::eq(kid, last)))
+}
+
+/// One `>` off each line of the quote at `ix`.
+fn unwrap(here: &Here, ix: usize) -> Vec<(Range<usize>, String)> {
+    let text = here.text;
+    let quote = here.path[ix];
+    let whole = span(quote);
+    let outer = here.containers(ix);
+    let blank = format!("{}{}", prefix(text, &outer).trim_end(), eol(text));
+    let mut edits = Vec::new();
+    let mut line = line_start(text, whole.start);
+    if here.joins_before(&whole, Some(quote)) {
+        edits.push((line..line, blank.clone()));
+    }
+    if let Node::Blockquote(inner) = quote
+        && alert(inner).is_some()
+    {
+        // Typora drops an alert's marker with its quote.
+        let next = next_line(text, line).unwrap_or(text.len());
+        edits.push((line..next, String::new()));
+        line = next;
+    }
+    while line < whole.end {
+        if let Some(at) = inside(text, line, &outer) {
+            let end = line_end(text, line);
+            let lead = text[at..end].len() - text[at..end].trim_start_matches(' ').len();
+            let mark = at + lead;
+            if lead <= 3 && text[mark..end].starts_with('>') {
+                let space = usize::from(text[mark + 1..end].starts_with([' ', '\t']));
+                edits.push((mark..mark + 1 + space, String::new()));
+            }
+        }
+        match next_line(text, line) {
+            Some(next) => line = next,
+            None => break,
+        }
+    }
+    if here.joins_after(&whole) {
+        let next = next_line(text, whole.end).expect("a joining line follows");
+        edits.push((next..next, blank.clone()));
+    }
+    edits
+}
+
+/// `> ` before each line of `blocks`, held by `path[k]`.
+fn wrap(here: &Here, k: usize, blocks: &[&Node]) -> Vec<(Range<usize>, String)> {
+    let text = here.text;
+    let outer = here.containers(k + 1);
+    let first = span(blocks[0]).start;
+    let last = span(blocks[blocks.len() - 1]).end;
+    let mut edits = Vec::new();
+    let mut line = line_start(text, first);
+    while line <= last {
+        let at = match line == line_start(text, first) {
+            true => Some(first),
+            false => inside(text, line, &outer),
+        };
+        // A lazy line stays in its paragraph.
+        if let Some(at) = at {
+            let blank = text[at..line_end(text, line)].trim().is_empty();
+            edits.push((at..at, if blank { ">" } else { "> " }.to_string()));
+        }
+        match next_line(text, line) {
+            Some(next) => line = next,
+            None => break,
+        }
+    }
+    edits
+}

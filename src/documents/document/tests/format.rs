@@ -8,7 +8,7 @@ use web_time::Instant;
 
 use super::{open, opened, press, text};
 use crate::documents::{
-    DocumentEvent, FormatRefusal, InlineFormat, LARGEST_READ, MarkdownDocument, MarkdownMode,
+    DocumentEvent, EditRefusal, InlineFormat, LARGEST_READ, MarkdownDocument, MarkdownMode,
     document::{
         format::{toggle, toggle_tree},
         visual,
@@ -17,7 +17,7 @@ use crate::documents::{
 };
 
 /// `marked` toggled: `‸` is the caret, `⟨…⟩` the selection.
-fn toggled(marked: &str, format: InlineFormat) -> Result<String, FormatRefusal> {
+fn toggled(marked: &str, format: InlineFormat) -> Result<String, EditRefusal> {
     let caret = marked.find('‸');
     let text: String = marked.chars().filter(|ch| !"‸⟨⟩".contains(*ch)).collect();
     let selection = match caret {
@@ -109,7 +109,7 @@ fn clear_takes_every_mark_off_the_touched_blocks() {
 
 #[test]
 fn code_math_html_and_front_matter_refuse() {
-    use FormatRefusal as Why;
+    use EditRefusal as Why;
     use InlineFormat::*;
     assert_eq!(toggled("```\nco‸de\n```", Strong), Err(Why::Code));
     assert_eq!(toggled("x `co‸de` y", Strong), Err(Why::Code));
@@ -126,12 +126,9 @@ fn code_math_html_and_front_matter_refuse() {
 #[test]
 fn a_selection_across_a_link_or_into_its_address_refuses() {
     use InlineFormat::*;
-    assert_eq!(toggled("[a ⟨b](u) c⟩", Strong), Err(FormatRefusal::Across));
-    assert_eq!(
-        toggled("[a](ht‸tp://x)", Strong),
-        Err(FormatRefusal::Across)
-    );
-    assert_eq!(toggled("a\n\n> ‸", Strong), Err(FormatRefusal::Outside));
+    assert_eq!(toggled("[a ⟨b](u) c⟩", Strong), Err(EditRefusal::Across));
+    assert_eq!(toggled("[a](ht‸tp://x)", Strong), Err(EditRefusal::Across));
+    assert_eq!(toggled("a\n\n> ‸", Strong), Err(EditRefusal::Outside));
 }
 
 #[gpui::test]
@@ -185,14 +182,14 @@ fn the_source_takes_a_format_as_one_step(cx: &mut TestAppContext) {
 fn preview_refuses_a_format(cx: &mut TestAppContext) {
     let (document, cx) = open("alpha\n", MarkdownMode::Preview, cx);
     let refused = document.update(cx, |document, cx| document.format(InlineFormat::Strong, cx));
-    assert_eq!(refused, Err(FormatRefusal::Preview));
+    assert_eq!(refused, Err(EditRefusal::Preview));
     assert_eq!(text(&document, cx), "alpha\n");
 }
 
 #[test]
 fn an_end_in_marks_or_an_address_refuses() {
     use InlineFormat::*;
-    let across = Err(FormatRefusal::Across);
+    let across = Err(EditRefusal::Across);
     assert_eq!(toggled("a *‸*bold** z", Strong), across);
     assert_eq!(toggled("[a](ht‸tps://example.com)", Link), across);
     assert_eq!(toggled("a *⟨*b** c⟩", Strong), across);
@@ -283,12 +280,12 @@ fn a_format_lapses_when_the_text_moves(cx: &mut TestAppContext) {
 fn refusals(
     document: &Entity<MarkdownDocument>,
     cx: &mut VisualTestContext,
-) -> Rc<RefCell<Vec<FormatRefusal>>> {
+) -> Rc<RefCell<Vec<EditRefusal>>> {
     let heard = Rc::new(RefCell::new(Vec::new()));
     let kept = heard.clone();
     cx.update(|_, cx| {
         cx.subscribe(document, move |_, event: &DocumentEvent, _| {
-            if let DocumentEvent::FormatRefused(why) = event {
+            if let DocumentEvent::EditRefused(why) = event {
                 kept.borrow_mut().push(*why);
             }
         })
@@ -308,13 +305,13 @@ fn a_lapse_comes_by_event(cx: &mut TestAppContext) {
             .update(cx, |editor, cx| editor.edit([(0..0, "y".to_string())], cx));
     });
     cx.run_until_parked();
-    assert_eq!(*heard.borrow(), [FormatRefusal::Changed]);
+    assert_eq!(*heard.borrow(), [EditRefusal::Changed]);
 }
 
 #[test]
 fn an_unwrap_refuses_an_end_in_nested_marks() {
     use InlineFormat::*;
-    let across = Err(FormatRefusal::Across);
+    let across = Err(EditRefusal::Across);
     assert_eq!(toggled("**[a](ht‸tps://x)**", Strong), across);
     assert_eq!(toggled("**~~a~‸~**", Strong), across);
     assert_eq!(toggled("<u>[a](ht‸tps://x)</u>", Underline), across);
@@ -359,7 +356,7 @@ fn a_second_format_refuses_while_one_runs(cx: &mut TestAppContext) {
         document.format(InlineFormat::Strong, cx).expect("taken");
         document.format(InlineFormat::Emphasis, cx)
     });
-    assert_eq!(second, Err(FormatRefusal::Busy));
+    assert_eq!(second, Err(EditRefusal::Busy));
     cx.run_until_parked();
     document.update(cx, |document, cx| {
         document.format(InlineFormat::Emphasis, cx).expect("taken")
@@ -386,7 +383,7 @@ fn a_refusal_comes_by_event(cx: &mut TestAppContext) {
     });
     assert_eq!(taken, Ok(()));
     cx.run_until_parked();
-    assert_eq!(*heard.borrow(), [FormatRefusal::Code]);
+    assert_eq!(*heard.borrow(), [EditRefusal::Code]);
     assert_eq!(text(&document, cx), source);
 }
 
@@ -400,14 +397,14 @@ fn a_format_drops_once_preview_shows(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert!(text(&document, cx).starts_with("xx"));
-    assert_eq!(*heard.borrow(), [FormatRefusal::Preview]);
+    assert_eq!(*heard.borrow(), [EditRefusal::Preview]);
 }
 
 #[gpui::test]
 fn a_text_past_the_largest_read_refuses(cx: &mut TestAppContext) {
     let (document, cx) = word(cx, LARGEST_READ + 1);
     let refused = document.update(cx, |document, cx| document.format(InlineFormat::Strong, cx));
-    assert_eq!(refused, Err(FormatRefusal::TooLong));
+    assert_eq!(refused, Err(EditRefusal::TooLong));
 }
 
 #[gpui::test]

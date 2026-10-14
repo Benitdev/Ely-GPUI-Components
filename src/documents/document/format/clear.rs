@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use markdown::mdast::Node;
 
-use super::{Change, FormatRefusal, after, block, cut, holder, marks, room};
+use super::{Change, EditRefusal, after, block, cut, holder, marks, room};
 use crate::documents::{markdown::span, tree::inside};
 
 /// The backslashes of escapes in a text node's span.
@@ -46,14 +46,14 @@ pub(super) fn clear(
     text: &str,
     nodes: &[&Node],
     selection: Range<usize>,
-) -> Result<Change, FormatRefusal> {
+) -> Result<Change, EditRefusal> {
     let mut blocks: Vec<Range<usize>> = (nodes.iter())
         .filter(|node| block(node))
         .map(|node| room(node, text))
         .filter(|range| range.start <= selection.end && selection.start <= range.end)
         .collect();
     if blocks.is_empty() {
-        return Err(FormatRefusal::Outside);
+        return Err(EditRefusal::Outside);
     }
     blocks.sort_by_key(|block| block.start);
     let mut autolinks: Vec<Range<usize>> = (nodes.iter())

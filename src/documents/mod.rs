@@ -36,8 +36,9 @@ pub use counts::{ReadingTime, WordCount};
 pub use diagram::{Diagram, diagram_svg};
 pub(crate) use diagram::{flatten, options as svg_options};
 pub use document::{
-    Attachment, DocumentEvent, DocumentHeading, DocumentLook, DocumentTarget, FormatRefusal,
-    InlineFormat, LARGEST_READ, MarkdownDocument, TableEdit, TableRefusal, TargetBlock,
+    Attachment, BlockCommand, DocumentEvent, DocumentHeading, DocumentLook, DocumentTarget,
+    EditRefusal, InlineFormat, LARGEST_READ, MarkdownDocument, TableEdit, TableRefusal,
+    TargetBlock,
 };
 pub use epub::{Chapter, EpubReader};
 pub use format::{Format, format};

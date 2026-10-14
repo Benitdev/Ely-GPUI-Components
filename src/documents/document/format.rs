@@ -1,6 +1,5 @@
 //! Inline formats toggle at the selection, as Typora's (R4.6).
 
-mod apply;
 mod clear;
 
 use std::ops::Range;
@@ -26,9 +25,9 @@ pub enum InlineFormat {
     Clear,
 }
 
-/// Why a format did not happen.
+/// Why a format or block command did not happen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FormatRefusal {
+pub enum EditRefusal {
     /// Preview takes no edits.
     Preview,
     Code,
@@ -37,13 +36,17 @@ pub enum FormatRefusal {
     FrontMatter,
     /// No paragraph, heading or cell at the caret.
     Outside,
+    /// A table holds the caret.
+    Table,
+    /// Front matter is there already.
+    Present,
     /// The selection crosses a block or another mark.
     Across,
     /// Past the largest read: source alone.
     TooLong,
-    /// A long format still runs.
+    /// Another edit is still read.
     Busy,
-    /// The text changed before a long format finished.
+    /// The text changed before the edit was read.
     Changed,
 }
 
@@ -160,7 +163,7 @@ fn verbatim(
     nodes: &[&Node],
     selection: &Range<usize>,
     format: InlineFormat,
-) -> Result<(), FormatRefusal> {
+) -> Result<(), EditRefusal> {
     let mut blocks: Vec<Range<usize>> = nodes
         .iter()
         .filter(|node| block(node))
@@ -180,14 +183,14 @@ fn verbatim(
         // Clear takes a block's inline code and tags too.
         let held = format != InlineFormat::Clear && touches(false);
         let why = match node {
-            Node::Code(_) if touches(true) => FormatRefusal::Code,
-            Node::Math(_) if touches(true) => FormatRefusal::Math,
-            Node::Yaml(_) | Node::Toml(_) if touches(true) => FormatRefusal::FrontMatter,
-            Node::InlineCode(_) if format != InlineFormat::Code && held => FormatRefusal::Code,
-            Node::InlineMath(_) if held => FormatRefusal::Math,
+            Node::Code(_) if touches(true) => EditRefusal::Code,
+            Node::Math(_) if touches(true) => EditRefusal::Math,
+            Node::Yaml(_) | Node::Toml(_) if touches(true) => EditRefusal::FrontMatter,
+            Node::InlineCode(_) if format != InlineFormat::Code && held => EditRefusal::Code,
+            Node::InlineMath(_) if held => EditRefusal::Math,
             Node::Html(_) => match holder(&blocks, &whole).is_some() {
-                true if held => FormatRefusal::Html,
-                false if touches(true) => FormatRefusal::Html,
+                true if held => EditRefusal::Html,
+                false if touches(true) => EditRefusal::Html,
                 _ => continue,
             },
             _ => continue,
@@ -233,7 +236,7 @@ pub(super) fn toggle(
     text: &str,
     selection: Range<usize>,
     format: InlineFormat,
-) -> Result<Change, FormatRefusal> {
+) -> Result<Change, EditRefusal> {
     toggle_tree(text, &file_tree(text), selection, format)
 }
 
@@ -243,7 +246,7 @@ pub(super) fn toggle_tree(
     root: &Node,
     selection: Range<usize>,
     format: InlineFormat,
-) -> Result<Change, FormatRefusal> {
+) -> Result<Change, EditRefusal> {
     let mut nodes = Vec::new();
     walk(root, &mut nodes);
     verbatim(&nodes, &selection, format)?;
@@ -287,8 +290,8 @@ pub(super) fn toggle_tree(
         if s != e {
             let touched = (rooms.iter()).any(|range| range.start <= e && s <= range.end);
             return Err(match touched {
-                true => FormatRefusal::Across,
-                false => FormatRefusal::Outside,
+                true => EditRefusal::Across,
+                false => EditRefusal::Outside,
             });
         }
         let line = text[..s]
@@ -299,7 +302,7 @@ pub(super) fn toggle_tree(
             + text[s..].split(['\r', '\n']).next().unwrap_or_default();
         return match line.trim().is_empty() {
             true => Ok(pair(s, format)),
-            false => Err(FormatRefusal::Outside),
+            false => Err(EditRefusal::Outside),
         };
     };
     if format == InlineFormat::Underline
@@ -377,7 +380,7 @@ fn crossed(
     s: usize,
     e: usize,
     format: InlineFormat,
-) -> Result<(), FormatRefusal> {
+) -> Result<(), EditRefusal> {
     for node in nodes {
         let whole = span(node);
         if matches!(node, Node::Text(_)) || whole.start < within.start || whole.end > within.end {
@@ -398,7 +401,7 @@ fn crossed(
         // A same style cut is taken in whole.
         let same = merges(format) && styled(format, node);
         if strictly(s) || strictly(e) || (overlaps && !holds_all && !same) {
-            return Err(FormatRefusal::Across);
+            return Err(EditRefusal::Across);
         }
     }
     Ok(())
@@ -412,7 +415,7 @@ fn wrap(
     mut s: usize,
     mut e: usize,
     format: InlineFormat,
-) -> Result<Change, FormatRefusal> {
+) -> Result<Change, EditRefusal> {
     crossed(text, nodes, within, s, e, format)?;
     if merges(format) {
         for node in nodes.iter().filter(|node| styled(format, node)) {

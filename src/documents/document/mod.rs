@@ -1,4 +1,6 @@
+mod apart;
 mod attach;
+mod block;
 mod edit;
 mod finding;
 mod format;
@@ -23,7 +25,8 @@ use gpui::{
 
 pub use crate::documents::tree::DocumentHeading;
 pub use attach::Attachment;
-pub use format::{FormatRefusal, InlineFormat};
+pub use block::BlockCommand;
+pub use format::{EditRefusal, InlineFormat};
 pub use look::DocumentLook;
 use parse::{Parsed, alike, parsed};
 pub use point::{DocumentTarget, TargetBlock};
@@ -59,7 +62,7 @@ pub enum DocumentEvent {
     /// A secondary press moved the caret onto this.
     Pointed(DocumentTarget),
     /// A long format, accepted, did not happen.
-    FormatRefused(FormatRefusal),
+    EditRefused(EditRefusal),
 }
 
 /// A top line asked, numbered so late callbacks know theirs.
@@ -89,7 +92,7 @@ pub struct MarkdownDocument {
     /// Text changes counted; a read of an older one lapses.
     edits: u64,
     _parsing: Option<Task<()>>,
-    formatting: bool,
+    editing: bool,
     list: ListState,
     open: Option<Open>,
     /// A top line asked for, until the view holds it.
@@ -161,7 +164,7 @@ impl MarkdownDocument {
             parsed: Arc::default(),
             edits: 0,
             _parsing: None,
-            formatting: false,
+            editing: false,
             list: ListState::new(1, ListAlignment::Top, overdraw),
             open: None,
             top: None,
