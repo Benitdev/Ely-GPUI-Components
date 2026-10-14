@@ -96,6 +96,52 @@ pub(crate) fn breaks(name: &str) -> bool {
     )
 }
 
+/// What one inline HTML tag does, as GitHub shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum InlineTag {
+    /// Opens `name`; an anchor styles only with an address.
+    Open {
+        name: String,
+        style: Option<Style>,
+        href: Option<String>,
+    },
+    Close(String),
+    Break,
+    /// A filtered tag, shown as its text.
+    Text(String),
+    /// Gone; the text around it stays.
+    Gone,
+}
+
+/// What the inline HTML `written` does.
+pub fn inline_tag(written: &str) -> InlineTag {
+    let Some(tag) = tag(written) else {
+        return InlineTag::Gone;
+    };
+    if filtered(&tag.name) {
+        return InlineTag::Text(text(written));
+    }
+    if tag.name == "br" {
+        return InlineTag::Break;
+    }
+    let Some(style) = inline_style(&tag.name) else {
+        return InlineTag::Gone;
+    };
+    if tag.closing {
+        return InlineTag::Close(tag.name);
+    }
+    let href = match style {
+        Style::Link => tag.attribute("href").map(str::to_string),
+        _ => None,
+    };
+    let style = (style != Style::Link || href.is_some()).then_some(style);
+    InlineTag::Open {
+        name: tag.name,
+        style,
+        href,
+    }
+}
+
 /// Start tags that end an open `p`, as HTML5 lists them.
 pub(crate) fn closes_p(name: &str) -> bool {
     matches!(

@@ -1,7 +1,7 @@
 use markdown::mdast;
 
-use super::{Node, Reader, Run, html, text_block};
-use crate::documents::markdown::span;
+use super::{Inline, Node, Reader, Run, html};
+use crate::documents::markdown::{file_tree, span};
 
 /// A heading anywhere in the file.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,9 +58,7 @@ impl Reader<'_> {
         if let Some(alert) = self.alert(node) {
             return out.push(alert);
         }
-        let toc = matches!(node, mdast::Node::Paragraph(_))
-            && self.source[span(node)].trim().eq_ignore_ascii_case("[toc]");
-        match toc {
+        match is_toc(node, self.source) {
             true => out.push(Node::Toc(self.headings.clone())),
             false => self.block(node, out),
         }
@@ -71,87 +69,74 @@ impl Reader<'_> {
         let mdast::Node::Blockquote(quote) = node else {
             return None;
         };
-        let [mdast::Node::Paragraph(paragraph), rest @ ..] = &quote.children[..] else {
-            return None;
-        };
-        let (kind, after) = marker(&paragraph.children)?;
-        if after.is_empty() && rest.is_empty() {
-            return None;
-        }
+        let (kind, parts) = alert(quote)?;
         let mut body = Vec::new();
-        if !after.is_empty() {
-            let kept = mdast::Paragraph {
-                children: after,
-                position: paragraph.position.clone(),
-            };
-            self.block(&mdast::Node::Paragraph(kept), &mut body);
-        }
-        self.blocks(rest, &mut body);
+        self.blocks(&parts, &mut body);
         Some(Node::Alert { kind, body })
     }
+}
 
-    /// An HTML block's text, as a browser shows it.
-    pub(super) fn html_block(&self, written: &str, out: &mut Vec<Node>) {
-        let mut run = Run::default();
-        let mut rest = written;
-        while let Some(at) = rest.find('<') {
-            run.words(&rest[..at]);
-            rest = &rest[at..];
-            if let Some(comment) = rest.strip_prefix("<!--") {
-                rest = comment.split_once("-->").map_or("", |(_, after)| after);
-                run.shortcodes.split();
-                continue;
-            }
-            let opens =
-                rest[1..].starts_with(|ch: char| ch.is_ascii_alphabetic() || "/!?".contains(ch));
-            if !opens {
-                run.words("<");
-                rest = &rest[1..];
-                continue;
-            }
-            // An unclosed tag drops the rest, as HTML5 does.
-            let Some(end) = html::tag_end(rest) else {
-                rest = "";
-                break;
-            };
-            let (written, after) = rest.split_at(end);
-            rest = after;
-            match html::tag(written) {
-                Some(tag) if html::filtered(&tag.name) => run.words(written),
-                // A block closes what opened inside it.
-                Some(tag) if html::breaks(&tag.name) => {
-                    run.line();
-                    match tag.closing {
-                        true => run.end(&tag.name),
-                        false => {
-                            run.implied(&tag.name);
-                            match tag.name == "hr" {
-                                true => run.shortcodes.split(),
-                                false => run.start(&tag.name, None, None),
-                            }
+/// An HTML block's text, as a browser shows it.
+pub fn html_block_text(written: &str) -> Inline {
+    let mut run = Run::default();
+    let mut rest = written;
+    while let Some(at) = rest.find('<') {
+        run.words(&rest[..at]);
+        rest = &rest[at..];
+        if let Some(comment) = rest.strip_prefix("<!--") {
+            rest = comment.split_once("-->").map_or("", |(_, after)| after);
+            run.shortcodes.split();
+            continue;
+        }
+        let opens =
+            rest[1..].starts_with(|ch: char| ch.is_ascii_alphabetic() || "/!?".contains(ch));
+        if !opens {
+            run.words("<");
+            rest = &rest[1..];
+            continue;
+        }
+        // An unclosed tag drops the rest, as HTML5 does.
+        let Some(end) = html::tag_end(rest) else {
+            rest = "";
+            break;
+        };
+        let (written, after) = rest.split_at(end);
+        rest = after;
+        match html::tag(written) {
+            Some(tag) if html::filtered(&tag.name) => run.words(written),
+            // A block closes what opened inside it.
+            Some(tag) if html::breaks(&tag.name) => {
+                run.line();
+                match tag.closing {
+                    true => run.end(&tag.name),
+                    false => {
+                        run.implied(&tag.name);
+                        match tag.name == "hr" {
+                            true => run.shortcodes.split(),
+                            false => run.start(&tag.name, None, None),
                         }
                     }
                 }
-                // It ends a `p` but lays no block.
-                Some(tag) if !tag.closing && html::closes_p(&tag.name) => {
-                    run.implied(&tag.name);
-                    run.html(written);
-                }
-                // A line's end drops its space.
-                Some(tag) if tag.closing || tag.name == "br" => {
-                    run.owed = run.owed.filter(|_| tag.name != "br");
-                    run.html(written);
-                }
-                Some(_) => {
-                    run.pay();
-                    run.html(written);
-                }
-                None => run.shortcodes.split(),
             }
+            // It ends a `p` but lays no block.
+            Some(tag) if !tag.closing && html::closes_p(&tag.name) => {
+                run.implied(&tag.name);
+                run.html(written);
+            }
+            // A line's end drops its space.
+            Some(tag) if tag.closing || tag.name == "br" => {
+                run.owed = run.owed.filter(|_| tag.name != "br");
+                run.html(written);
+            }
+            Some(_) => {
+                run.pay();
+                run.html(written);
+            }
+            None => run.shortcodes.split(),
         }
-        run.words(rest);
-        text_block(run.cut(), out);
     }
+    run.words(rest);
+    run.cut()
 }
 
 impl Run {
@@ -221,6 +206,35 @@ impl Run {
             self.end("p");
         }
     }
+}
+
+/// A quote's alert kind and its blocks after the marker.
+pub fn alert(quote: &mdast::Blockquote) -> Option<(AlertKind, Vec<mdast::Node>)> {
+    let [mdast::Node::Paragraph(paragraph), rest @ ..] = &quote.children[..] else {
+        return None;
+    };
+    let (kind, after) = marker(&paragraph.children)?;
+    if after.is_empty() && rest.is_empty() {
+        return None;
+    }
+    let head = (!after.is_empty()).then(|| {
+        mdast::Node::Paragraph(mdast::Paragraph {
+            children: after,
+            position: paragraph.position.clone(),
+        })
+    });
+    Some((kind, head.into_iter().chain(rest.iter().cloned()).collect()))
+}
+
+/// A paragraph that is `[toc]` alone, as Typora reads it.
+pub fn is_toc(node: &mdast::Node, source: &str) -> bool {
+    matches!(node, mdast::Node::Paragraph(_))
+        && source[span(node)].trim().eq_ignore_ascii_case("[toc]")
+}
+
+/// Every heading in `text`, as `[toc]` lists them.
+pub fn headings(text: &str) -> Vec<DocumentHeading> {
+    Reader::new(text, &file_tree(text)).headings
 }
 
 /// A plain first line naming a kind, and what follows.

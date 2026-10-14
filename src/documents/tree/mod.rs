@@ -8,7 +8,9 @@ mod blocks;
 mod emoji;
 mod html;
 
-pub use blocks::{AlertKind, DocumentHeading};
+pub use blocks::{AlertKind, DocumentHeading, alert, headings, html_block_text, is_toc};
+pub use emoji::Shortcodes;
+pub use html::{InlineTag, inline_tag};
 
 /// How a stretch of inline text prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,28 +158,19 @@ impl Run {
 
     /// Opens or closes an element for an inline HTML tag.
     fn html(&mut self, written: &str) {
-        let Some(tag) = html::tag(written) else {
-            return self.shortcodes.split();
-        };
-        if html::filtered(&tag.name) {
-            return self.push_text(&html::text(written));
+        match html::inline_tag(written) {
+            InlineTag::Text(shown) => self.push_text(&shown),
+            InlineTag::Open { name, style, href } => self.start(&name, style, href),
+            InlineTag::Close(name) => {
+                self.shortcodes.split();
+                self.end(&name);
+            }
+            InlineTag::Break => {
+                self.shortcodes.split();
+                self.text.text.push('\n');
+            }
+            InlineTag::Gone => self.shortcodes.split(),
         }
-        self.shortcodes.split();
-        if tag.name == "br" {
-            return self.text.text.push('\n');
-        }
-        let Some(style) = html::inline_style(&tag.name) else {
-            return;
-        };
-        if tag.closing {
-            return self.end(&tag.name);
-        }
-        let url = match style {
-            Style::Link => tag.attribute("href").map(str::to_string),
-            _ => None,
-        };
-        let style = (style != Style::Link || url.is_some()).then_some(style);
-        self.start(&tag.name, style, url);
     }
 
     /// Opens `name`; a new `a` ends the open one.
@@ -366,7 +359,7 @@ impl<'a> Reader<'a> {
                 },
                 body: self.nested(&note.children),
             }),
-            mdast::Node::Html(html) => self.html_block(&html.value, out),
+            mdast::Node::Html(html) => text_block(html_block_text(&html.value), out),
             mdast::Node::Yaml(yaml) => out.push(Node::FrontMatter(yaml.value.clone())),
             mdast::Node::Toml(toml) => out.push(Node::FrontMatter(toml.value.clone())),
             mdast::Node::Definition(_) => {}

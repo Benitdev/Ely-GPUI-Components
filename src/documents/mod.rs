@@ -57,6 +57,10 @@ pub use templates::{Template, TemplatePicker};
 pub use thumbs::PageThumbnailList;
 pub use todo::{Checklist, TodoItem};
 pub use toolbar::FixedFormatToolbar;
+pub use tree::{
+    AlertKind, Inline, InlineTag, Shortcodes, Style, alert, headings, html_block_text, inline_tag,
+    is_toc,
+};
 pub(crate) use viewer::step as zoom_step;
 pub use viewer::{DocPage, DocumentViewer, PageHit, PageNote};
 
