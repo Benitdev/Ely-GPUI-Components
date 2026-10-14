@@ -10,7 +10,7 @@ use super::{
     model::{Kind, Menu},
 };
 use crate::{
-    forms::{Down, Enter, Run, TextInput, Up, float},
+    forms::{Down, Enter, Left, Right, Run, TextInput, Up, float},
     motion,
     primitives::{Icon, IconName, Takeover, give_back, raise, take_focus},
     theme::{ActiveTheme, IconSize},
@@ -35,13 +35,10 @@ fn settle(menu: &Menu, levels: &mut Vec<Level>) {
     let mut here = menu;
     for depth in 0..levels.len() {
         let column = levels[depth].column;
-        let spot = levels[depth]
-            .at
-            .and_then(|ix| here.settled(ix, column).map(|column| (ix, column)));
-        levels[depth].at = spot.map(|(ix, _)| ix);
-        levels[depth].column = spot.map_or(0, |(_, column)| column);
-        match spot
-            .and_then(|(ix, column)| here.item_at(ix, column))
+        let at = levels[depth].at.filter(|&ix| here.runs(ix, column));
+        levels[depth].at = at;
+        match at
+            .and_then(|ix| here.item_at(ix, column))
             .map(|item| &item.kind)
         {
             Some(Kind::Sub(sub)) if depth + 1 < levels.len() => here = sub,
@@ -132,7 +129,7 @@ fn first_of(menu: &Menu, at: Option<usize>) -> Level {
     Level {
         at,
         column: match at {
-            Some(ix) => menu.settled(ix, 0).expect("a stepped row runs"),
+            Some(ix) => menu.first(ix).expect("a stepped row runs"),
             None => 0,
         },
         ..Level::default()
@@ -234,7 +231,7 @@ fn keys(
         ("down" | "up", _) => {
             let by = if key == "down" { 1 } else { -1 };
             if let Some(to) = here.step(at, by) {
-                let column = here.settled(to, 0).expect("a stepped row runs");
+                let column = here.first(to).expect("a stepped row runs");
                 mark(state, menu, depth, (to, column), false, cx);
             }
         }
@@ -254,6 +251,17 @@ fn keys(
         _ => return false,
     }
     true
+}
+
+/// Whether the deepest level marks a button row.
+fn on_buttons(menu: &Menu, state: &Entity<Open>, cx: &App) -> bool {
+    let levels = &state.read(cx).levels;
+    let Some(depth) = levels.len().checked_sub(1) else {
+        return false;
+    };
+    let here = at_depth(menu, levels, depth);
+    here.zip(levels[depth].at)
+        .is_some_and(|(here, ix)| here.is_buttons(ix))
 }
 
 /// Records a box into the host's state: the host's own, a marked row's or a panel's.
@@ -356,6 +364,8 @@ pub(crate) fn hang(
     });
     let (up_menu, up_state, up_close) = (menu.clone(), state.clone(), close.clone());
     let (down_menu, down_state, down_close) = (menu.clone(), state.clone(), close.clone());
+    let (left_menu, left_state, left_close) = (menu.clone(), state.clone(), close.clone());
+    let (right_menu, right_state, right_close) = (menu.clone(), state.clone(), close.clone());
     let root = draw::panel(id, menu, state, 0, &close, head, cx)
         .track_focus(&focus)
         .when(!spaced, |root| {
@@ -368,6 +378,19 @@ pub(crate) fn hang(
                 keys(&down_menu, &down_state, "down", &down_close, window, cx);
             })
             .capture_action(|_: &Enter, _, cx| cx.stop_propagation())
+            // A button row takes the arrows from the filter.
+            .capture_action(move |_: &Left, window, cx| {
+                if on_buttons(&left_menu, &left_state, cx) {
+                    cx.stop_propagation();
+                    keys(&left_menu, &left_state, "left", &left_close, window, cx);
+                }
+            })
+            .capture_action(move |_: &Right, window, cx| {
+                if on_buttons(&right_menu, &right_state, cx) {
+                    cx.stop_propagation();
+                    keys(&right_menu, &right_state, "right", &right_close, window, cx);
+                }
+            })
         })
         .on_key_down(move |event, window, cx| {
             let stroke = &event.keystroke;

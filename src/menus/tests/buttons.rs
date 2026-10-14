@@ -14,6 +14,8 @@ use crate::{
 struct Clip {
     root: FocusHandle,
     ran: Vec<SharedString>,
+    paste_off: bool,
+    shown: usize,
 }
 
 impl Clip {
@@ -25,19 +27,24 @@ impl Clip {
             }
         };
         Menu::new()
-            .buttons([
-                MenuItem::new("Cut")
-                    .icon(IconName::Scissors)
-                    .on_click(run("cut")),
-                MenuItem::new("Copy")
-                    .icon(IconName::Copy)
-                    .disabled(true)
-                    .on_click(run("copy")),
-                MenuItem::new("Paste")
-                    .icon(IconName::Clipboard)
-                    .keys("secondary-v")
-                    .on_click(run("paste")),
-            ])
+            .buttons(
+                [
+                    MenuItem::new("Cut")
+                        .icon(IconName::Scissors)
+                        .on_click(run("cut")),
+                    MenuItem::new("Copy")
+                        .icon(IconName::Copy)
+                        .disabled(true)
+                        .on_click(run("copy")),
+                    MenuItem::new("Paste")
+                        .icon(IconName::Clipboard)
+                        .keys("secondary-v")
+                        .disabled(self.paste_off)
+                        .on_click(run("paste")),
+                ]
+                .into_iter()
+                .take(self.shown),
+            )
             .item(MenuItem::new("Select all").on_click(run("select all")))
     }
 }
@@ -60,6 +67,8 @@ fn clip(cx: &mut TestAppContext) -> (gpui::Entity<Clip>, &mut VisualTestContext)
     let (view, cx) = cx.add_window_view(|_, cx| Clip {
         root: cx.focus_handle(),
         ran: Vec::new(),
+        paste_off: false,
+        shown: 3,
     });
     settle(cx);
     (view, cx)
@@ -134,4 +143,58 @@ fn the_filter_finds_a_button_by_its_name(cx: &mut TestAppContext) {
     settle(cx);
     press("enter", cx);
     assert_eq!(ran(&view, cx), ["paste"]);
+}
+
+#[gpui::test]
+fn arrows_cross_buttons_while_the_filter_holds_focus(cx: &mut TestAppContext) {
+    let (view, cx) = clip(cx);
+    cx.update(|window, cx| window.focus_next(cx));
+    press("enter", cx);
+    press("right", cx);
+    press("enter", cx);
+    assert_eq!(ran(&view, cx), ["paste"], "right skips copy");
+}
+
+#[gpui::test]
+fn a_marked_button_turned_off_or_gone_runs_nothing(cx: &mut TestAppContext) {
+    for change in [
+        |clip: &mut Clip| clip.paste_off = true,
+        |clip: &mut Clip| clip.shown = 1,
+    ] {
+        let (view, cx) = clip(cx);
+        right_click(cx);
+        press("down", cx);
+        press("right", cx);
+        view.update(cx, |clip, cx| {
+            change(clip);
+            cx.notify();
+        });
+        settle(cx);
+        press("enter", cx);
+        assert!(
+            ran(&view, cx).is_empty(),
+            "another button ran: {:?}",
+            ran(&view, cx)
+        );
+    }
+}
+
+#[gpui::test]
+fn a_disabled_button_says_it_is_unavailable(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        Theme::init(cx);
+        let off = MenuItem::new("Copy").icon(IconName::Copy).disabled(true);
+        let on = MenuItem::new("Cut").icon(IconName::Scissors);
+        let read = |item: &MenuItem, cx: &mut App| {
+            let mut node = gpui::accesskit::Node::new(gpui::Role::Button);
+            gpui::Element::write_a11y_info(
+                &super::super::draw::button(item, 0, 0, false, cx),
+                &mut node,
+            );
+            node.description().map(str::to_owned)
+        };
+        let expected = crate::i18n::text(cx, "state.unavailable", &[]).to_string();
+        assert_eq!(read(&off, cx), Some(expected));
+        assert_eq!(read(&on, cx), None);
+    });
 }

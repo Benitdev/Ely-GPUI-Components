@@ -147,19 +147,22 @@ impl Menu {
         }
     }
 
-    /// Where row `ix` runs nearest `column`; none if disabled.
-    pub(super) fn settled(&self, ix: usize, column: usize) -> Option<usize> {
+    /// Whether the spot at row `ix`, button `column`, runs.
+    pub(super) fn runs(&self, ix: usize, column: usize) -> bool {
+        self.item_at(ix, column).is_some_and(|item| !item.disabled)
+    }
+
+    /// Row `ix`'s first spot that runs.
+    pub(super) fn first(&self, ix: usize) -> Option<usize> {
         match self.entries.get(ix) {
-            Some(Entry::Item(item)) if !item.disabled => Some(0),
-            Some(Entry::Buttons(buttons)) => {
-                let near = column.min(buttons.len() - 1);
-                match buttons[near].disabled {
-                    false => Some(near),
-                    true => buttons.iter().position(|button| !button.disabled),
-                }
-            }
+            Some(Entry::Item(item)) => (!item.disabled).then_some(0),
+            Some(Entry::Buttons(buttons)) => buttons.iter().position(|button| !button.disabled),
             _ => None,
         }
+    }
+
+    pub(super) fn is_buttons(&self, ix: usize) -> bool {
+        matches!(self.entries.get(ix), Some(Entry::Buttons(_)))
     }
 
     /// The next enabled row from `from`, stepping by `by` and wrapping.
@@ -168,7 +171,7 @@ impl Menu {
         let mut at = from.map_or(if by > 0 { -1 } else { count }, |at| at as isize);
         for _ in 0..count {
             at = (at + by).rem_euclid(count);
-            if self.settled(at as usize, 0).is_some() {
+            if self.first(at as usize).is_some() {
                 return Some(at as usize);
             }
         }

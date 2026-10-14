@@ -9,6 +9,7 @@ use super::{
 };
 use crate::{
     forms::{Run, surface},
+    i18n,
     navigation::marked,
     primitives::{Icon, IconName, Tooltip},
     theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize},
@@ -83,7 +84,13 @@ fn row(item: &MenuItem, ix: usize, current: bool, cx: &App) -> Stateful<Div> {
 }
 
 /// Button `column` of row `ix`, named by its label.
-fn button(item: &MenuItem, ix: usize, column: usize, current: bool, cx: &App) -> Stateful<Div> {
+pub(super) fn button(
+    item: &MenuItem,
+    ix: usize,
+    column: usize,
+    current: bool,
+    cx: &App,
+) -> Stateful<Div> {
     let theme = cx.theme();
     let colors = &theme.colors;
     let fg = match (item.disabled, current) {
@@ -108,6 +115,9 @@ fn button(item: &MenuItem, ix: usize, column: usize, current: bool, cx: &App) ->
         .border_color(colors.border)
         .when(current && !item.disabled, |button| button.bg(colors.hover))
         .when(!item.disabled, |button| button.cursor_pointer())
+        .when(item.disabled, |button| {
+            button.aria_description(i18n::text(cx, "state.unavailable", &[]))
+        })
         .child(Icon::new(icon).size(IconSize::Sm).color(fg))
         .tooltip(Tooltip::rich(move |_, cx| {
             div()
