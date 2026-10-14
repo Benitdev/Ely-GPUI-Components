@@ -5,8 +5,8 @@ use std::{
 };
 
 use gpui::{
-    AnyElement, Bounds, Context, IntoElement, Modifiers, ParentElement, Pixels, Render, Styled,
-    TestAppContext, VisualTestContext, Window, div, point, px,
+    AnyElement, Bounds, Context, InteractiveElement, IntoElement, Modifiers, ParentElement, Pixels,
+    Render, Styled, TestAppContext, VisualTestContext, Window, div, point, px,
 };
 
 use super::{
@@ -73,6 +73,46 @@ fn a_property_group_folds_from_its_header_and_stays_folded(cx: &mut TestAppConte
     cx.simulate_click(header, Modifiers::none());
     settle(cx);
     assert_eq!(height.get(), open, "a second press opens it");
+}
+
+/// A grid that may put a Table group first.
+struct Reorder(bool);
+
+impl Render for Reorder {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let row = |name: &'static str| div().h(px(20.0)).debug_selector(move || name.into());
+        let grid = PropertyGrid::new("grid");
+        let grid = if self.0 {
+            grid.group(PropertyGroup::new("Table").row("Rows", row("table")))
+        } else {
+            grid
+        };
+        div().w(px(320.0)).child(
+            grid.group(PropertyGroup::new("Layout").row("Width", row("layout")))
+                .group(PropertyGroup::new("Export").row("Scale", row("export"))),
+        )
+    }
+}
+
+#[gpui::test]
+fn a_fold_stays_with_its_group_when_a_group_is_put_first(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        Theme::init(cx);
+        Theme::update(cx, |theme| theme.reduced_motion = true);
+    });
+    let (view, cx) = cx.add_window_view(|_, _| Reorder(false));
+    settle(cx);
+    cx.simulate_click(point(px(4.0), px(12.0)), Modifiers::none());
+    settle(cx);
+    assert!(cx.debug_bounds("layout").is_none(), "Layout folds");
+    view.update(cx, |view, cx| {
+        view.0 = true;
+        cx.notify();
+    });
+    settle(cx);
+    assert!(cx.debug_bounds("table").is_some(), "the new group opens");
+    assert!(cx.debug_bounds("layout").is_none(), "Layout stays folded");
+    assert!(cx.debug_bounds("export").is_some(), "Export stays open");
 }
 
 /// A one-row description list, this wide, that reports where the list and its value sit.

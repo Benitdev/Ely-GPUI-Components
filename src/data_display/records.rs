@@ -103,6 +103,7 @@ impl RenderOnce for DescriptionList {
 }
 
 /// A titled group of a `PropertyGrid`, open unless `folded`.
+/// Its title keys its fold, so titles differ within a grid.
 pub struct PropertyGroup {
     title: SharedString,
     open: bool,
@@ -157,10 +158,9 @@ impl RenderOnce for PropertyGrid {
         let folds: Vec<_> = self
             .groups
             .iter()
-            .enumerate()
-            .map(|(ix, group)| {
+            .map(|group| {
                 use_seeded(
-                    (self.id.clone(), format!("fold-{ix}")),
+                    (self.id.clone(), format!("fold-{}", group.title)),
                     group.open,
                     window,
                     cx,
@@ -180,14 +180,14 @@ impl RenderOnce for PropertyGrid {
                 |(ix, PropertyGroup { title, rows, .. })| {
                     let shown = folds[ix].read(cx).value;
                     let (toggle, key) = (folds[ix].clone(), title.clone());
-                    let chevron = Disclosure::new((id.clone(), format!("chevron-{ix}")), shown);
+                    let chevron = Disclosure::new((id.clone(), format!("chevron-{title}")), shown);
                     div()
                         .when(ix > 0, |group| {
                             group.border_t_1().border_color(colors.border)
                         })
                         .child(
                             div()
-                                .id((id.clone(), format!("group-{ix}")))
+                                .id((id.clone(), format!("group-{title}")))
                                 .flex()
                                 .items_center()
                                 .gap_1()
@@ -208,10 +208,10 @@ impl RenderOnce for PropertyGrid {
                                     })
                                 })
                                 .child(chevron)
-                                .child(title),
+                                .child(title.clone()),
                         )
                         .child(
-                            Collapsible::new((id.clone(), format!("rows-{ix}")), shown).child(
+                            Collapsible::new((id.clone(), format!("rows-{title}")), shown).child(
                                 div()
                                     .pb_1()
                                     .children(rows.into_iter().map(|(name, editor)| {
