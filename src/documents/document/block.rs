@@ -251,11 +251,19 @@ fn path<'a>(text: &str, root: &'a Node, at: usize) -> Vec<&'a Node> {
     path
 }
 
+/// `at`, before the CR when it splits a CRLF.
+fn settled(text: &str, at: usize) -> usize {
+    let split = text[..at].ends_with('\r') && text[at..].starts_with('\n');
+    if split { at - 1 } else { at }
+}
+
 pub(super) fn line_start(text: &str, at: usize) -> usize {
+    let at = settled(text, at);
     text[..at].rfind(['\n', '\r']).map_or(0, |at| at + 1)
 }
 
 pub(super) fn line_end(text: &str, at: usize) -> usize {
+    let at = settled(text, at);
     at + text[at..].find(['\n', '\r']).unwrap_or(text.len() - at)
 }
 

@@ -70,6 +70,24 @@ fn a_new_table_goes_after_the_caret_line(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_new_table_after_end_keeps_crlf(cx: &mut TestAppContext) {
+    let (document, cx) = open("Intro\r\nNext\r\n", MarkdownMode::Source, cx);
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    let focus = editor.read_with(cx, gpui::Focusable::focus_handle);
+    cx.update(|window, cx| window.focus(&focus, cx));
+    cx.simulate_keystrokes("end");
+    let caret = editor.read_with(cx, |editor, _| editor.primary().range().start);
+    assert_eq!(caret, 6, "End lands between CR and LF");
+    document.update(cx, |document, cx| {
+        document.insert_table(cx).expect("inserted")
+    });
+    assert_eq!(
+        text(&document, cx),
+        "Intro\r\n\r\n|      |      |      |\r\n| ---- | ---- | ---- |\r\n|      |      |      |\r\n|      |      |      |\r\n\r\nNext\r\n"
+    );
+}
+
+#[gpui::test]
 fn a_match_in_visual_opens_its_block_selected(cx: &mut TestAppContext) {
     let (document, cx) = open("# A\n\nfind me here\n", MarkdownMode::Visual, cx);
     let at = "# A\n\nfind me here\n".find("me").expect("the word");
