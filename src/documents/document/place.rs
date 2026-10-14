@@ -189,6 +189,16 @@ impl MarkdownDocument {
             .saturating_sub(1)
     }
 
+    /// Reveals the line holding byte `at` of the text.
+    pub(super) fn reveal_at(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.editor.read(cx);
+        if at > editor.text().len() {
+            return log::error!("markdown document: a heading past the text");
+        }
+        let line = editor.buffer.line_of(at);
+        self.reveal(line, window, cx);
+    }
+
     /// Line `line` at top and focused, caret at start.
     pub fn reveal(&mut self, line: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.set_caret(line, 0, cx);

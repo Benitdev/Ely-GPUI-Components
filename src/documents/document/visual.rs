@@ -101,6 +101,7 @@ impl MarkdownDocument {
                     nodes,
                     &self.base,
                     &self.on_link,
+                    &self.on_heading,
                     self.look.scale,
                     cx,
                 )),

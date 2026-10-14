@@ -16,12 +16,16 @@ use super::{
 use crate::{
     editor::{code_colors, code_colors_with},
     navigation::{Anchor, Sections},
-    primitives::{FocusRing as _, Icon, IconName},
-    theme::{ActiveTheme, IconSize, Radius, TextSize},
+    primitives::FocusRing as _,
+    theme::{ActiveTheme, Radius, TextSize},
     typography::{Latex, failed},
 };
 
+mod blocks;
+
 pub(crate) type OnLink = Rc<dyn Fn(&str, &mut Window, &mut App)>;
+/// Reveals the heading whose source starts at a byte.
+pub(crate) type OnHeading = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 type DrawCode = Rc<dyn Fn(ElementId, Option<SharedString>, SharedString) -> AnyElement>;
 
 /// Markdown drawn as a document; links go to the host.
@@ -94,6 +98,9 @@ struct Draw<'a> {
     base: &'a Option<Arc<Path>>,
     /// Text size against the theme's.
     scale: f32,
+    /// Lists open around the node drawn.
+    lists: std::cell::Cell<usize>,
+    on_heading: &'a Option<OnHeading>,
 }
 
 impl Draw<'_> {
@@ -263,58 +270,7 @@ impl Draw<'_> {
                     .child(StyledText::new(text.clone()).with_highlights(styles))
                     .into_any_element()
             }
-            Node::List { start, items } => div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .children(items.iter().enumerate().map(|(ix, (task, body))| {
-                    let marker: AnyElement = match (task, start) {
-                        (Some(done), _) => Icon::new(if *done {
-                            IconName::SquareCheck
-                        } else {
-                            IconName::Square
-                        })
-                        .size(IconSize::Sm)
-                        .color(if *done {
-                            colors.focus
-                        } else {
-                            colors.fg_subtle
-                        })
-                        .into_any_element(),
-                        (None, Some(first)) => div()
-                            .text_color(colors.fg_muted)
-                            .child(format!("{}.", first + ix as u64))
-                            .into_any_element(),
-                        (None, None) => div()
-                            .text_color(colors.fg_muted)
-                            .child("•")
-                            .into_any_element(),
-                    };
-                    div()
-                        .flex()
-                        .gap_2()
-                        .child(
-                            div()
-                                .flex_none()
-                                .min_w_5()
-                                .flex()
-                                .justify_end()
-                                .child(marker),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .when(*task == Some(true), |body| {
-                                    body.text_color(colors.fg_subtle)
-                                })
-                                .children(self.nodes(body, cx)),
-                        )
-                }))
-                .into_any_element(),
+            Node::List { start, items } => self.list(start, items, cx),
             Node::Table { aligns, head, rows } => {
                 let cell = |blocks: &[Node], column: usize, header: bool, cx: &App| {
                     div()
@@ -370,10 +326,10 @@ impl Draw<'_> {
                     .into_any_element()
             }
             Node::Rule => div()
+                .debug_selector(|| "markdown-rule".into())
                 .my_2()
-                .h_0()
-                .border_t_1()
-                .border_color(colors.border)
+                .border_t_2()
+                .border_color(colors.border_strong)
                 .into_any_element(),
             Node::Math(tex) => div()
                 .flex()
@@ -416,6 +372,9 @@ impl Draw<'_> {
                         .children(self.nodes(body, cx)),
                 )
                 .into_any_element(),
+            Node::Alert { kind, body } => self.alert(*kind, body, cx),
+            Node::Toc(headings) => self.toc(headings, cx),
+            Node::FrontMatter(text) => self.front_matter(text, cx),
         }
     }
 }
@@ -436,6 +395,7 @@ pub(crate) fn draw_nodes(
     nodes: &[Node],
     base: &Option<Arc<Path>>,
     on_link: &Option<OnLink>,
+    on_heading: &Option<OnHeading>,
     scale: f32,
     cx: &App,
 ) -> Vec<AnyElement> {
@@ -448,6 +408,8 @@ pub(crate) fn draw_nodes(
         code: &None,
         base,
         scale,
+        lists: std::cell::Cell::new(0),
+        on_heading,
     };
     draw.nodes(nodes, cx)
 }
@@ -465,6 +427,8 @@ impl RenderOnce for MarkdownRenderer {
             code: &self.code,
             base: &self.base,
             scale: 1.0,
+            lists: std::cell::Cell::new(0),
+            on_heading: &None,
         };
         div()
             .flex()
@@ -475,3 +439,6 @@ impl RenderOnce for MarkdownRenderer {
             .children(draw.nodes(&nodes, cx))
     }
 }
+
+#[cfg(test)]
+mod tests;

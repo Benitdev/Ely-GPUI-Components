@@ -3,25 +3,16 @@ use std::ops::Range;
 use markdown::mdast;
 
 use crate::documents::{
-    markdown::{file_tree, span, walk},
-    tree::{Node, Reader},
+    markdown::{file_tree, span},
+    tree::{DocumentHeading, Node, Reader},
 };
 
 /// A top-level block: its source, and what it draws.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Block {
     pub range: Range<usize>,
-    /// None shows the source as written: definitions, HTML, front matter.
+    /// None shows a link definition as written.
     pub nodes: Option<Vec<Node>>,
-}
-
-/// A heading anywhere in the file.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DocumentHeading {
-    pub depth: u8,
-    pub title: String,
-    /// Where its source starts, in bytes.
-    pub at: usize,
 }
 
 /// A file read as blocks and headings.
@@ -44,16 +35,10 @@ pub(crate) fn parsed(text: &str) -> Parsed {
         .map(|node| {
             let range = span(node);
             let kept = text[range.clone()].trim_end_matches(['\n', '\r']).len();
-            let raw = matches!(
-                node,
-                mdast::Node::Definition(_)
-                    | mdast::Node::Html(_)
-                    | mdast::Node::Yaml(_)
-                    | mdast::Node::Toml(_)
-            );
+            let raw = matches!(node, mdast::Node::Definition(_));
             let nodes = (!raw).then(|| {
                 let mut out = Vec::new();
-                reader.block(node, &mut out);
+                reader.top(node, &mut out);
                 out
             });
             Block {
@@ -62,23 +47,10 @@ pub(crate) fn parsed(text: &str) -> Parsed {
             }
         })
         .collect();
-    let mut nodes = Vec::new();
-    walk(&root, &mut nodes);
-    let headings = nodes
-        .into_iter()
-        .filter_map(|node| match node {
-            mdast::Node::Heading(heading) => Some(DocumentHeading {
-                depth: heading.depth,
-                title: reader.inline(&heading.children).text,
-                at: span(node).start,
-            }),
-            _ => None,
-        })
-        .collect();
     Parsed {
         text: text.to_string(),
         blocks,
-        headings,
+        headings: reader.headings,
     }
 }
 
@@ -111,7 +83,7 @@ mod tests {
     use crate::documents::tree::Style;
 
     #[test]
-    fn every_block_is_shown_raw_ones_as_written() {
+    fn every_block_is_shown_definitions_as_written() {
         let text = "---\ntitle: a\n---\n\n# Lift\n\n[site]: https://ely.dev\n\n<div>x</div>\n\n> ## Quoted\n";
         let found = parsed(text);
         let shown: Vec<(&str, bool)> = found
@@ -122,13 +94,16 @@ mod tests {
         assert_eq!(
             shown,
             [
-                ("---\ntitle: a\n---", false),
+                ("---\ntitle: a\n---", true),
                 ("# Lift", true),
                 ("[site]: https://ely.dev", false),
-                ("<div>x</div>", false),
+                ("<div>x</div>", true),
                 ("> ## Quoted", true),
             ]
         );
+        let drawn = |ix: usize| found.blocks[ix].nodes.clone().expect("drawn");
+        assert_eq!(drawn(0), [Node::FrontMatter("title: a".into())]);
+        assert!(matches!(&drawn(3)[..], [Node::Paragraph(line)] if line.text == "x"));
         let headings: Vec<(u8, &str, usize)> = found
             .headings
             .iter()

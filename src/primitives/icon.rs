@@ -226,6 +226,7 @@ icons! {
     Merge => "merge",
     MessageSquare => "message-square",
     MessageSquareDiff => "message-square-diff",
+    MessageSquareWarning => "message-square-warning",
     MicOff => "mic-off",
     Mic => "mic",
     Minimize2 => "minimize-2",

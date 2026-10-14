@@ -370,6 +370,7 @@ mod history;
 mod links;
 mod look;
 mod place;
+mod toc;
 mod tools;
 
 #[gpui::test]

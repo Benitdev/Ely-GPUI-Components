@@ -41,6 +41,63 @@ pub(crate) fn reopens(name: &str) -> bool {
     )
 }
 
+/// Elements a browser lays as blocks: a line each side.
+pub(crate) fn breaks(name: &str) -> bool {
+    matches!(
+        name,
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "center"
+            | "details"
+            | "div"
+            | "dl"
+            | "dd"
+            | "dt"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hr"
+            | "li"
+            | "main"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "section"
+            | "summary"
+            | "table"
+            | "tr"
+            | "ul"
+    )
+}
+
+/// Bytes through the `>` ending the tag at `html`'s start.
+pub(crate) fn tag_end(html: &str) -> Option<usize> {
+    let (mut quote, mut last) = (None, '<');
+    for (at, ch) in html.char_indices().skip(1) {
+        match quote {
+            Some(open) if ch == open => quote = None,
+            Some(_) => {}
+            None if ch == '>' => return Some(at + 1),
+            None if matches!(ch, '"' | '\'') && last == '=' => quote = Some(ch),
+            None => {}
+        }
+        if !spacing(ch) {
+            last = ch;
+        }
+    }
+    None
+}
+
 /// `html` as one tag; comments and the rest are none.
 pub(crate) fn tag(html: &str) -> Option<Tag> {
     let inner = html.trim().strip_prefix('<')?.strip_suffix('>')?;
@@ -94,24 +151,29 @@ fn attributes(mut rest: &str) -> Vec<(String, String)> {
                 (&after[..end], &after[end..])
             }
         };
-        out.push((name, decoded(value)));
+        out.push((name, decoded(value, true)));
         rest = left;
     }
 }
 
 /// HTML's whitespace, which is ASCII alone.
-fn spacing(ch: char) -> bool {
+pub(crate) fn spacing(ch: char) -> bool {
     matches!(ch, ' ' | '\t' | '\n' | '\r' | '\x0C')
 }
 
-/// An attribute value with references decoded as HTML does.
-fn decoded(text: &str) -> String {
+/// Text between tags, references decoded as HTML does.
+pub(crate) fn text(written: &str) -> String {
+    decoded(written, false)
+}
+
+/// References decoded as HTML does, in a value or text.
+fn decoded(text: &str, attribute: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         rest = &rest[at..];
-        match attribute_reference(rest) {
+        match reference(rest, attribute) {
             Some((value, len)) => {
                 out.push_str(&value);
                 rest = &rest[len..];
@@ -129,8 +191,8 @@ fn decoded(text: &str) -> String {
 /// Longest reference name HTML knows, in bytes.
 const LONGEST: usize = 32;
 
-/// A reference at `text`'s start, as HTML reads values.
-fn attribute_reference(text: &str) -> Option<(String, usize)> {
+/// A reference at `text`'s start, as HTML reads it.
+fn reference(text: &str, attribute: bool) -> Option<(String, usize)> {
     let body = text.strip_prefix('&')?;
     if let Some(number) = body.strip_prefix('#') {
         let (digits, radix) = match number.strip_prefix(['x', 'X']) {
@@ -160,8 +222,18 @@ fn attribute_reference(text: &str) -> Option<(String, usize)> {
     {
         return Some((value, len + 2));
     }
-    let bare = !body[len..].starts_with(['=', ';']);
-    (bare && legacy(name)).then(|| (decode_named(name, true).expect("a legacy name"), len + 1))
+    // Text takes a legacy prefix; a value, the whole name.
+    let shortest = match attribute {
+        true if body[len..].starts_with(['=', ';']) => return None,
+        true => len,
+        false => 1,
+    };
+    let name = (shortest..=len.min(LONGEST))
+        .rev()
+        .map(|end| &name[..end])
+        .find(|name| legacy(name))?;
+    let value = decode_named(name, true).expect("a legacy name");
+    Some((value, name.len() + 1))
 }
 
 /// A name HTML decodes without its semicolon.
@@ -299,7 +371,8 @@ mod tests {
     fn long_runs_scan_in_linear_time() {
         let (amps, colons) = ("&".repeat(1 << 18), ":zq".repeat(1 << 16));
         let started = web_time::Instant::now();
-        assert_eq!(decoded(&amps).len(), amps.len());
+        assert_eq!(decoded(&amps, true).len(), amps.len());
+        assert_eq!(text(&amps).len(), amps.len());
         assert_eq!(emoji(&colons).len(), colons.len());
         let spent = started.elapsed();
         assert!(spent.as_secs() < 2, "256 KiB took {spent:?}");
@@ -311,6 +384,22 @@ mod tests {
         assert_eq!(emoji(":nope: at 10:30 and ::"), ":nope: at 10:30 and ::");
         assert_eq!(emoji("a:smile:b :x:smile:"), "a😄b ❌smile:");
         assert_eq!(emoji("é :smile: 中"), "é 😄 中");
+    }
+
+    #[test]
+    fn text_takes_the_longest_legacy_name() {
+        assert_eq!(
+            text("&notit; &amp &ampx &lt3 &nope;"),
+            "¬it; & &x <3 &nope;"
+        );
+        assert_eq!(decoded("&notit;&ampx", true), "&notit;&ampx");
+    }
+
+    #[test]
+    fn a_tag_ends_outside_its_quotes() {
+        assert_eq!(tag_end("<a href=\"x>y\">z"), Some(14));
+        assert_eq!(tag_end("<b it's>r"), Some(8));
+        assert_eq!(tag_end("<b"), None);
     }
 
     #[test]

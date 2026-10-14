@@ -19,13 +19,18 @@ use gpui::{
     ListState, Pixels, Subscription, Task, Window,
 };
 
+pub use crate::documents::tree::DocumentHeading;
 pub use attach::Attachment;
 pub use look::DocumentLook;
-pub use parse::DocumentHeading;
 use parse::{Parsed, alike, parsed};
 pub use tables::{TableEdit, TableRefusal};
 
-use super::{MarkdownMode, markdown::markdown_highlights, modes::joint, render::OnLink};
+use super::{
+    MarkdownMode,
+    markdown::markdown_highlights,
+    modes::joint,
+    render::{OnHeading, OnLink},
+};
 use crate::{
     editor::{CodeEditor, EditorEvent, LineNumbers},
     forms::TextInput,
@@ -94,6 +99,7 @@ pub struct MarkdownDocument {
     centered: Option<(usize, u64, u64, [u64; 2])>,
     focus: FocusHandle,
     on_link: Option<OnLink>,
+    on_heading: Option<OnHeading>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -132,6 +138,11 @@ impl MarkdownDocument {
             cx.on_focus(&focus, window, Self::focused),
         ];
         let overdraw = window.rem_size() * 40.0;
+        let this = cx.entity().downgrade();
+        let on_heading: OnHeading = Rc::new(move |at, window, cx| {
+            this.update(cx, |document, cx| document.reveal_at(at, window, cx))
+                .expect("a heading list lives in its document");
+        });
         let mut document = Self {
             editor,
             mode,
@@ -151,6 +162,7 @@ impl MarkdownDocument {
             room: Pixels::ZERO,
             focus,
             on_link: None,
+            on_heading: Some(on_heading),
             _subscriptions: subscriptions,
         };
         document.reparse(true, cx);

@@ -4,7 +4,10 @@ use markdown::mdast::{self, AlignKind};
 
 use super::markdown::{span, tree, walk};
 
+mod blocks;
 mod html;
+
+pub use blocks::{AlertKind, DocumentHeading};
 
 /// How a stretch of inline text prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,6 +65,15 @@ pub enum Node {
         label: String,
         body: Vec<Node>,
     },
+    /// A GitHub alert: a quote under its kind's title.
+    Alert {
+        kind: AlertKind,
+        body: Vec<Node>,
+    },
+    /// `[toc]`: the file's headings.
+    Toc(Vec<DocumentHeading>),
+    /// Front matter, its fences cut.
+    FrontMatter(String),
 }
 
 /// A tree read against its source and its link definitions.
@@ -70,6 +82,7 @@ pub(crate) struct Reader<'a> {
     urls: HashMap<String, String>,
     /// Footnotes numbered by their first reference.
     notes: HashMap<String, usize>,
+    pub headings: Vec<DocumentHeading>,
 }
 
 /// An open element, as HTML names it.
@@ -87,6 +100,8 @@ struct Run {
     open: Vec<Opened>,
     /// Inside an autolink: its text stays as written.
     verbatim: bool,
+    /// White space an HTML block owes the next word.
+    owed: Option<char>,
 }
 
 impl Run {
@@ -99,6 +114,11 @@ impl Run {
             opened.start = 0;
         }
         done
+    }
+
+    /// Inside HTML `<code>`, where shortcodes stay text.
+    fn in_code(&self) -> bool {
+        self.open.iter().any(|opened| opened.name == "code")
     }
 
     /// The innermost open link's address.
@@ -178,11 +198,10 @@ fn close(text: &mut Inline, opened: &Opened, end: usize) {
 /// `markdown` as blocks.
 pub fn parse(markdown: &str) -> Vec<Node> {
     let root = tree(markdown);
-    let mut out = Vec::new();
-    Reader::new(markdown, &root).blocks(
-        root.children().expect("the root holds the blocks"),
-        &mut out,
-    );
+    let (reader, mut out) = (Reader::new(markdown, &root), Vec::new());
+    for node in root.children().expect("the root holds the blocks") {
+        reader.top(node, &mut out);
+    }
     out
 }
 
@@ -191,7 +210,7 @@ impl<'a> Reader<'a> {
     pub(crate) fn new(source: &'a str, root: &mdast::Node) -> Self {
         let mut nodes = Vec::new();
         walk(root, &mut nodes);
-        let (mut urls, mut notes) = (HashMap::new(), HashMap::new());
+        let (mut urls, mut notes, mut headings) = (HashMap::new(), HashMap::new(), Vec::new());
         for node in nodes {
             match node {
                 mdast::Node::Definition(definition) => {
@@ -202,14 +221,25 @@ impl<'a> Reader<'a> {
                     let next = notes.len() + 1;
                     notes.entry(note.identifier.clone()).or_insert(next);
                 }
+                mdast::Node::Heading(heading) => headings.push((heading, span(node).start)),
                 _ => {}
             }
         }
-        Self {
+        let mut reader = Self {
             source,
             urls,
             notes,
-        }
+            headings: Vec::new(),
+        };
+        reader.headings = headings
+            .into_iter()
+            .map(|(heading, at)| DocumentHeading {
+                depth: heading.depth,
+                title: reader.inline(&heading.children).text,
+                at,
+            })
+            .collect();
+        reader
     }
 
     fn blocks(&self, nodes: &[mdast::Node], out: &mut Vec<Node>) {
@@ -293,7 +323,10 @@ impl<'a> Reader<'a> {
                 },
                 body: self.nested(&note.children),
             }),
-            mdast::Node::Html(_) | mdast::Node::Definition(_) => {}
+            mdast::Node::Html(html) => self.html_block(&html.value, out),
+            mdast::Node::Yaml(yaml) => out.push(Node::FrontMatter(yaml.value.clone())),
+            mdast::Node::Toml(toml) => out.push(Node::FrontMatter(toml.value.clone())),
+            mdast::Node::Definition(_) => {}
             other => unreachable!("{other:?} is no block outside MDX"),
         }
     }
@@ -325,8 +358,7 @@ impl<'a> Reader<'a> {
         let text = &mut run.text;
         let (children, (name, style), url) = match node {
             mdast::Node::Text(words) => {
-                let code = run.open.iter().any(|opened| opened.name == "code");
-                let shown = match run.verbatim || code {
+                let shown = match run.verbatim || run.in_code() {
                     true => words.value.clone(),
                     false => html::emoji(&words.value),
                 };
