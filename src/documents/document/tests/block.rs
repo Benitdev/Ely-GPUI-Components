@@ -9,7 +9,7 @@ use crate::documents::{
 };
 
 /// `marked` after `command`: `‸` is the caret, `⟨…⟩` the selection.
-fn ran(marked: &str, command: BlockCommand) -> Result<String, EditRefusal> {
+pub(super) fn ran(marked: &str, command: BlockCommand) -> Result<String, EditRefusal> {
     let caret = marked.find('‸');
     let text: String = marked.chars().filter(|ch| !"‸⟨⟩".contains(*ch)).collect();
     let selection = match caret {
@@ -35,12 +35,12 @@ fn ran(marked: &str, command: BlockCommand) -> Result<String, EditRefusal> {
     })
 }
 
-fn ok(marked: &str, command: BlockCommand) -> String {
+pub(super) fn ok(marked: &str, command: BlockCommand) -> String {
     ran(marked, command).expect("ran")
 }
 
 /// The top-level blocks `text` reads as.
-fn kinds(text: &str) -> Vec<&'static str> {
+pub(super) fn kinds(text: &str) -> Vec<&'static str> {
     let text: String = text.chars().filter(|ch| !"‸⟨⟩".contains(*ch)).collect();
     let root = file_tree(&text);
     let kids = root.children().map(Vec::as_slice).unwrap_or_default();

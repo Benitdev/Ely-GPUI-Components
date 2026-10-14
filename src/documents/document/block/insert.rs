@@ -235,7 +235,7 @@ pub(super) fn paragraph(here: &Here, before: bool) -> Result<Change, EditRefusal
     if before {
         let mut edits = Vec::new();
         let mut shift = 0;
-        if here.joins_before(&whole, None) {
+        if here.joins_before(&whole, &[]) {
             let line = line_start(text, whole.start);
             let blank = format!("{}{}", room.blank, room.nl);
             shift = blank.len();
@@ -287,7 +287,6 @@ pub(super) fn delete(here: &Here) -> Result<Change, EditRefusal> {
         ix -= 1;
     }
     let whole = span(here.path[ix]);
-    let outer = here.containers(ix);
     let line = line_start(text, whole.start);
     if !text[line..whole.start]
         .chars()
@@ -295,13 +294,23 @@ pub(super) fn delete(here: &Here) -> Result<Change, EditRefusal> {
     {
         return Ok(placed(vec![(whole.clone(), String::new())], whole.start));
     }
+    // Containers wholly on the lines go too.
+    let last = line_end(text, whole.end);
+    let top = (1..=ix)
+        .find(|j| {
+            let held = span(here.path[*j]);
+            line <= held.start && held.end <= last
+        })
+        .expect("the block lies on its lines");
+    let gone = &here.path[top..=ix];
+    let outer = here.containers(top);
     let mut end = next_line(text, whole.end).unwrap_or(text.len());
     let blank_above = prev_line(text, line).is_none_or(|prev| !text_on(text, prev, &outer));
     if blank_above && end < text.len() && !text_on(text, end, &outer) {
         end = next_line(text, end).unwrap_or(text.len());
     }
     // Neighbors that would join keep a blank line between.
-    let joins = here.joins_before(&whole, None) && here.joins_after(&whole);
+    let joins = here.joins_before(&whole, gone) && here.joins_after(&whole);
     let with = match joins {
         true => format!("{}{}", prefix(text, &outer).trim_end(), eol(text)),
         false => String::new(),

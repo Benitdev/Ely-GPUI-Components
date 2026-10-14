@@ -6,7 +6,7 @@ use markdown::mdast::{List, Node};
 
 use super::{
     BlockCommand, Here, change, column, eol, indent, inside, line_end, line_start, next_line,
-    opener, prefix,
+    opener, prefix, refusal,
 };
 use crate::documents::{
     document::format::{Change, EditRefusal},
@@ -68,7 +68,7 @@ pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefu
                     1
                 };
                 let outer = here.containers(ix - 1);
-                retype(here.text, path[ix - 1], list, &outer, command, start)
+                retype(here.text, path[ix - 1], list, &outer, command, start)?
             }
         };
         return Ok(change(edits, caret));
@@ -83,7 +83,7 @@ pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefu
         return Ok(change(vec![(at..at, marker(command, 1, '-'))], caret));
     }
     let (k, blocks) = here.blocks().ok_or(EditRefusal::Outside)?;
-    Ok(change(wrap(here, k, &blocks, command), caret))
+    Ok(change(wrap(here, k, &blocks, command)?, caret))
 }
 
 /// Indent from `at` to column `want`: its end, columns past.
@@ -135,7 +135,7 @@ fn unwrap(here: &Here, ix: usize, list: &List) -> Vec<(Range<usize>, String)> {
         let start = span(item).start;
         let line = line_start(text, start);
         let joins = match n {
-            0 => here.joins_before(&whole, Some(here.path[ix])),
+            0 => here.joins_before(&whole, &[here.path[ix]]),
             _ => prev_text(text, line, &outer),
         };
         if joins {
@@ -170,7 +170,7 @@ fn prev_text(text: &str, line: usize, outer: &[&Node]) -> bool {
     })
 }
 
-/// Every item's marker as `kind`'s from `start`, lines moved to match.
+/// Each marker as `kind`'s from `start`; lines follow.
 fn retype(
     text: &str,
     node: &Node,
@@ -178,36 +178,58 @@ fn retype(
     outer: &[&Node],
     kind: BlockCommand,
     start: u32,
-) -> Vec<(Range<usize>, String)> {
+) -> Result<Vec<(Range<usize>, String)>, EditRefusal> {
     let bullet = match list.ordered {
         true => '-',
         false => text[span(node).start..].chars().next().unwrap_or('-'),
     };
     let mut edits = Vec::new();
+    let task = kind == BlockCommand::TaskList;
     for (n, item) in list.children.iter().enumerate() {
         let number = start + n as u32;
         let at = span(item).start;
         let (mark, spaces) = super::marker(text, item);
-        let first = item.children().and_then(|kids| kids.first()).map(span);
+        let first = item.children().and_then(|kids| kids.first());
         let boxed = matches!(item, Node::ListItem(item) if item.checked.is_some());
-        let inline = first.filter(|kid| !text[at..kid.start].contains(['\n', '\r']));
-        // A box stays when the kind keeps boxes.
-        let (end, written) = match inline {
-            Some(_) if boxed && kind == BlockCommand::TaskList => {
-                (at + mark + spaces, format!("{bullet} "))
+        let body = at + mark + spaces;
+        let blank = body == line_end(text, at);
+        if boxed {
+            // A box stays when the kind keeps boxes.
+            let kind = if task { BlockCommand::BulletList } else { kind };
+            let end = if blank { opener(text, item) } else { body };
+            edits.push((at..end, marker(kind, number, bullet)));
+            if !task {
+                let kid = span(first.expect("a boxed item has text")).start;
+                let line = line_start(text, kid);
+                let mark = line + text[line..kid].rfind('[').expect("a task's box");
+                edits.push((mark..kid, String::new()));
             }
-            Some(kid) if boxed => (kid.start, marker(kind, number, bullet)),
-            // Spaces past the marker's own are the text's.
-            _ => (opener(text, item), marker(kind, number, bullet)),
-        };
-        edits.push((at..end, written));
+        } else if task && let Some(kid) = first.filter(|kid| !matches!(kid, Node::Paragraph(_))) {
+            // GFM boxes only a paragraph.
+            return Err(refusal(kid));
+        } else if blank {
+            edits.push((at..opener(text, item), marker(kind, number, bullet)));
+        } else {
+            // Indented code is written again from its value.
+            let fence = ["```", "~~~"]
+                .iter()
+                .any(|fence| text[body..].starts_with(fence));
+            let pad = match first {
+                Some(Node::Code(code)) if !fence => {
+                    let line = code.value.lines().next().unwrap_or_default();
+                    4 + line.len() - line.trim_start().len()
+                }
+                _ => 0,
+            };
+            edits.push((at..body, marker(kind, number, bullet) + &" ".repeat(pad)));
+        }
         let want = column(text, at) + width(kind, number);
         for (from, cut, past) in continued(text, item, outer) {
             let pad = want.saturating_sub(column(text, from)) + past;
             edits.push((from..cut, " ".repeat(pad)));
         }
     }
-    edits
+    Ok(edits)
 }
 
 /// Each paragraph line, and each other block, made an item.
@@ -216,7 +238,7 @@ fn wrap(
     k: usize,
     blocks: &[&Node],
     command: BlockCommand,
-) -> Vec<(Range<usize>, String)> {
+) -> Result<Vec<(Range<usize>, String)>, EditRefusal> {
     let text = here.text;
     let outer = here.containers(k + 1);
     let lead = prefix(text, &outer);
@@ -225,10 +247,13 @@ fn wrap(
     for block in blocks {
         if let Node::List(list) = block {
             if kind(list) != command {
-                edits.extend(retype(text, block, list, &outer, command, n));
+                edits.extend(retype(text, block, list, &outer, command, n)?);
             }
             n += list.children.len() as u32;
             continue;
+        }
+        if command == BlockCommand::TaskList && !matches!(block, Node::Paragraph(_)) {
+            return Err(refusal(block));
         }
         let whole = span(block);
         let mut line = line_start(text, whole.start);
@@ -264,5 +289,5 @@ fn wrap(
             }
         }
     }
-    edits
+    Ok(edits)
 }

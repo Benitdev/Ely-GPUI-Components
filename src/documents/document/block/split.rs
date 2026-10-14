@@ -1,10 +1,13 @@
-//! A paragraph or heading split at the caret, as Typora's `splitAt`.
+//! A paragraph or heading split, as Typora's `splitAt`.
 
 use std::ops::Range;
 
 use markdown::mdast::Node;
 
-use super::{Here, inside, line_end, line_start, next_line, placed, prev_line, task_head};
+use super::{
+    Here, check, closing, inside, line_end, line_start, next_line, placed, prev_line, shifted,
+    task_head, unblocked,
+};
 use crate::documents::{
     document::format::{Change, EditRefusal, marks},
     markdown::span,
@@ -66,7 +69,7 @@ fn sealed(node: &Node) -> bool {
     )
 }
 
-/// `at` off inline edges; the marks to close and to reopen.
+/// `at` off inline edges; marks to close, then reopen.
 fn seam(here: &Here, mut at: usize) -> Result<(usize, String, String), EditRefusal> {
     let text = here.text;
     let marked: Vec<(&Node, [Range<usize>; 2])> = (here.nodes.iter())
@@ -165,12 +168,61 @@ pub(super) fn split(
     }
     let mut edits = Vec::new();
     let mut shift = 0;
-    if !before && here.joins_before(&whole, None) {
+    if !before && here.joins_before(&whole, &[]) {
         let line = line_start(text, whole.start);
         let blank = format!("{}{}", room.blank, room.nl);
         shift = blank.len();
         edits.push((line..line, blank));
     }
     edits.push((from..to, written));
-    Ok(placed(edits, from + shift + caret))
+    // A heading's cut end must not close it.
+    let line = line_start(text, from);
+    if before
+        && close.is_empty()
+        && matches!(node, Node::Heading(_))
+        && let Some(run) = closing(&text[line..from])
+    {
+        edits.push((line + run..line + run, "\\".to_string()));
+        shift += 1;
+    }
+    // The rest must not open a block.
+    if follows
+        && marks.is_empty()
+        && open.is_empty()
+        && let Some(mark) = unblocked(&text[after..line_end(text, after)])?
+    {
+        edits.push((after + mark..after + mark, "\\".to_string()));
+    }
+    let change = placed(edits, from + shift + caret);
+    let edits = &change.0;
+    let after_root = check::reread(text, edits);
+    let level = match node {
+        Node::Heading(heading) => heading.depth,
+        _ => 0,
+    };
+    let piece = |at: usize| {
+        check::block_at(&after_root, shifted(at, edits))
+            .and_then(|(got, chars)| (got == level).then_some(chars))
+    };
+    let head = if before {
+        piece(from - 1)
+    } else {
+        Some(Vec::new())
+    };
+    let tail = if follows { piece(to) } else { Some(Vec::new()) };
+    let want = check::styled(node);
+    let kept = head
+        .zip(tail)
+        .is_some_and(|(head, tail)| match here.selection.is_empty() {
+            true => [head, tail].concat() == want,
+            false => {
+                want.starts_with(&head)
+                    && want.ends_with(&tail)
+                    && head.len() + tail.len() <= want.len()
+            }
+        });
+    match kept {
+        true => Ok(change),
+        false => Err(check::misread("a split would reread otherwise")),
+    }
 }

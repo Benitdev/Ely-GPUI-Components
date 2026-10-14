@@ -1,5 +1,6 @@
 //! Block commands at the caret, as Typora's Paragraph menu (R4.7).
 
+mod check;
 mod heading;
 mod insert;
 mod list;
@@ -139,7 +140,7 @@ impl<'a> Here<'a> {
     }
 
     /// Whether a paragraph ending on the line before joins `block`.
-    pub(super) fn joins_before(&self, block: &Range<usize>, gone: Option<&Node>) -> bool {
+    pub(super) fn joins_before(&self, block: &Range<usize>, gone: &[&Node]) -> bool {
         let line = line_start(self.text, block.start);
         let Some(previous) = prev_line(self.text, line) else {
             return false;
@@ -164,13 +165,13 @@ impl<'a> Here<'a> {
                     _ => false,
                 }
         });
-        starts && !self.opens(next, None)
+        starts && !self.opens(next, &[])
     }
 
     /// Whether `line` opens a container that stays and interrupts.
-    fn opens(&self, line: usize, gone: Option<&Node>) -> bool {
+    fn opens(&self, line: usize, gone: &[&Node]) -> bool {
         let on = |node: &Node| line_start(self.text, span(node).start) == line;
-        let left = |node: &Node| gone.is_none_or(|gone| !std::ptr::eq(gone, node));
+        let left = |node: &Node| !gone.iter().any(|gone| std::ptr::eq(*gone, node));
         (self.nodes.iter()).any(|node| match node {
             Node::List(list) if left(node) => list
                 .children
@@ -195,6 +196,32 @@ pub(super) fn task_head(holder: &Node, node: &Node) -> bool {
     matches!(holder, Node::ListItem(item)
         if item.checked.is_some()
             && item.children.first().is_some_and(|kid| std::ptr::eq(kid, node)))
+}
+
+/// Where a heading-closing `#` run starts in `line`.
+pub(super) fn closing(line: &str) -> Option<usize> {
+    let line = line.trim_end_matches([' ', '\t']);
+    let kept = line.trim_end_matches('#');
+    (kept.len() < line.len() && kept.ends_with([' ', '\t'])).then_some(kept.len())
+}
+
+/// The byte to escape so `line` reads as prose.
+pub(super) fn unblocked(line: &str) -> Result<Option<usize>, EditRefusal> {
+    let prose = |line: &str| {
+        let root = file_tree(line);
+        matches!(
+            root.children().and_then(|kids| kids.first()),
+            Some(Node::Paragraph(_))
+        )
+    };
+    if prose(line) {
+        return Ok(None);
+    }
+    let mark = line.find(|ch: char| ch.is_ascii_punctuation());
+    match mark.filter(|mark| prose(&format!("{}\\{}", &line[..*mark], &line[*mark..]))) {
+        Some(mark) => Ok(Some(mark)),
+        None => Err(check::misread("a line stays a block")),
+    }
 }
 
 /// Whether the path goes on below `node`.

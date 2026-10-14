@@ -4,7 +4,10 @@ use std::ops::Range;
 
 use markdown::mdast::Node;
 
-use super::{Here, change, eol, inside, line_end, line_start, next_line, prefix, task_head};
+use super::{
+    Here, change, check, eol, inside, line_end, line_start, next_line, prefix, split::content,
+    task_head,
+};
 use crate::documents::{
     alert,
     document::format::{Change, EditRefusal},
@@ -20,7 +23,7 @@ pub(super) fn run(here: &Here) -> Result<Change, EditRefusal> {
     if let Node::Blockquote(_) = here.path[ix]
         && whole(here, ix)
     {
-        return Ok(change(unwrap(here, ix), caret));
+        return unwrap(here, ix).map(|edits| change(edits, caret));
     }
     if here.leaf().is_none() && here.selection.is_empty() {
         if !here.blank() {
@@ -55,7 +58,7 @@ fn whole(here: &Here, ix: usize) -> bool {
 }
 
 /// One `>` off each line of the quote at `ix`.
-fn unwrap(here: &Here, ix: usize) -> Vec<(Range<usize>, String)> {
+fn unwrap(here: &Here, ix: usize) -> Result<Vec<(Range<usize>, String)>, EditRefusal> {
     let text = here.text;
     let quote = here.path[ix];
     let whole = span(quote);
@@ -63,21 +66,37 @@ fn unwrap(here: &Here, ix: usize) -> Vec<(Range<usize>, String)> {
     let blank = format!("{}{}", prefix(text, &outer).trim_end(), eol(text));
     let mut edits = Vec::new();
     let mut line = line_start(text, whole.start);
-    if here.joins_before(&whole, Some(quote)) {
+    if here.joins_before(&whole, &[quote]) {
         edits.push((line..line, blank.clone()));
     }
     if let Node::Blockquote(inner) = quote
         && alert(inner).is_some()
     {
-        // The marker goes; an outer opener stays.
-        let next = next_line(text, line).filter(|next| *next < whole.end);
-        let (cut, rest) = match next {
-            Some(next) => match mark(text, next, &outer) {
-                Some(mark) => (mark.end, next_line(text, next).unwrap_or(text.len())),
-                None => (next, next),
-            },
-            None => (line_end(text, line), whole.end),
-        };
+        let head = text[whole.start + 1..line_end(text, line)].trim();
+        let name = head
+            .strip_prefix("[!")
+            .and_then(|head| head.strip_suffix(']'));
+        if !name
+            .is_some_and(|name| !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphabetic()))
+        {
+            return Err(check::misread("an alert marker shares its line"));
+        }
+        // The marker goes with blank lines; an outer opener stays.
+        let (mut cut, mut rest) = (whole.end, whole.end);
+        let mut next = next_line(text, line);
+        while let Some(at) = next.filter(|at| *at < whole.end) {
+            let body = match mark(text, at, &outer) {
+                Some(mark) => mark.end,
+                None => content(text, at, &outer),
+            };
+            let body =
+                body + text[body..].len() - text[body..].trim_start_matches([' ', '\t']).len();
+            if body < line_end(text, at) {
+                (cut, rest) = (body, next_line(text, at).unwrap_or(text.len()));
+                break;
+            }
+            next = next_line(text, at);
+        }
         edits.push((whole.start..cut, String::new()));
         line = rest;
     }
@@ -94,7 +113,7 @@ fn unwrap(here: &Here, ix: usize) -> Vec<(Range<usize>, String)> {
         let next = next_line(text, whole.end).expect("a joining line follows");
         edits.push((next..next, blank.clone()));
     }
-    edits
+    Ok(edits)
 }
 
 /// `line`'s `>` and one space after, inside `outer`.

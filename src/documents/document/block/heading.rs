@@ -5,12 +5,12 @@ use std::ops::Range;
 use markdown::mdast::Node;
 
 use super::{
-    BlockCommand, Here, change, eol, insert, inside, line_end, line_start, next_line, prefix,
-    refusal,
+    BlockCommand, Here, change, check, closing, eol, insert, inside, line_end, line_start,
+    next_line, prefix, prev_line, refusal, unblocked,
 };
 use crate::documents::{
     document::format::{Change, EditRefusal},
-    markdown::{file_tree, span},
+    markdown::span,
 };
 
 /// The level `command` asks at `level`; 0 is a paragraph.
@@ -64,7 +64,15 @@ pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefu
         (_, 0) => to_paragraph(here, node, &containers)?,
         _ => relevel(here, node, &containers, goal),
     };
-    Ok(change(edits, caret))
+    let change = change(edits, caret);
+    // Every shown character stays; the caret's block is `goal`.
+    let after = check::reread(text, &change.0);
+    let kept = check::styled(&after) == check::styled(here.root)
+        && check::block_at(&after, change.1.start).is_some_and(|(level, _)| level == goal);
+    match kept {
+        true => Ok(change),
+        false => Err(check::misread("a heading change would reread otherwise")),
+    }
 }
 
 /// Whether `node` is an ATX heading, `#` led.
@@ -77,36 +85,6 @@ fn task_head(here: &Here, whole: &Range<usize>) -> bool {
     let first = line_start(here.text, whole.start) == line_start(here.text, here.selection.start);
     let leaf = here.path[here.path.len() - 1];
     first && super::task_head(here.path[here.path.len() - 2], leaf)
-}
-
-/// Where a `#` run that would close the heading starts.
-fn closing(text: &str, at: usize) -> Option<usize> {
-    let line = text[at..line_end(text, at)].trim_end_matches([' ', '\t']);
-    let kept = line.trim_end_matches('#');
-    (kept.len() < line.len() && kept.ends_with([' ', '\t'])).then(|| at + kept.len())
-}
-
-/// The byte to escape if `at`'s line would open a block.
-fn opener(text: &str, at: usize) -> Result<Option<usize>, EditRefusal> {
-    let line = &text[at..line_end(text, at)];
-    let prose = |line: &str| {
-        let root = file_tree(line);
-        matches!(
-            root.children().and_then(|kids| kids.first()),
-            Some(Node::Paragraph(_))
-        )
-    };
-    if prose(line) {
-        return Ok(None);
-    }
-    let mark = line.find(|ch: char| ch.is_ascii_punctuation());
-    match mark.filter(|mark| prose(&format!("{}\\{}", &line[..*mark], &line[*mark..]))) {
-        Some(mark) => Ok(Some(at + mark)),
-        None => {
-            log::warn!("block command: a heading's text stays a block");
-            Err(EditRefusal::Outside)
-        }
-    }
 }
 
 /// The caret's line led by `hashes`; lazy lines kept in.
@@ -135,8 +113,8 @@ fn to_heading(
         };
         if line == first {
             edits.push((at..at, format!("{lazy}{hashes}")));
-            if let Some(run) = closing(text, at) {
-                edits.push((run..run, "\\".to_string()));
+            if let Some(run) = closing(&text[at..line_end(text, at)]) {
+                edits.push((at + run..at + run, "\\".to_string()));
             }
         } else if !lazy.is_empty() {
             edits.push((at..at, lazy.to_string()));
@@ -159,7 +137,7 @@ fn to_paragraph(
     let whole = span(node);
     let blank = format!("{}{}", prefix(text, containers).trim_end(), eol(text));
     let mut edits = Vec::new();
-    if here.joins_before(&whole, None) {
+    if here.joins_before(&whole, &[]) {
         let line = line_start(text, whole.start);
         edits.push((line..line, blank.clone()));
     }
@@ -169,8 +147,10 @@ fn to_paragraph(
             (Some(first), Some(last)) => {
                 let start = span(first).start;
                 edits.push((whole.start..start, String::new()));
-                if let Some(mark) = opener(text, start)? {
-                    edits.push((mark..mark, "\\".to_string()));
+                // The body kept: closing hashes go.
+                let end = line_end(text, start).min(span(last).end);
+                if let Some(mark) = unblocked(&text[start..end])? {
+                    edits.push((start + mark..start + mark, "\\".to_string()));
                 }
                 edits.push((span(last).end..whole.end, String::new()));
             }
@@ -224,6 +204,10 @@ fn relevel(
         let from = from + text[from..].len() - text[from..].trim_start_matches([' ', '\t']).len();
         edits.push((end..from, " ".to_string()));
         line = next;
+    }
+    let last = prev_line(text, under).expect("a setext heading has text");
+    if let Some(run) = closing(&text[last..line_end(text, last)]) {
+        edits.push((last + run..last + run, "\\".to_string()));
     }
     let ending = text[..under].len() - text[..under].trim_end_matches(['\r', '\n']).len();
     edits.push((under - ending.min(2)..whole.end, String::new()));

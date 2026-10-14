@@ -48,6 +48,8 @@ pub enum EditRefusal {
     Busy,
     /// The text changed before the edit was read.
     Changed,
+    /// The result would read as other text or blocks.
+    Misread,
 }
 
 /// The edits and the selection after them.
