@@ -377,6 +377,7 @@ mod place;
 mod point;
 mod presses;
 mod reading;
+mod secondary;
 mod toc;
 mod tools;
 

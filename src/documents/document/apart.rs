@@ -7,7 +7,7 @@ use gpui::{AppContext as _, Context};
 use super::{
     DocumentEvent, LARGEST_READ, MarkdownDocument,
     block::{self, BlockCommand, settled},
-    format::{Change, EditRefusal, InlineFormat, toggle},
+    format::{Change, EditRefusal, InlineFormat, drop_image, toggle},
     tables::{self, TableEdit},
 };
 use crate::documents::{MarkdownMode, modes::joint};
@@ -27,6 +27,11 @@ impl MarkdownDocument {
             move |full, selection| toggle(full, selection, format),
             cx,
         )
+    }
+
+    /// Removes the picture at the caret, read apart.
+    pub fn delete_image(&mut self, cx: &mut Context<Self>) -> Result<(), EditRefusal> {
+        self.apart("delete image".to_string(), drop_image, cx)
     }
 
     /// `command` at the caret, read apart; refusals by event.
@@ -107,7 +112,7 @@ impl MarkdownDocument {
     }
 
     /// The text an edit reads: the open block's in place.
-    fn snapshot(&self, cx: &Context<Self>) -> Snapshot {
+    pub(super) fn snapshot(&self, cx: &Context<Self>) -> Snapshot {
         let text = self.editor.read(cx).text();
         let Some(open) = &self.open else {
             let picked = self.editor.read(cx).primary().range();

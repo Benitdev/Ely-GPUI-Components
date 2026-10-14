@@ -335,6 +335,12 @@ impl CodeEditor {
                     editor.press(line, event, window, cx)
                 }),
             )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |editor, event: &MouseDownEvent, window, cx| {
+                    editor.secondary_press(line, event, window, cx)
+                }),
+            )
             .on_mouse_move(cx.listener(move |editor, event: &MouseMoveEvent, _, cx| {
                 editor.drag(line, event, cx)
             }));
@@ -390,6 +396,27 @@ impl CodeEditor {
             }
         };
         self.set_selections(chosen, cx);
+    }
+
+    /// A right press keeps a selection it lands in.
+    pub(crate) fn secondary_press(
+        &mut self,
+        line: usize,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        window.focus(&self.focus, cx);
+        let Some(at) = self.offset_in(line, event.position.x, cx) else {
+            return;
+        };
+        let held = (self.selections.iter()).any(|selection| {
+            let range = selection.range();
+            !range.is_empty() && (range.start..=range.end).contains(&at)
+        });
+        if !held {
+            self.set_selections(vec![Selection::caret(at)], cx);
+        }
     }
 
     /// A drag over a line stretches the primary selection to where the pointer is.

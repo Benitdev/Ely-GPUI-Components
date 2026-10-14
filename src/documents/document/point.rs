@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
-use gpui::{Context, MouseButton, Window};
+use gpui::{AppContext as _, Context, MouseButton, Window};
 use markdown::mdast;
 
 use super::{DocumentEvent, MarkdownDocument, edit::Landing, edit::moved, parse::Block};
 use crate::documents::{
+    markdown::{file_tree, span, walk},
     render::{OnPoint, Place, Pointed},
     tree::{Node, alert, is_toc, lines_at},
 };
@@ -54,7 +55,7 @@ impl TargetBlock {
 /// What a secondary press landed on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentTarget {
-    /// The source byte the caret went to.
+    /// The caret's source byte; an open block's as unwritten.
     pub at: usize,
     /// None past the last block.
     pub block: Option<TargetBlock>,
@@ -159,5 +160,78 @@ impl MarkdownDocument {
             code,
         }));
         cx.notify();
+    }
+
+    /// A right press in the open block; it stays open.
+    pub(super) fn point_open(&mut self, cx: &mut Context<Self>) {
+        if self.open.is_none() {
+            return log::warn!("markdown document: a press on a block closed since");
+        }
+        let taken = self.snapshot(cx);
+        let (full, _, selection) = taken.clone();
+        cx.spawn(async move |document, cx| {
+            let target = cx
+                .background_spawn(async move { target_at(&full, selection.start) })
+                .await;
+            document
+                .update(cx, |document, cx| {
+                    if document.open.is_none() || document.snapshot(cx) != taken {
+                        return log::info!("markdown document: the pressed block changed first");
+                    }
+                    log::info!("markdown document: a secondary press in the open block");
+                    cx.emit(DocumentEvent::Pointed(target));
+                })
+                .ok();
+        })
+        .detach();
+    }
+}
+
+/// What byte `at` of `text` holds.
+fn target_at(text: &str, at: usize) -> DocumentTarget {
+    let root = file_tree(text);
+    let mut nodes = Vec::new();
+    walk(&root, &mut nodes);
+    let block = (root
+        .children()
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+        .iter())
+    .find(|node| span(node).start <= at && at <= span(node).end)
+    .map(|node| TargetBlock::of(node, text));
+    let around: Vec<&mdast::Node> = (nodes.iter().copied())
+        .filter(|node| span(node).contains(&at))
+        .collect();
+    let defined = |identifier: &str| {
+        nodes.iter().find_map(|node| match node {
+            mdast::Node::Definition(definition) if definition.identifier == identifier => {
+                Some(definition.url.clone())
+            }
+            _ => None,
+        })
+    };
+    let link = around.iter().rev().find_map(|node| match node {
+        mdast::Node::Link(link) => Some(link.url.clone()),
+        mdast::Node::LinkReference(link) => defined(&link.identifier),
+        _ => None,
+    });
+    let image = around.iter().rev().find_map(|node| match node {
+        mdast::Node::Image(picture) => Some(picture.url.clone()),
+        mdast::Node::ImageReference(picture) => defined(&picture.identifier),
+        _ => None,
+    });
+    let code = around.iter().find_map(|node| match node {
+        mdast::Node::Code(code) => Some(code.value.clone()),
+        _ => None,
+    });
+    DocumentTarget {
+        at,
+        block,
+        link,
+        image,
+        in_table: around
+            .iter()
+            .any(|node| matches!(node, mdast::Node::Table(_))),
+        code,
     }
 }

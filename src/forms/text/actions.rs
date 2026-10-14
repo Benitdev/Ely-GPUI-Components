@@ -343,6 +343,25 @@ impl TextInput {
         }
     }
 
+    /// A right press keeps a selection it lands in.
+    fn secondary_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.disabled {
+            return;
+        }
+        window.focus(&self.focus, cx);
+        let at = self.offset_for_point(event.position);
+        let held =
+            !self.selection.is_empty() && (self.selection.start..=self.selection.end).contains(&at);
+        if !held {
+            self.move_to(at, cx);
+        }
+    }
+
     fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.selecting && event.dragging() {
             let at = self.offset_for_point(event.position);
@@ -405,6 +424,7 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::submit))
             .on_action(cx.listener(Self::show_character_palette))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::secondary_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::mouse_up))

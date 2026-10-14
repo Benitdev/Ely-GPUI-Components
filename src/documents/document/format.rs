@@ -40,6 +40,8 @@ pub enum EditRefusal {
     Outside,
     /// A table holds the caret.
     Table,
+    /// No picture holds the caret.
+    NoImage,
     /// Front matter is there already.
     Present,
     /// The selection crosses a block or another mark.
@@ -58,6 +60,23 @@ pub enum EditRefusal {
 
 /// The edits and the selection after them.
 pub(super) type Change = (Vec<(Range<usize>, String)>, Range<usize>);
+
+/// Removes the picture at the caret, as Typora's Delete Image.
+pub(super) fn drop_image(text: &str, selection: Range<usize>) -> Result<Change, EditRefusal> {
+    let root = file_tree(text);
+    let mut nodes = Vec::new();
+    walk(&root, &mut nodes);
+    let at = selection.start;
+    let picture = (nodes.iter())
+        .filter(|node| matches!(node, Node::Image(_) | Node::ImageReference(_)))
+        .map(|node| span(node))
+        .find(|range| range.contains(&at))
+        .ok_or(EditRefusal::NoImage)?;
+    Ok((
+        vec![(picture.clone(), String::new())],
+        picture.start..picture.start,
+    ))
+}
 
 /// Typora's word stops: punctuation and space.
 fn stop(ch: char) -> bool {
