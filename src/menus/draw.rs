@@ -1,6 +1,6 @@
 use gpui::{
     AnyElement, App, Div, ElementId, Entity, FontWeight, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Stateful, Styled, div, prelude::*,
+    MouseButton, ParentElement, Role, SharedString, Stateful, Styled, div, prelude::*,
 };
 
 use super::{
@@ -10,7 +10,7 @@ use super::{
 use crate::{
     forms::{Run, surface},
     navigation::marked,
-    primitives::{Icon, IconName},
+    primitives::{Icon, IconName, Tooltip},
     theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize},
     typography::KbdCombo,
 };
@@ -82,6 +82,50 @@ fn row(item: &MenuItem, ix: usize, current: bool, cx: &App) -> Stateful<Div> {
         })
 }
 
+/// Button `column` of row `ix`, named by its label.
+fn button(item: &MenuItem, ix: usize, column: usize, current: bool, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let fg = match (item.disabled, current) {
+        (true, _) => colors.fg_disabled,
+        (false, true) => colors.fg,
+        (false, false) => colors.fg_muted,
+    };
+    let (label, keys) = (item.label.clone(), item.keys.clone());
+    let icon = item.icon.expect("a menu button has its icon");
+    div()
+        .id((SharedString::from(format!("button-{ix}")), column))
+        .debug_selector(move || format!("menu-button-{ix}-{column}"))
+        .role(Role::Button)
+        .aria_label(item.label.clone())
+        .flex_1()
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(theme.control_height(ControlSize::Md))
+        .rounded(theme.radius(Radius::Md))
+        .border_1()
+        .border_color(colors.border)
+        .when(current && !item.disabled, |button| button.bg(colors.hover))
+        .when(!item.disabled, |button| button.cursor_pointer())
+        .child(Icon::new(icon).size(IconSize::Sm).color(fg))
+        .tooltip(Tooltip::rich(move |_, cx| {
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(label.clone())
+                .when_some(keys.clone(), |tip, keys| {
+                    tip.child(
+                        div()
+                            .text_color(cx.theme().colors.tooltip_fg.opacity(0.6))
+                            .child(KbdCombo::new(&keys)),
+                    )
+                })
+                .into_any_element()
+        }))
+}
+
 pub(super) fn panel(
     id: &ElementId,
     menu: &Menu,
@@ -111,6 +155,32 @@ pub(super) fn panel(
                 .text_color(colors.fg_subtle)
                 .child(title.clone())
                 .into_any_element(),
+            Entry::Buttons(buttons) => div()
+                .flex()
+                .gap_1()
+                .py_0p5()
+                .children(buttons.iter().enumerate().map(|(column, item)| {
+                    let current = at == Some(ix) && open.levels[depth].column == column;
+                    let (hover, click, close, menu) =
+                        (state.clone(), state.clone(), close.clone(), menu.clone());
+                    let hover_menu = menu.clone();
+                    button(item, ix, column, current, cx).when(!item.disabled, |button| {
+                        button
+                            .on_mouse_move(move |_, _, cx| {
+                                let open = hover.read(cx);
+                                let marked = open.levels.get(depth).map(|l| (l.at, l.column));
+                                if marked != Some((Some(ix), column)) {
+                                    mark(&hover, &hover_menu, depth, (ix, column), false, cx);
+                                }
+                            })
+                            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                                window.prevent_default();
+                                cx.stop_propagation();
+                                choose(&click, &menu, depth, (ix, column), &close, window, cx);
+                            })
+                    })
+                }))
+                .into_any_element(),
             Entry::Item(item) => {
                 let marked = at == Some(ix);
                 let sub = matches!(item.kind, Kind::Sub(_));
@@ -126,7 +196,7 @@ pub(super) fn panel(
                             };
                             let shown = open.levels.len() > depth + 1;
                             if level.at != Some(ix) || (sub && !shown) {
-                                mark(&hover, &hover_menu, depth, ix, true, cx);
+                                mark(&hover, &hover_menu, depth, (ix, 0), true, cx);
                             }
                         })
                         .on_mouse_down(
@@ -134,7 +204,7 @@ pub(super) fn panel(
                             move |_, window, cx| {
                                 window.prevent_default();
                                 cx.stop_propagation();
-                                choose(&click, &menu, depth, ix, &close, window, cx);
+                                choose(&click, &menu, depth, (ix, 0), &close, window, cx);
                             },
                         )
                     })
@@ -151,6 +221,11 @@ pub(super) fn panel(
         });
     surface((id.clone(), format!("panel-{depth}")), cx)
         .relative()
+        // Presses here are the menu's, not its host's.
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
         .min_w(theme.menu_width())
         .p_1()
         .flex()

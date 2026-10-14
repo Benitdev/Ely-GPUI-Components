@@ -4,6 +4,7 @@ use gpui::{
     Window, div, point, prelude::*, px,
 };
 
+mod buttons;
 mod more;
 
 use super::{ContextMenu, DropdownMenu, Menu, MenuItem, SearchableMenu};

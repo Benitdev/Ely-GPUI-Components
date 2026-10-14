@@ -82,6 +82,8 @@ impl MenuItem {
 #[derive(Clone)]
 pub(super) enum Entry {
     Item(MenuItem),
+    /// Icon buttons side by side; labels name them.
+    Buttons(Vec<MenuItem>),
     Separator,
     Heading(SharedString),
 }
@@ -121,9 +123,41 @@ impl Menu {
         self
     }
 
-    pub(super) fn item_at(&self, ix: usize) -> Option<&MenuItem> {
+    /// A row of icon buttons; labels name them.
+    pub fn buttons(mut self, buttons: impl IntoIterator<Item = MenuItem>) -> Self {
+        let buttons: Vec<MenuItem> = buttons.into_iter().collect();
+        assert!(!buttons.is_empty(), "a button row holds buttons");
+        for button in &buttons {
+            assert!(
+                button.icon.is_some() && matches!(button.kind, Kind::Run),
+                "menu button {:?} needs an icon and runs",
+                button.label
+            );
+        }
+        self.entries.push(Entry::Buttons(buttons));
+        self
+    }
+
+    /// Row `ix`, or button `column` of its button row.
+    pub(super) fn item_at(&self, ix: usize, column: usize) -> Option<&MenuItem> {
         match self.entries.get(ix) {
-            Some(Entry::Item(item)) => Some(item),
+            Some(Entry::Item(item)) if column == 0 => Some(item),
+            Some(Entry::Buttons(buttons)) => buttons.get(column),
+            _ => None,
+        }
+    }
+
+    /// Where row `ix` runs nearest `column`; none if disabled.
+    pub(super) fn settled(&self, ix: usize, column: usize) -> Option<usize> {
+        match self.entries.get(ix) {
+            Some(Entry::Item(item)) if !item.disabled => Some(0),
+            Some(Entry::Buttons(buttons)) => {
+                let near = column.min(buttons.len() - 1);
+                match buttons[near].disabled {
+                    false => Some(near),
+                    true => buttons.iter().position(|button| !button.disabled),
+                }
+            }
             _ => None,
         }
     }
@@ -134,7 +168,23 @@ impl Menu {
         let mut at = from.map_or(if by > 0 { -1 } else { count }, |at| at as isize);
         for _ in 0..count {
             at = (at + by).rem_euclid(count);
-            if self.item_at(at as usize).is_some_and(|item| !item.disabled) {
+            if self.settled(at as usize, 0).is_some() {
+                return Some(at as usize);
+            }
+        }
+        None
+    }
+
+    /// Row `ix`'s next enabled button after `column`, wrapping.
+    pub(super) fn across(&self, ix: usize, column: usize, by: isize) -> Option<usize> {
+        let Some(Entry::Buttons(buttons)) = self.entries.get(ix) else {
+            return None;
+        };
+        let count = buttons.len() as isize;
+        let mut at = column as isize;
+        for _ in 0..count {
+            at = (at + by).rem_euclid(count);
+            if !buttons[at as usize].disabled {
                 return Some(at as usize);
             }
         }
@@ -149,15 +199,19 @@ impl Menu {
         let mut found: Vec<(i32, MenuItem)> = self
             .entries
             .iter()
-            .filter_map(|entry| match entry {
-                Entry::Item(item) => fuzzy(query, &item.label).map(|fit| {
+            .flat_map(|entry| match entry {
+                Entry::Item(item) => std::slice::from_ref(item),
+                Entry::Buttons(buttons) => buttons.as_slice(),
+                _ => &[],
+            })
+            .filter_map(|item| {
+                fuzzy(query, &item.label).map(|fit| {
                     let item = MenuItem {
                         hits: fit.hits,
                         ..item.clone()
                     };
                     (fit.score, item)
-                }),
-                _ => None,
+                })
             })
             .collect();
         found.sort_by(|(a, _), (b, _)| b.cmp(a));

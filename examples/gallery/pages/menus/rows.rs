@@ -211,6 +211,24 @@ pub fn hosts(window: &mut Window, cx: &mut App) -> impl IntoElement + use<> {
 pub fn context(window: &mut Window, cx: &mut App) -> impl IntoElement + use<> {
     let (last, caption) = ran("context-ran", window, cx);
     let menu = Menu::new()
+        .buttons([
+            MenuItem::new("Cut")
+                .icon(IconName::Scissors)
+                .keys("secondary-x")
+                .on_click(run(&last, "cut")),
+            MenuItem::new("Copy")
+                .icon(IconName::Copy)
+                .keys("secondary-c")
+                .on_click(run(&last, "copy")),
+            MenuItem::new("Paste")
+                .icon(IconName::Clipboard)
+                .keys("secondary-v")
+                .on_click(run(&last, "paste")),
+            MenuItem::new("Delete")
+                .icon(IconName::Trash2)
+                .disabled(true),
+        ])
+        .separator()
         .item(
             MenuItem::new("Back")
                 .icon(IconName::ArrowLeft)
@@ -242,7 +260,7 @@ pub fn context(window: &mut Window, cx: &mut App) -> impl IntoElement + use<> {
     let theme = cx.theme();
     section(
         "ContextMenu",
-        "A right click opens the menu where it lands; it stays inside the window.",
+        "A right click opens the menu where it lands; it stays inside the window. A row of icon buttons heads it; arrows cross the row.",
         cx,
     )
     .child(specimen(
