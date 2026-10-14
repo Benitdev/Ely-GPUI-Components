@@ -1,7 +1,7 @@
 use markdown::mdast;
 
 use super::{Inline, Node, Reader, Run, html};
-use crate::documents::markdown::{file_tree, span};
+use crate::documents::markdown::span;
 
 /// A heading anywhere in the file.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,7 +77,7 @@ impl Reader<'_> {
 }
 
 /// An HTML block's text, as a browser shows it.
-pub fn html_block_text(written: &str) -> Inline {
+pub(super) fn html_block_text(written: &str) -> Inline {
     let mut run = Run::default();
     let mut rest = written;
     while let Some(at) = rest.find('<') {
@@ -230,11 +230,6 @@ pub fn alert(quote: &mdast::Blockquote) -> Option<(AlertKind, Vec<mdast::Node>)>
 pub fn is_toc(node: &mdast::Node, source: &str) -> bool {
     matches!(node, mdast::Node::Paragraph(_))
         && source[span(node)].trim().eq_ignore_ascii_case("[toc]")
-}
-
-/// Every heading in `text`, as `[toc]` lists them.
-pub fn headings(text: &str) -> Vec<DocumentHeading> {
-    Reader::new(text, &file_tree(text)).headings
 }
 
 /// A plain first line naming a kind, and what follows.

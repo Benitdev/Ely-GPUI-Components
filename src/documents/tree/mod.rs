@@ -8,9 +8,9 @@ mod blocks;
 mod emoji;
 mod html;
 
-pub use blocks::{AlertKind, DocumentHeading, alert, headings, html_block_text, is_toc};
-pub use emoji::Shortcodes;
-pub use html::{InlineTag, inline_tag};
+use blocks::html_block_text;
+pub use blocks::{AlertKind, DocumentHeading, alert, is_toc};
+use html::InlineTag;
 
 /// How a stretch of inline text prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,11 +80,12 @@ pub enum Node {
 }
 
 /// A tree read against its source and its link definitions.
-pub(crate) struct Reader<'a> {
+pub struct Reader<'a> {
     source: &'a str,
     urls: HashMap<String, String>,
     /// Footnotes numbered by their first reference.
     notes: HashMap<String, usize>,
+    /// Every heading, as `[toc]` lists them.
     pub headings: Vec<DocumentHeading>,
 }
 
@@ -243,7 +244,7 @@ pub fn parse(markdown: &str) -> Vec<Node> {
 
 impl<'a> Reader<'a> {
     /// A reader of `root`, parsed from `source`.
-    pub(crate) fn new(source: &'a str, root: &mdast::Node) -> Self {
+    pub fn new(source: &'a str, root: &mdast::Node) -> Self {
         let mut nodes = Vec::new();
         walk(root, &mut nodes);
         let (mut urls, mut notes, mut headings) = (HashMap::new(), HashMap::new(), Vec::new());
@@ -298,7 +299,8 @@ impl<'a> Reader<'a> {
             .expect("a reference names a definition")
     }
 
-    pub(crate) fn block(&self, node: &mdast::Node, out: &mut Vec<Node>) {
+    /// `node`'s blocks, as the drawing reads them.
+    pub fn block(&self, node: &mdast::Node, out: &mut Vec<Node>) {
         match node {
             mdast::Node::Paragraph(paragraph) => self.paragraph(node, &paragraph.children, out),
             mdast::Node::Heading(heading) => {
@@ -350,13 +352,7 @@ impl<'a> Reader<'a> {
             }
             mdast::Node::ThematicBreak(_) => out.push(Node::Rule),
             mdast::Node::FootnoteDefinition(note) => out.push(Node::Footnote {
-                label: match self.notes.get(&note.identifier) {
-                    Some(number) => number.to_string(),
-                    None => note
-                        .label
-                        .clone()
-                        .unwrap_or_else(|| note.identifier.clone()),
-                },
+                label: self.label(note),
                 body: self.nested(&note.children),
             }),
             mdast::Node::Html(html) => text_block(html_block_text(&html.value), out),
@@ -381,8 +377,21 @@ impl<'a> Reader<'a> {
         text_block(run.cut(), out);
     }
 
+    /// A footnote's number, by its first reference.
+    pub fn note(&self, identifier: &str) -> Option<usize> {
+        self.notes.get(identifier).copied()
+    }
+
+    /// A note's label: its number, once referenced.
+    pub fn label(&self, note: &mdast::FootnoteDefinition) -> String {
+        match self.note(&note.identifier) {
+            Some(number) => number.to_string(),
+            None => note.label.clone().unwrap_or_else(|| note.identifier.clone()),
+        }
+    }
+
     /// Inline text where images draw as their alt text.
-    pub(crate) fn inline(&self, nodes: &[mdast::Node]) -> Inline {
+    pub fn inline(&self, nodes: &[mdast::Node]) -> Inline {
         let mut run = Run::default();
         for node in nodes {
             self.inline_into(node, &mut run, &mut Images::Alt);

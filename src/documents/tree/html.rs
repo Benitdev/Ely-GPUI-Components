@@ -98,7 +98,7 @@ pub(crate) fn breaks(name: &str) -> bool {
 
 /// What one inline HTML tag does, as GitHub shows it.
 #[derive(Clone, Debug, PartialEq)]
-pub enum InlineTag {
+pub(super) enum InlineTag {
     /// Opens `name`; an anchor styles only with an address.
     Open {
         name: String,
@@ -114,7 +114,7 @@ pub enum InlineTag {
 }
 
 /// What the inline HTML `written` does.
-pub fn inline_tag(written: &str) -> InlineTag {
+pub(super) fn inline_tag(written: &str) -> InlineTag {
     let Some(tag) = tag(written) else {
         return InlineTag::Gone;
     };
