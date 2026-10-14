@@ -277,7 +277,7 @@ fn a_format_lapses_when_the_text_moves(cx: &mut TestAppContext) {
 }
 
 /// The refusals a document sends by event.
-fn refusals(
+pub(super) fn refusals(
     document: &Entity<MarkdownDocument>,
     cx: &mut VisualTestContext,
 ) -> Rc<RefCell<Vec<EditRefusal>>> {

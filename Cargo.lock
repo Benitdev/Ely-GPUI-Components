@@ -1685,6 +1685,7 @@ dependencies = [
  "similar",
  "smallvec",
  "unicode-segmentation",
+ "unicode-width",
  "usvg",
  "vte",
  "wasm-bindgen",

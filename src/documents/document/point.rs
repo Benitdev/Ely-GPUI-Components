@@ -61,7 +61,8 @@ pub struct DocumentTarget {
     pub link: Option<String>,
     pub image: Option<String>,
     pub in_table: bool,
-    pub in_code: bool,
+    /// The code block's text, pressed in one.
+    pub code: Option<String>,
 }
 
 impl MarkdownDocument {
@@ -115,6 +116,12 @@ impl MarkdownDocument {
         };
         let kind = block.map(|block| block.kind);
         let pressed = block.map(|block| self.drawn(block));
+        let code = (pointed.code.as_deref().map(str::to_string)).or_else(|| {
+            match block.and_then(|block| block.nodes.as_deref()) {
+                Some([Node::Code { text, .. }]) => Some(text.clone()),
+                _ => None,
+            }
+        });
         let at = at.or(block.map(|block| block.range.start));
         let written = self.commit(cx);
         if written.is_some() {
@@ -149,7 +156,7 @@ impl MarkdownDocument {
             link: pointed.link,
             image: pointed.image,
             in_table: pointed.table || kind == Some(TargetBlock::Table),
-            in_code: pointed.code || kind == Some(TargetBlock::Code),
+            code,
         }));
         cx.notify();
     }

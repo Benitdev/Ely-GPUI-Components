@@ -8,6 +8,7 @@ use super::{
     DocumentEvent, LARGEST_READ, MarkdownDocument,
     block::{self, BlockCommand},
     format::{Change, EditRefusal, InlineFormat, toggle},
+    tables::{self, TableEdit},
 };
 use crate::documents::{MarkdownMode, modes::joint};
 
@@ -37,6 +38,21 @@ impl MarkdownDocument {
         self.apart(
             format!("block {command:?}"),
             move |full, selection| block::run(full, selection, command),
+            cx,
+        )
+    }
+
+    /// `edit` on the table at the caret, read apart.
+    pub fn edit_table(
+        &mut self,
+        edit: TableEdit,
+        cx: &mut Context<Self>,
+    ) -> Result<(), EditRefusal> {
+        self.apart(
+            format!("table edit {edit:?}"),
+            move |full, selection| {
+                tables::edit_table(full, selection.start, edit).map_err(EditRefusal::Cells)
+            },
             cx,
         )
     }

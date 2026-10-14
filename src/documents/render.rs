@@ -264,7 +264,7 @@ impl Draw<'_> {
             } => {
                 if language.as_deref() == Some("mermaid") {
                     let diagram = Diagram::new(self.key("diagram"), text.clone());
-                    return self.point_code(diagram.into_any_element(), None, *from);
+                    return self.point_code(diagram.into_any_element(), None, text, *from);
                 }
                 if let Some(draw) = self.code {
                     return draw(
@@ -299,7 +299,7 @@ impl Draw<'_> {
                     }))
                     .child(code)
                     .into_any_element();
-                self.point_code(block, Some((layout, text)), *from)
+                self.point_code(block, Some(layout), text, *from)
             }
             Node::List { start, items } => self.list(start, items, cx),
             Node::Table { aligns, head, rows } => {

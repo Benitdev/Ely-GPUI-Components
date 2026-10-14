@@ -72,7 +72,7 @@ pub(super) fn target(at: usize, block: TargetBlock) -> DocumentTarget {
         link: None,
         image: None,
         in_table: false,
-        in_code: false,
+        code: None,
     }
 }
 
@@ -120,7 +120,7 @@ fn a_code_press_lands_in_its_code(cx: &mut TestAppContext) {
     let heard = heard(&document, cx);
     press_on(0, 0, MouseButton::Right, cx);
     let expected = DocumentTarget {
-        in_code: true,
+        code: Some("let x = 1;".into()),
         ..target("```rust\n".len(), TargetBlock::Code)
     };
     assert_eq!(*heard.borrow(), [expected]);
@@ -245,8 +245,9 @@ fn code_presses_land_line_for_line(cx: &mut TestAppContext) {
         let events = heard(&document, cx);
         press_lines(1, 1, MouseButton::Right, cx);
         let at = source.find("eta").unwrap();
+        let eol = if source.contains('\r') { "\r\n" } else { "\n" };
         let expected = DocumentTarget {
-            in_code: true,
+            code: Some(format!("alpha{eol}beta")),
             ..target(at, TargetBlock::Code)
         };
         assert_eq!(*events.borrow(), [expected], "{source:?}");
@@ -304,7 +305,7 @@ beta
     press_lines(2, 0, MouseButton::Right, cx);
     let at = source.find("pha").unwrap();
     let expected = DocumentTarget {
-        in_code: true,
+        code: Some("alpha\nbeta".into()),
         ..target(at, TargetBlock::Code)
     };
     assert_eq!(*events.borrow(), [expected]);
@@ -391,4 +392,23 @@ fn an_html_space_moved_by_a_tag_presses_on_its_word(cx: &mut TestAppContext) {
     press_on(0, 8, MouseButton::Right, cx);
     let at = source.find("eta").unwrap();
     assert_eq!(*events.borrow(), [target(at, TargetBlock::Html)]);
+}
+
+#[gpui::test]
+fn a_press_beside_the_code_still_names_it(cx: &mut TestAppContext) {
+    let source = "```\nlet x;\n```\n";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    let bounds = cx.debug_bounds("markdown-block-0").expect("drawn");
+    press_at(
+        bounds.left() + px(4.0),
+        bounds.top() + px(4.0),
+        MouseButton::Right,
+        cx,
+    );
+    let code = events
+        .borrow()
+        .first()
+        .and_then(|target| target.code.clone());
+    assert_eq!(code.as_deref(), Some("let x;"));
 }

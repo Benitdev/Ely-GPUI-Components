@@ -47,7 +47,11 @@ fn a_table_edit_is_one_undo_step_at_the_caret(cx: &mut TestAppContext) {
         document.edit_table(crate::documents::TableEdit::RowBelow, cx)
     });
     assert_eq!(edited, Ok(()));
-    assert_eq!(text(&document, cx), "| A |\n| --- |\n| 1 |\n|  |\n");
+    cx.run_until_parked();
+    assert_eq!(
+        text(&document, cx),
+        "| A    |\n| ---- |\n| 1    |\n|      |\n"
+    );
     let editor = document.read_with(cx, |document, _| document.editor().clone());
     editor.update(cx, |editor, cx| editor.undo(cx));
     assert_eq!(text(&document, cx), "| A |\n| - |\n| 1 |\n");
@@ -61,7 +65,7 @@ fn a_new_table_goes_after_the_caret_line(cx: &mut TestAppContext) {
     });
     assert_eq!(
         text(&document, cx),
-        "Intro\n\n|   |   |   |\n| --- | --- | --- |\n|   |   |   |\n|   |   |   |\n\nNext\n"
+        "Intro\n\n|      |      |      |\n| ---- | ---- | ---- |\n|      |      |      |\n|      |      |      |\n\nNext\n"
     );
 }
 
@@ -143,7 +147,7 @@ fn preview_takes_no_edits(cx: &mut TestAppContext) {
             document.insert_table(cx),
         )
     });
-    let preview = Err(crate::documents::TableRefusal::Preview);
+    let preview = Err(crate::documents::EditRefusal::Preview);
     assert_eq!(refused, (false, preview, preview));
     assert_eq!(text(&document, cx), "| A |\n| - |\n| 1 |\n");
 }
@@ -247,5 +251,58 @@ fn a_table_on_an_indented_blank_line_is_a_table(cx: &mut TestAppContext) {
         document.edit_table(crate::documents::TableEdit::ColumnRight, cx)
     });
     assert_eq!(column, Ok(()), "{}", text(&document, cx));
+    cx.run_until_parked();
     assert!(text(&document, cx).starts_with("| "));
+}
+
+const SMALL: &str = "| A | B |\n| - | - |\n| 1 | 2 |\n";
+
+#[gpui::test]
+fn a_table_move_reads_apart_as_one_undo_step(cx: &mut TestAppContext) {
+    let (document, cx) = open(SMALL, MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| document.set_caret(2, 2, cx));
+    let moved = document.update(cx, |document, cx| {
+        document.edit_table(crate::documents::TableEdit::MoveRowUp, cx)
+    });
+    assert_eq!(moved, Ok(()));
+    cx.run_until_parked();
+    assert_eq!(
+        text(&document, cx),
+        "| 1    | 2    |\n| ---- | ---- |\n| A    | B    |\n"
+    );
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    editor.update(cx, |editor, cx| editor.undo(cx));
+    assert_eq!(text(&document, cx), SMALL);
+}
+
+#[gpui::test]
+fn a_table_edit_at_an_edge_refuses_by_event(cx: &mut TestAppContext) {
+    let (document, cx) = open(SMALL, MarkdownMode::Source, cx);
+    let heard = super::format::refusals(&document, cx);
+    document.update(cx, |document, cx| document.set_caret(2, 2, cx));
+    document.update(cx, |document, cx| {
+        document
+            .edit_table(crate::documents::TableEdit::MoveRowDown, cx)
+            .expect("taken")
+    });
+    cx.run_until_parked();
+    let edge = crate::documents::EditRefusal::Cells(crate::documents::TableRefusal::Edge);
+    assert_eq!(*heard.borrow(), [edge]);
+    assert_eq!(text(&document, cx), SMALL);
+}
+
+#[gpui::test]
+fn tidy_in_an_open_table_keeps_it_open(cx: &mut TestAppContext) {
+    let (document, cx) = open(SMALL, MarkdownMode::Visual, cx);
+    press(0, Modifiers::none(), cx);
+    document.update(cx, |document, cx| {
+        document
+            .edit_table(crate::documents::TableEdit::Tidy, cx)
+            .expect("taken")
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        opened(&document, cx),
+        "| A    | B    |\n| ---- | ---- |\n| 1    | 2    |"
+    );
 }

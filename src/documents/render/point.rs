@@ -29,7 +29,8 @@ pub(crate) struct Pointed {
     pub place: Place,
     pub link: Option<String>,
     pub image: Option<String>,
-    pub code: bool,
+    /// The code's text, pressed in a code block.
+    pub code: Option<Rc<str>>,
     pub table: bool,
 }
 
@@ -44,7 +45,7 @@ impl Pointed {
             place,
             link: None,
             image: None,
-            code: false,
+            code: None,
             table: false,
         }
     }
@@ -100,7 +101,7 @@ pub(crate) fn point_lines(
             .index_for_position(event.position)
             .unwrap_or_else(|near| near);
         Pointed {
-            code,
+            code: code.then(|| text.clone()),
             ..Pointed::at(Place::Lines {
                 text: text.clone(),
                 from,
@@ -146,12 +147,13 @@ impl Draw<'_> {
     pub(super) fn point_code(
         &self,
         element: AnyElement,
-        drawn: Option<(TextLayout, &str)>,
+        layout: Option<TextLayout>,
+        text: &str,
         from: usize,
     ) -> AnyElement {
         let table = self.table.get();
-        match drawn {
-            Some((layout, text)) => point_lines(
+        match layout {
+            Some(layout) => point_lines(
                 element,
                 layout,
                 text,
@@ -159,10 +161,13 @@ impl Draw<'_> {
                 self.hooks.on_point,
                 (table, true),
             ),
-            None => self.pointable(element, |_| Pointed {
-                code: true,
-                ..Pointed::block()
-            }),
+            None => {
+                let text: Rc<str> = Rc::from(text);
+                self.pointable(element, move |_| Pointed {
+                    code: Some(text.clone()),
+                    ..Pointed::block()
+                })
+            }
         }
     }
 

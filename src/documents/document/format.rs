@@ -6,6 +6,8 @@ use std::ops::Range;
 
 use markdown::mdast::Node;
 
+use super::TableRefusal;
+
 use crate::documents::{
     markdown::{file_tree, span, walk},
     tree::inside,
@@ -50,6 +52,8 @@ pub enum EditRefusal {
     Changed,
     /// The result would read as other text or blocks.
     Misread,
+    /// A table edit refused, and why.
+    Cells(TableRefusal),
 }
 
 /// The edits and the selection after them.
