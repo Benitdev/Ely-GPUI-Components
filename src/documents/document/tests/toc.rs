@@ -1,6 +1,6 @@
 use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
 
-use super::{MarkdownMode, open};
+use super::{MarkdownMode, frames, open, type_in};
 
 const LISTED: &str = "[toc]\n\n# A\n\ntext\n\n## B\n";
 
@@ -33,4 +33,36 @@ fn visual_reveals_on_a_secondary_press_and_edits_on_a_plain_one(cx: &mut TestApp
     assert_eq!((caret, open), ((6, 0), false));
     press_entry(0, Modifiers::none(), cx);
     assert!(document.read_with(cx, |document, _| document.open.is_some()));
+}
+
+#[gpui::test]
+fn a_press_after_an_earlier_block_grew_finds_the_heading(cx: &mut TestAppContext) {
+    let text = "before\n\n[toc]\n\n# A\n\ntext\n\n## B\n";
+    let (document, cx) = open(text, MarkdownMode::Visual, cx);
+    type_in(&document, Some(0), Some("before\nextra\nextra"), cx);
+    frames(cx);
+    press_entry(1, Modifiers::secondary_key(), cx);
+    frames(cx);
+    assert_eq!(
+        document.read_with(cx, |document, cx| document.caret(cx)),
+        (10, 0)
+    );
+}
+
+#[gpui::test]
+fn a_press_while_the_text_waits_to_be_read_finds_the_heading(cx: &mut TestAppContext) {
+    let (document, cx) = open(LISTED, MarkdownMode::Split, cx);
+    document.update(cx, |document, cx| {
+        document.editor.update(cx, |editor, cx| {
+            editor.edit([(0..0, "inserted\n".repeat(20))], cx);
+        });
+    });
+    cx.run_until_parked();
+    assert!(!document.read_with(cx, |document, cx| document.read_now(cx)));
+    press_entry(1, Modifiers::none(), cx);
+    frames(cx);
+    assert_eq!(
+        document.read_with(cx, |document, cx| document.caret(cx)),
+        (26, 0)
+    );
 }

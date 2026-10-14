@@ -98,6 +98,8 @@ struct Opened {
 struct Run {
     text: Inline,
     open: Vec<Opened>,
+    /// How many of each name are open.
+    named: HashMap<String, usize>,
     /// Inside an autolink: its text stays as written.
     verbatim: bool,
     /// White space an HTML block owes the next word.
@@ -116,9 +118,28 @@ impl Run {
         done
     }
 
+    fn count(&self, name: &str) -> usize {
+        self.named.get(name).copied().unwrap_or(0)
+    }
+
     /// Inside HTML `<code>`, where shortcodes stay text.
     fn in_code(&self) -> bool {
-        self.open.iter().any(|opened| opened.name == "code")
+        self.count("code") > 0
+    }
+
+    /// Text as shown: shortcodes read, lines joined.
+    fn push_text(&mut self, written: &str) {
+        let shown = match self.verbatim || self.in_code() {
+            true => written.to_string(),
+            false => html::emoji(written),
+        };
+        let soft = shown.replace("\r\n", " ").replace(['\r', '\n'], " ");
+        self.text.text.push_str(&soft);
+    }
+
+    fn push(&mut self, opened: Opened) {
+        *self.named.entry(opened.name.clone()).or_default() += 1;
+        self.open.push(opened);
     }
 
     /// The innermost open link's address.
@@ -133,6 +154,9 @@ impl Run {
         };
         if tag.name == "br" {
             return self.text.text.push('\n');
+        }
+        if html::filtered(&tag.name) {
+            return self.push_text(&html::text(written));
         }
         let Some(style) = html::inline_style(&tag.name) else {
             return;
@@ -153,7 +177,7 @@ impl Run {
         if name == "a" {
             self.end("a");
         }
-        self.open.push(Opened {
+        self.push(Opened {
             name: name.to_string(),
             start: self.text.text.len(),
             style,
@@ -163,17 +187,23 @@ impl Run {
 
     /// Ends the innermost `name`, as HTML5 repairs nesting.
     fn end(&mut self, name: &str) {
-        let Some(at) = self.open.iter().rposition(|opened| opened.name == name) else {
+        if self.count(name) == 0 {
             return;
-        };
+        }
+        let at = self
+            .open
+            .iter()
+            .rposition(|opened| opened.name == name)
+            .expect("a counted name is open");
         let end = self.text.text.len();
-        let above = self.open.split_off(at + 1);
-        let ended = self.open.pop().expect("found at `at`");
-        close(&mut self.text, &ended, end);
-        for opened in above {
-            close(&mut self.text, &opened, end);
+        let closed = self.open.split_off(at);
+        for opened in &closed {
+            close(&mut self.text, opened, end);
+            *self.named.get_mut(&opened.name).expect("counted") -= 1;
+        }
+        for opened in closed.into_iter().skip(1) {
             if html::reopens(&opened.name) {
-                self.open.push(Opened {
+                self.push(Opened {
                     start: end,
                     ..opened
                 });
@@ -357,14 +387,7 @@ impl<'a> Reader<'a> {
     fn inline_into(&self, node: &mdast::Node, run: &mut Run, images: &mut Images) {
         let text = &mut run.text;
         let (children, (name, style), url) = match node {
-            mdast::Node::Text(words) => {
-                let shown = match run.verbatim || run.in_code() {
-                    true => words.value.clone(),
-                    false => html::emoji(&words.value),
-                };
-                let soft = shown.replace("\r\n", " ").replace(['\r', '\n'], " ");
-                return run.text.text.push_str(&soft);
-            }
+            mdast::Node::Text(words) => return run.push_text(&words.value),
             mdast::Node::Break(_) => return text.text.push('\n'),
             mdast::Node::InlineCode(code) => return styled(text, &code.value, Style::Code),
             mdast::Node::InlineMath(math) => return styled(text, &math.value, Style::Math),

@@ -1,6 +1,6 @@
 use gpui::{App, Context, Focusable as _, ListOffset, ScrollStrategy, Window, px};
 
-use super::{MarkdownDocument, Placement};
+use super::{DocumentHeading, MarkdownDocument, Placement};
 use crate::documents::{MarkdownMode, modes::joint};
 
 /// Line and column, from zero, of byte `at` in `text`.
@@ -189,13 +189,27 @@ impl MarkdownDocument {
             .saturating_sub(1)
     }
 
-    /// Reveals the line holding byte `at` of the text.
+    /// Reveals the pressed heading, found again in the text.
     pub(super) fn reveal_at(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let editor = self.editor.read(cx);
-        if at > editor.text().len() {
-            return log::error!("markdown document: a heading past the text");
+        let headings = &self.parsed.headings;
+        let Some(ix) = headings.iter().position(|heading| heading.at == at) else {
+            return log::warn!("markdown document: a heading read away");
+        };
+        let pressed = headings[ix].clone();
+        let same = |heading: &&DocumentHeading| {
+            (heading.depth, &heading.title) == (pressed.depth, &pressed.title)
+        };
+        let nth = headings[..ix].iter().filter(same).count();
+        if self.commit(cx).is_some() || !self.read_now(cx) {
+            self.reparse(true, cx);
         }
-        let line = editor.buffer.line_of(at);
+        if !self.read_now(cx) {
+            return log::warn!("markdown document: a heading pressed while the text is read again");
+        }
+        let Some(found) = self.parsed.headings.iter().filter(same).nth(nth) else {
+            return log::warn!("markdown document: the pressed heading changed as one wrote");
+        };
+        let line = self.editor.read(cx).buffer.line_of(found.at);
         self.reveal(line, window, cx);
     }
 

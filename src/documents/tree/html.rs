@@ -41,6 +41,22 @@ pub(crate) fn reopens(name: &str) -> bool {
     )
 }
 
+/// GFM's tag filter: these tags show as text.
+pub(crate) fn filtered(name: &str) -> bool {
+    matches!(
+        name,
+        "title"
+            | "textarea"
+            | "style"
+            | "xmp"
+            | "iframe"
+            | "noembed"
+            | "noframes"
+            | "script"
+            | "plaintext"
+    )
+}
+
 /// Elements a browser lays as blocks: a line each side.
 pub(crate) fn breaks(name: &str) -> bool {
     matches!(

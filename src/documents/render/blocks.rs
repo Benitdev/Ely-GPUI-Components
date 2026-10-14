@@ -1,4 +1,6 @@
-use gpui::{AnyElement, App, FontWeight, IntoElement, ParentElement, Styled, div, prelude::*};
+use gpui::{
+    AnyElement, App, FontWeight, IntoElement, MouseButton, ParentElement, Styled, div, prelude::*,
+};
 
 use super::Draw;
 use crate::{
@@ -144,13 +146,25 @@ impl Draw<'_> {
                 let Some(reveal) = self.on_heading.clone() else {
                     return entry.text_color(colors.fg_muted).into_any_element();
                 };
-                let at = heading.at;
+                let (at, pressed) = (heading.at, reveal.clone());
                 entry
                     .text_color(colors.link)
                     .tab_index(0)
                     .focus_ring(cx)
                     .cursor_pointer()
-                    .on_click(move |_, window, cx| reveal(at, window, cx))
+                    // On press: the layout may move before release.
+                    .on_mouse_down(MouseButton::Left, move |event, window, cx| {
+                        if event.modifiers.secondary() {
+                            window.prevent_default();
+                            cx.stop_propagation();
+                            pressed(at, window, cx);
+                        }
+                    })
+                    .on_click(move |event, window, cx| {
+                        if !event.modifiers().secondary() {
+                            reveal(at, window, cx);
+                        }
+                    })
                     .into_any_element()
             }))
             .into_any_element()

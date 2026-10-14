@@ -36,7 +36,10 @@ impl AlertKind {
 
     /// The kind `line` marks, as `[!NOTE]` in any case.
     fn marked(line: &str) -> Option<Self> {
-        let name = line.trim().strip_prefix("[!")?.strip_suffix(']')?;
+        let name = line
+            .trim_matches([' ', '\t'])
+            .strip_prefix("[!")?
+            .strip_suffix(']')?;
         [
             Self::Note,
             Self::Tip,
@@ -68,12 +71,10 @@ impl Reader<'_> {
         let mdast::Node::Blockquote(quote) = node else {
             return None;
         };
-        let [first @ mdast::Node::Paragraph(paragraph), rest @ ..] = &quote.children[..] else {
+        let [mdast::Node::Paragraph(paragraph), rest @ ..] = &quote.children[..] else {
             return None;
         };
-        let line = self.source[span(first)].lines().next().unwrap_or_default();
-        let kind = AlertKind::marked(line)?;
-        let after = after_first_line(&paragraph.children);
+        let (kind, after) = marker(&paragraph.children)?;
         if after.is_empty() && rest.is_empty() {
             return None;
         }
@@ -115,13 +116,16 @@ impl Reader<'_> {
             let (written, after) = rest.split_at(end);
             rest = after;
             match html::tag(written) {
-                Some(tag) if !tag.closing && matches!(tag.name.as_str(), "script" | "style") => {
-                    let closing = format!("</{}", tag.name);
-                    let skipped = rest.to_ascii_lowercase().find(&closing);
-                    let left = skipped.map_or("", |at| &rest[at..]);
-                    rest = html::tag_end(left).map_or("", |end| &left[end..]);
+                Some(tag) if html::filtered(&tag.name) => run.words(written),
+                // A block closes what opened inside it.
+                Some(tag) if html::breaks(&tag.name) => {
+                    run.line();
+                    match tag.closing {
+                        true => run.end(&tag.name),
+                        false if tag.name != "hr" => run.start(&tag.name, None, None),
+                        false => {}
+                    }
                 }
-                Some(tag) if html::breaks(&tag.name) => run.line(),
                 // A line's end drops its space.
                 Some(tag) if tag.closing || tag.name == "br" => {
                     run.owed = run.owed.filter(|_| tag.name != "br");
@@ -165,39 +169,44 @@ impl Run {
 
     /// Writes the white space owed, before a word or tag.
     fn pay(&mut self) {
-        if let Some(owed) = self.owed.take() {
-            self.text.text.push(owed);
+        let Some(owed) = self.owed.take() else {
+            return;
+        };
+        let at = self.text.text.len();
+        self.text.text.push(owed);
+        // Reopened elements start after it.
+        for opened in self.open.iter_mut().filter(|opened| opened.start == at) {
+            opened.start = self.text.text.len();
         }
     }
 }
 
-/// Inlines past the first line ending.
-fn after_first_line(children: &[mdast::Node]) -> Vec<mdast::Node> {
-    let mut found = None;
+/// A plain first line naming a kind, and what follows.
+fn marker(children: &[mdast::Node]) -> Option<(AlertKind, Vec<mdast::Node>)> {
+    let mut line = String::new();
     for (at, child) in children.iter().enumerate() {
-        match child {
-            mdast::Node::Text(text) => {
-                if let Some((_, rest)) = text.value.split_once('\n') {
-                    let mut kept = text.clone();
-                    kept.value = rest.to_string();
-                    found = Some((at + 1, (!rest.is_empty()).then_some(kept)));
-                    break;
+        let head = match child {
+            mdast::Node::Text(text) => match text.value.find(['\n', '\r']) {
+                None => {
+                    line.push_str(&text.value);
+                    continue;
                 }
-            }
-            mdast::Node::Break(_) => {
-                found = Some((at + 1, None));
-                break;
-            }
-            _ => {}
-        }
+                Some(end) => {
+                    line.push_str(&text.value[..end]);
+                    let after = &text.value[end..];
+                    let after = after.strip_prefix("\r\n").unwrap_or(&after[1..]);
+                    let mut kept = text.clone();
+                    kept.value = after.to_string();
+                    (!after.is_empty()).then_some(mdast::Node::Text(kept))
+                }
+            },
+            mdast::Node::Break(_) => None,
+            _ => return None,
+        };
+        let after = head.into_iter().chain(children[at + 1..].iter().cloned());
+        return Some((AlertKind::marked(&line)?, after.collect()));
     }
-    let Some((next, head)) = found else {
-        return Vec::new();
-    };
-    let head = head.map(mdast::Node::Text);
-    head.into_iter()
-        .chain(children[next..].iter().cloned())
-        .collect()
+    Some((AlertKind::marked(&line)?, Vec::new()))
 }
 
 #[cfg(test)]
@@ -239,6 +248,15 @@ mod tests {
             ("> [!IMPORTANT]", None),
             ("> [!FOO]\n> five", None),
             ("> text\n> [!NOTE]", None),
+            ("> \\[!NOTE]\n> escaped", Some(AlertKind::Note)),
+            ("> [!NOT&#69;]\n> referenced", Some(AlertKind::Note)),
+            ("> [!NOTE]  \n> hard line", Some(AlertKind::Note)),
+            ("> [!NOTE]\rcarriage", Some(AlertKind::Note)),
+            ("> [!NOTE]\nlazy", Some(AlertKind::Note)),
+            ("> [!NOTE]\u{a0}\n> no-break space", None),
+            ("> **[!TIP]**\n> strong", None),
+            ("> <span>[!WARNING]</span>\n> tag", None),
+            ("[!NOTE]: https://example.com\n\n> [!NOTE]\n> a link", None),
         ];
         for (source, kind) in cases {
             assert_eq!(alert(source).map(|found| found.0), kind, "{source:?}");
@@ -303,10 +321,32 @@ mod tests {
             html("<div>\na <br> b</br>c</div>").expect("text").text,
             "a\nb\nc"
         );
-        let hidden = "<div>\n<script>alert(':smile:')</script>\n<!-- note -->\nshown<style>p{}</style>\n</div>";
-        assert_eq!(html(hidden).expect("text").text, "shown");
-        assert_eq!(html("<style>\np { color: red }\n</style>"), None);
+        let filtered = "<div>\n<script>x</script>\n<!-- note -->\nshown<style>p{}</style>\n</div>";
+        assert_eq!(
+            html(filtered).expect("text").text,
+            "<script>x</script> shown<style>p{}</style>"
+        );
+        let crossed = "<div>before<script>a</scriptx>b</script>after</div>";
+        assert_eq!(
+            html(crossed).expect("text").text,
+            "before<script>ab</script>after"
+        );
+        let split = parse("<div>\n<script>\nfirst\n\nsecond\n</script>\n</div>");
+        assert_eq!(text(&split), ["<script> first", "second </script>"]);
+        let inline = html("a <script>b</script> c").expect("text");
+        assert_eq!(inline.text, "a <script>b</script> c");
         assert_eq!(html("<div>\na < b <i").expect("text").text, "a < b");
+    }
+
+    #[test]
+    fn a_closing_block_ends_what_opened_inside_it() {
+        let marked = html("<div><mark>x</div>y").expect("text");
+        assert_eq!(
+            (marked.text.as_str(), &marked.styles[..]),
+            ("x\ny", &[(0..1, Style::Mark)][..])
+        );
+        let bold = html("<div><b>x</div>y").expect("text");
+        assert_eq!(bold.styles, [(0..1, Style::Strong), (2..3, Style::Strong)]);
     }
 
     #[test]
@@ -316,6 +356,9 @@ mod tests {
             "<".repeat(1 << 17),
             "<a".repeat(1 << 16),
             "<!--".repeat(1 << 16),
+            "<b>".repeat(1 << 16),
+            "<b>".repeat(1 << 15) + &"</i>".repeat(1 << 15),
+            "<script></script>".repeat(1 << 13),
         ] {
             let block = format!("<div>\n{source}");
             parse(&block);
