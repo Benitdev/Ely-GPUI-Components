@@ -102,8 +102,7 @@ impl RenderOnce for DescriptionList {
     }
 }
 
-/// A titled group of a `PropertyGrid`, open unless `folded`.
-/// Its title keys its fold, so titles differ within a grid.
+/// A `PropertyGrid` group; its unique title keys its fold.
 pub struct PropertyGroup {
     title: SharedString,
     open: bool,
