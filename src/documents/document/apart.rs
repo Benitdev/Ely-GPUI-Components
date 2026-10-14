@@ -50,8 +50,9 @@ impl MarkdownDocument {
     ) -> Result<(), EditRefusal> {
         self.apart(
             format!("table edit {edit:?}"),
-            move |full, selection| {
-                tables::edit_table(full, selection.start, edit).map_err(EditRefusal::Cells)
+            move |full, selection| match edit {
+                TableEdit::Delete => tables::delete(full, selection.start),
+                _ => tables::edit_table(full, selection.start, edit).map_err(EditRefusal::Cells),
             },
             cx,
         )

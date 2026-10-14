@@ -385,3 +385,29 @@ fn a_block_after_end_in_crlf_text_reads_the_line(cx: &mut TestAppContext) {
 fn a_selection_from_inside_a_crlf_reads_the_line(cx: &mut TestAppContext) {
     assert_eq!(code_block_after("end shift-right", cx), FENCE_AFTER_INTRO);
 }
+
+#[gpui::test]
+fn delete_table_takes_the_table_or_refuses_outside(cx: &mut TestAppContext) {
+    let source = "before\n\n| A | B |\n| - | - |\n| 1 | 2 |\n\nafter\n";
+    let (document, cx) = open(source, MarkdownMode::Source, cx);
+    let heard = super::format::refusals(&document, cx);
+    let delete = |cx: &mut gpui::VisualTestContext| {
+        document.update(cx, |document, cx| {
+            document
+                .edit_table(crate::documents::TableEdit::Delete, cx)
+                .expect("taken")
+        });
+        cx.run_until_parked();
+    };
+    document.update(cx, |document, cx| document.set_caret(4, 2, cx));
+    delete(cx);
+    assert_eq!(text(&document, cx), "before\n\nafter\n");
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    editor.update(cx, |editor, cx| editor.undo(cx));
+    assert_eq!(text(&document, cx), source);
+    document.update(cx, |document, cx| document.set_caret(0, 2, cx));
+    delete(cx);
+    let outside = crate::documents::EditRefusal::Cells(crate::documents::TableRefusal::Outside);
+    assert_eq!(*heard.borrow(), [outside]);
+    assert_eq!(text(&document, cx), source);
+}

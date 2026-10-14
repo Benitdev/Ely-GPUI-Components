@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     MarkdownDocument,
-    block::{eol, line_end, line_start, next_line, prev_line, settled},
+    block::{self, BlockCommand, eol, line_end, line_start, next_line, prev_line, settled},
     format::{Change, EditRefusal},
 };
 use crate::documents::{
@@ -29,6 +29,8 @@ pub enum TableEdit {
     MoveColumnRight,
     /// Every cell padded to its column, as Typora tidies.
     Tidy,
+    /// The whole table.
+    Delete,
 }
 
 /// Why a table edit did not happen.
@@ -54,9 +56,7 @@ pub(super) fn edit_table(text: &str, at: usize, edit: TableEdit) -> Result<Chang
     let (range, table) = nodes
         .into_iter()
         .find_map(|node| match node {
-            mdast::Node::Table(table) if (span(node).start..=span(node).end).contains(&at) => {
-                Some((span(node), table))
-            }
+            mdast::Node::Table(table) if around(node, at) => Some((span(node), table)),
             _ => None,
         })
         .ok_or(TableRefusal::Outside)?;
@@ -162,6 +162,22 @@ pub(super) fn edit_table(text: &str, at: usize, edit: TableEdit) -> Result<Chang
     let (out, caret) = table_text(&grid, &aligns, caret, prefix, eol);
     let caret = range.start + caret;
     Ok((vec![(range, out)], caret..caret))
+}
+
+/// The table at the caret gone, as the block command removes it.
+pub(super) fn delete(text: &str, at: usize) -> Result<Change, EditRefusal> {
+    let root = file_tree(text);
+    let mut nodes = Vec::new();
+    walk(&root, &mut nodes);
+    if !nodes.iter().any(|node| around(node, at)) {
+        return Err(EditRefusal::Cells(TableRefusal::Outside));
+    }
+    block::run(text, at..at, BlockCommand::Delete)
+}
+
+/// Whether `node` is a table holding `at`.
+fn around(node: &mdast::Node, at: usize) -> bool {
+    matches!(node, mdast::Node::Table(_)) && (span(node).start..=span(node).end).contains(&at)
 }
 
 /// A cell's source between its pipes.
