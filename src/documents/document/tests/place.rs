@@ -229,3 +229,11 @@ fn the_selection_reads_in_source_and_in_an_open_block(cx: &mut TestAppContext) {
         "words"
     );
 }
+
+#[gpui::test]
+fn a_visual_opening_starts_at_the_top(cx: &mut TestAppContext) {
+    let source = format!("alpha beta\n\n{}", "x".repeat(20000));
+    let (document, cx) = open(&source, MarkdownMode::Visual, cx);
+    cx.run_until_parked();
+    assert_eq!(landed(&document, cx), 0);
+}

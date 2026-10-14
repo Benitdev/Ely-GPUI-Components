@@ -41,7 +41,7 @@ use crate::{
 };
 
 /// Texts this long parse at once; longer ones elsewhere.
-const AT_ONCE: usize = 16 << 10;
+const AT_ONCE: usize = 128 << 10;
 
 /// Longer texts are never read: source alone.
 pub const LARGEST_READ: usize = 2 << 20;

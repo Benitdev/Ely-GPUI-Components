@@ -7,7 +7,7 @@ use gpui::{AppContext as _, Context};
 use super::{Change, FormatRefusal, InlineFormat, toggle};
 use crate::documents::{
     MarkdownMode,
-    document::{AT_ONCE, DocumentEvent, LARGEST_READ, MarkdownDocument},
+    document::{DocumentEvent, LARGEST_READ, MarkdownDocument},
     modes::joint,
 };
 
@@ -15,7 +15,7 @@ use crate::documents::{
 type Snapshot = (String, usize, Range<usize>);
 
 impl MarkdownDocument {
-    /// `format` at the selection; long texts refuse by event.
+    /// `format` at the selection, read apart; refusals by event.
     pub fn format(
         &mut self,
         format: InlineFormat,
@@ -35,12 +35,6 @@ impl MarkdownDocument {
         if self.formatting {
             log::info!("markdown document: format {format:?} refused: one runs");
             return Err(FormatRefusal::Busy);
-        }
-        if full.len() <= AT_ONCE {
-            let change = toggle(&full, selection, format).inspect_err(|why| {
-                log::info!("markdown document: format {format:?} refused: {why:?}");
-            })?;
-            return self.apply(format, change, &full, offset, cx);
         }
         log::info!(
             "markdown document: format {format:?} reads {} bytes apart",

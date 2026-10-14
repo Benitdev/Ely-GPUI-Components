@@ -1,15 +1,15 @@
 //! Inline formats toggle as Typora's (R4.6).
 
-use std::{cell::RefCell, rc::Rc, time::Instant};
+use std::{cell::RefCell, rc::Rc};
 
 use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 use markdown::mdast::Node;
+use web_time::Instant;
 
 use super::{open, opened, press, text};
 use crate::documents::{
     DocumentEvent, FormatRefusal, InlineFormat, LARGEST_READ, MarkdownDocument, MarkdownMode,
     document::{
-        AT_ONCE,
         format::{toggle, toggle_tree},
         visual,
     },
@@ -145,6 +145,7 @@ fn an_open_block_stays_open_and_undoes_as_one_step(cx: &mut TestAppContext) {
             .format(InlineFormat::Strong, cx)
             .expect("formatted");
     });
+    cx.run_until_parked();
     assert_eq!(
         opened(&document, cx),
         "alpha **beta**",
@@ -172,6 +173,7 @@ fn the_source_takes_a_format_as_one_step(cx: &mut TestAppContext) {
             .update(cx, |editor, cx| editor.select(std::iter::once(2..2), cx));
         document.format(InlineFormat::Code, cx).expect("formatted");
     });
+    cx.run_until_parked();
     assert_eq!(text(&document, cx), "`alpha` beta\n");
     document.update(cx, |document, cx| {
         document.editor.update(cx, |editor, cx| editor.undo(cx));
@@ -221,8 +223,8 @@ fn underline_comes_off_past_other_tags() {
     assert_eq!(ok("<u>a <em>b‸c</em> d</u>", Underline), "a <em>b‸c</em> d");
 }
 
-/// A source document of one long word, caret at 1.
-fn long(cx: &mut TestAppContext, len: usize) -> (Entity<MarkdownDocument>, &mut VisualTestContext) {
+/// A source document of one word, caret at 1.
+fn word(cx: &mut TestAppContext, len: usize) -> (Entity<MarkdownDocument>, &mut VisualTestContext) {
     let (document, cx) = open(&"x".repeat(len), MarkdownMode::Source, cx);
     document.update(cx, |document, cx| {
         document
@@ -233,8 +235,8 @@ fn long(cx: &mut TestAppContext, len: usize) -> (Entity<MarkdownDocument>, &mut 
 }
 
 #[gpui::test]
-fn a_long_text_formats_once_read_apart(cx: &mut TestAppContext) {
-    let (document, cx) = long(cx, AT_ONCE + 1);
+fn a_format_reads_apart(cx: &mut TestAppContext) {
+    let (document, cx) = word(cx, 64);
     document.update(cx, |document, cx| {
         document.format(InlineFormat::Strong, cx).expect("taken")
     });
@@ -248,7 +250,7 @@ fn a_long_text_formats_once_read_apart(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn many_short_paragraphs_format_apart(cx: &mut TestAppContext) {
-    let source = "a\n\n".repeat(AT_ONCE / 3 + 1);
+    let source = "a\n\n".repeat(100);
     let (document, cx) = open(&source, MarkdownMode::Source, cx);
     document.update(cx, |document, cx| {
         document
@@ -262,8 +264,8 @@ fn many_short_paragraphs_format_apart(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_long_format_lapses_when_the_text_moves(cx: &mut TestAppContext) {
-    let (document, cx) = long(cx, AT_ONCE + 1);
+fn a_format_lapses_when_the_text_moves(cx: &mut TestAppContext) {
+    let (document, cx) = word(cx, 64);
     document.update(cx, |document, cx| {
         document.format(InlineFormat::Strong, cx).expect("taken");
         document
@@ -296,8 +298,8 @@ fn refusals(
 }
 
 #[gpui::test]
-fn a_long_lapse_comes_by_event(cx: &mut TestAppContext) {
-    let (document, cx) = long(cx, AT_ONCE + 1);
+fn a_lapse_comes_by_event(cx: &mut TestAppContext) {
+    let (document, cx) = word(cx, 64);
     let heard = refusals(&document, cx);
     document.update(cx, |document, cx| {
         document.format(InlineFormat::Strong, cx).expect("taken");
@@ -351,8 +353,8 @@ fn many_paragraphs_format_in_linear_time() {
 }
 
 #[gpui::test]
-fn a_second_long_format_refuses_while_one_runs(cx: &mut TestAppContext) {
-    let (document, cx) = long(cx, AT_ONCE + 1);
+fn a_second_format_refuses_while_one_runs(cx: &mut TestAppContext) {
+    let (document, cx) = word(cx, 64);
     let second = document.update(cx, |document, cx| {
         document.format(InlineFormat::Strong, cx).expect("taken");
         document.format(InlineFormat::Emphasis, cx)
@@ -372,8 +374,8 @@ fn a_second_long_format_refuses_while_one_runs(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_long_refusal_comes_by_event(cx: &mut TestAppContext) {
-    let source = format!("`code` {}", "x".repeat(AT_ONCE));
+fn a_refusal_comes_by_event(cx: &mut TestAppContext) {
+    let source = format!("`code` {}", "x".repeat(64));
     let (document, cx) = open(&source, MarkdownMode::Source, cx);
     let heard = refusals(&document, cx);
     let taken = document.update(cx, |document, cx| {
@@ -389,8 +391,8 @@ fn a_long_refusal_comes_by_event(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn a_long_format_drops_once_preview_shows(cx: &mut TestAppContext) {
-    let (document, cx) = long(cx, AT_ONCE + 1);
+fn a_format_drops_once_preview_shows(cx: &mut TestAppContext) {
+    let (document, cx) = word(cx, 64);
     let heard = refusals(&document, cx);
     document.update_in(cx, |document, window, cx| {
         document.format(InlineFormat::Strong, cx).expect("taken");
@@ -403,7 +405,25 @@ fn a_long_format_drops_once_preview_shows(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_text_past_the_largest_read_refuses(cx: &mut TestAppContext) {
-    let (document, cx) = long(cx, LARGEST_READ + 1);
+    let (document, cx) = word(cx, LARGEST_READ + 1);
     let refused = document.update(cx, |document, cx| document.format(InlineFormat::Strong, cx));
     assert_eq!(refused, Err(FormatRefusal::TooLong));
+}
+
+#[gpui::test]
+fn a_visual_format_reads_apart(cx: &mut TestAppContext) {
+    let (document, cx) = open("word\n\nmore\n", MarkdownMode::Visual, cx);
+    document.update(cx, |document, cx| {
+        document
+            .editor
+            .update(cx, |editor, cx| editor.select(std::iter::once(1..1), cx));
+        document.format(InlineFormat::Strong, cx).expect("taken");
+    });
+    assert_eq!(
+        text(&document, cx),
+        "word\n\nmore\n",
+        "not on the UI thread"
+    );
+    cx.run_until_parked();
+    assert_eq!(text(&document, cx), "**word**\n\nmore\n");
 }
