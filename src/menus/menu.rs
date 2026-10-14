@@ -2,7 +2,8 @@ use std::rc::Rc;
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, Bounds, ElementId, Entity, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Point, Styled, Window, anchored, canvas, div, prelude::*,
+    IntoElement, ParentElement, Pixels, Point, SharedString, Styled, Window, anchored, canvas, div,
+    prelude::*,
 };
 
 use super::{
@@ -34,8 +35,12 @@ pub(super) fn at_depth<'a>(menu: &'a Menu, levels: &[Level], depth: usize) -> Op
 fn settle(menu: &Menu, levels: &mut Vec<Level>) {
     let mut here = menu;
     for depth in 0..levels.len() {
-        let column = levels[depth].column;
-        let at = levels[depth].at.filter(|&ix| here.runs(ix, column));
+        let (column, name) = (levels[depth].column, levels[depth].name.clone());
+        // A mark holds its item, not just its place.
+        let at = levels[depth].at.filter(|&ix| {
+            here.item_at(ix, column)
+                .is_some_and(|item| !item.disabled && item.label == name)
+        });
         levels[depth].at = at;
         match at
             .and_then(|ix| here.item_at(ix, column))
@@ -50,11 +55,12 @@ fn settle(menu: &Menu, levels: &mut Vec<Level>) {
     }
 }
 
-/// An open level: marked row, button, and their boxes.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// An open level: marked row, button, its label, and boxes.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Level {
     pub(super) at: Option<usize>,
     pub(super) column: usize,
+    pub(super) name: SharedString,
     pub(super) row: Bounds<Pixels>,
     pub(super) panel: Bounds<Pixels>,
 }
@@ -126,12 +132,18 @@ impl Open {
 
 /// A level marking row `at` at its first enabled button.
 fn first_of(menu: &Menu, at: Option<usize>) -> Level {
+    let Some(ix) = at else {
+        return Level::default();
+    };
+    let column = menu.first(ix).expect("a stepped row runs");
     Level {
         at,
-        column: match at {
-            Some(ix) => menu.first(ix).expect("a stepped row runs"),
-            None => 0,
-        },
+        column,
+        name: menu
+            .item_at(ix, column)
+            .expect("its first spot")
+            .label
+            .clone(),
         ..Level::default()
     }
 }
@@ -146,19 +158,21 @@ pub(super) fn mark(
     cx: &mut App,
 ) {
     state.update(cx, |open, cx| {
-        let Some(here) = at_depth(menu, &open.levels, depth) else {
+        if open.levels.len() <= depth {
+            return log::debug!("menu: level {depth} closed before its mark");
+        }
+        let Some(item) =
+            at_depth(menu, &open.levels, depth).and_then(|here| here.item_at(at, column))
+        else {
             return;
         };
-        let sub = matches!(
-            here.item_at(at, column).map(|item| &item.kind),
-            Some(Kind::Sub(_))
-        );
+        let (sub, name) = (matches!(item.kind, Kind::Sub(_)), item.label.clone());
         open.levels.truncate(depth + 1);
         let level = &mut open.levels[depth];
         if level.at != Some(at) {
             level.row = Bounds::default();
         }
-        (level.at, level.column) = (Some(at), column);
+        (level.at, level.column, level.name) = (Some(at), column, name);
         if open_sub && sub {
             open.levels.push(Level::default());
         }

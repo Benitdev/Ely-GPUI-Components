@@ -147,11 +147,6 @@ impl Menu {
         }
     }
 
-    /// Whether the spot at row `ix`, button `column`, runs.
-    pub(super) fn runs(&self, ix: usize, column: usize) -> bool {
-        self.item_at(ix, column).is_some_and(|item| !item.disabled)
-    }
-
     /// Row `ix`'s first spot that runs.
     pub(super) fn first(&self, ix: usize) -> Option<usize> {
         match self.entries.get(ix) {

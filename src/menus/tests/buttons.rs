@@ -15,7 +15,7 @@ struct Clip {
     root: FocusHandle,
     ran: Vec<SharedString>,
     paste_off: bool,
-    shown: usize,
+    gone: Option<&'static str>,
 }
 
 impl Clip {
@@ -41,9 +41,12 @@ impl Clip {
                         .keys("secondary-v")
                         .disabled(self.paste_off)
                         .on_click(run("paste")),
+                    MenuItem::new("Delete")
+                        .icon(IconName::Trash2)
+                        .on_click(run("delete")),
                 ]
                 .into_iter()
-                .take(self.shown),
+                .filter(|item| Some(item.label.as_ref()) != self.gone),
             )
             .item(MenuItem::new("Select all").on_click(run("select all")))
     }
@@ -68,7 +71,7 @@ fn clip(cx: &mut TestAppContext) -> (gpui::Entity<Clip>, &mut VisualTestContext)
         root: cx.focus_handle(),
         ran: Vec::new(),
         paste_off: false,
-        shown: 3,
+        gone: None,
     });
     settle(cx);
     (view, cx)
@@ -109,7 +112,7 @@ fn arrows_walk_a_button_row_past_its_disabled_button(cx: &mut TestAppContext) {
     press("down", cx);
     press("left", cx);
     press("enter", cx);
-    assert_eq!(ran(&view, cx), ["cut", "paste", "paste"], "left wraps");
+    assert_eq!(ran(&view, cx), ["cut", "paste", "delete"], "left wraps");
     right_click(cx);
     press("down", cx);
     press("down", cx);
@@ -132,6 +135,32 @@ fn a_pressed_button_runs_and_a_disabled_one_does_not(cx: &mut TestAppContext) {
         cx.debug_bounds("menu-button-0-0").is_none(),
         "the menu closed after paste"
     );
+}
+
+#[gpui::test]
+fn a_move_after_a_button_closed_the_menu_does_nothing(cx: &mut TestAppContext) {
+    let (view, cx) = clip(cx);
+    right_click(cx);
+    let at = cx.debug_bounds("menu-button-0-2").expect("paste").center();
+    // Both events land before any repaint.
+    cx.update(|window, cx| {
+        let down = gpui::MouseDownEvent {
+            position: at,
+            button: MouseButton::Left,
+            modifiers: Modifiers::none(),
+            click_count: 1,
+            first_mouse: false,
+        };
+        let moved = gpui::MouseMoveEvent {
+            position: at + point(px(1.0), px(0.0)),
+            pressed_button: Some(MouseButton::Left),
+            modifiers: Modifiers::none(),
+        };
+        window.dispatch_event(gpui::PlatformInput::MouseDown(down), cx);
+        window.dispatch_event(gpui::PlatformInput::MouseMove(moved), cx);
+    });
+    settle(cx);
+    assert_eq!(ran(&view, cx), ["paste"]);
 }
 
 #[gpui::test]
@@ -159,7 +188,7 @@ fn arrows_cross_buttons_while_the_filter_holds_focus(cx: &mut TestAppContext) {
 fn a_marked_button_turned_off_or_gone_runs_nothing(cx: &mut TestAppContext) {
     for change in [
         |clip: &mut Clip| clip.paste_off = true,
-        |clip: &mut Clip| clip.shown = 1,
+        |clip: &mut Clip| clip.gone = Some("Paste"),
     ] {
         let (view, cx) = clip(cx);
         right_click(cx);
