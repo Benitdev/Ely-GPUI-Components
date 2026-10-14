@@ -143,7 +143,7 @@ impl Draw<'_> {
                     4 => entry.pl_16(),
                     _ => entry.pl_20(),
                 };
-                let Some(reveal) = self.on_heading.clone() else {
+                let Some(reveal) = self.hooks.on_heading.clone() else {
                     return entry.text_color(colors.fg_muted).into_any_element();
                 };
                 let (at, pressed) = (heading.at, reveal.clone());

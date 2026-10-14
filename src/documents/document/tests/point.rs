@@ -1,0 +1,165 @@
+//! A press lands on the pressed character (R4.5).
+
+use std::{cell::RefCell, rc::Rc};
+
+use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
+
+use super::{open, type_in};
+use crate::{
+    documents::{DocumentEvent, DocumentTarget, MarkdownDocument, MarkdownMode, TargetBlock},
+    theme::{ActiveTheme, TextSize},
+};
+
+/// Presses block `ix` on its first line's character `k`.
+fn press_on(ix: usize, k: usize, button: MouseButton, cx: &mut VisualTestContext) {
+    let bounds = cx
+        .debug_bounds(Box::leak(format!("markdown-block-{ix}").into_boxed_str()))
+        .expect("the block is drawn");
+    // The test text system sets glyphs 0.6 em apart.
+    let size = cx.update(|window, cx| {
+        cx.theme()
+            .text_size(TextSize::Base)
+            .to_pixels(window.rem_size())
+    });
+    let em = size * 0.6;
+    let x = bounds.left() + px(13.0) + em * (k as f32 + 0.25);
+    let at = point(x, bounds.top() + px(10.0));
+    cx.simulate_mouse_down(at, button, Modifiers::none());
+    cx.simulate_mouse_up(at, button, Modifiers::none());
+    cx.run_until_parked();
+}
+
+fn heard(
+    document: &Entity<MarkdownDocument>,
+    cx: &mut VisualTestContext,
+) -> Rc<RefCell<Vec<DocumentTarget>>> {
+    let heard = Rc::new(RefCell::new(Vec::new()));
+    let kept = heard.clone();
+    cx.update(|_, cx| {
+        cx.subscribe(document, move |_, event: &DocumentEvent, _| {
+            if let DocumentEvent::Pointed(target) = event {
+                kept.borrow_mut().push(target.clone());
+            }
+        })
+        .detach()
+    });
+    heard
+}
+
+fn caret(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> usize {
+    document.read_with(cx, |document, cx| document.editor.read(cx).primary().head)
+}
+
+fn opened_caret(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> usize {
+    document.read_with(cx, |document, cx| {
+        document
+            .open
+            .as_ref()
+            .expect("open")
+            .input
+            .read(cx)
+            .cursor()
+    })
+}
+
+fn target(at: usize, block: TargetBlock) -> DocumentTarget {
+    DocumentTarget {
+        at,
+        block: Some(block),
+        link: None,
+        image: None,
+        in_table: false,
+        in_code: false,
+    }
+}
+
+const TEXT: &str = "First.\n\nSay **bold** and more.\n";
+
+#[gpui::test]
+fn a_press_opens_the_block_at_the_pressed_character(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
+    press_on(1, 4, MouseButton::Left, cx);
+    assert_eq!(
+        opened_caret(&document, cx),
+        "Say **".len(),
+        "on the b of bold"
+    );
+}
+
+#[gpui::test]
+fn a_secondary_press_moves_the_caret_and_opens_nothing(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    press_on(1, 4, MouseButton::Right, cx);
+    assert!(document.read_with(cx, |document, _| document.open.is_none()));
+    let at = TEXT.find("bold").unwrap();
+    assert_eq!(caret(&document, cx), at);
+    assert_eq!(*heard.borrow(), [target(at, TargetBlock::Paragraph)]);
+}
+
+#[gpui::test]
+fn a_secondary_press_on_a_link_names_its_address(cx: &mut TestAppContext) {
+    let text = "Go [there](https://ely.dev) now\n";
+    let (document, cx) = open(text, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    press_on(0, 4, MouseButton::Right, cx);
+    let expected = DocumentTarget {
+        link: Some("https://ely.dev".into()),
+        ..target(text.find("here").unwrap(), TargetBlock::Paragraph)
+    };
+    assert_eq!(*heard.borrow(), [expected]);
+}
+
+#[gpui::test]
+fn a_code_press_lands_in_its_code(cx: &mut TestAppContext) {
+    let text = "```rust\nlet x = 1;\n```\n";
+    let (document, cx) = open(text, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    press_on(0, 0, MouseButton::Right, cx);
+    let expected = DocumentTarget {
+        in_code: true,
+        ..target("```rust\n".len(), TargetBlock::Code)
+    };
+    assert_eq!(*heard.borrow(), [expected]);
+}
+
+#[gpui::test]
+fn a_secondary_press_on_a_picture_names_it(cx: &mut TestAppContext) {
+    let text = "Lead.\n\n![pic](missing.png)\n";
+    let (document, cx) = open(text, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    press_on(1, 1, MouseButton::Right, cx);
+    let expected = DocumentTarget {
+        image: Some("missing.png".into()),
+        ..target(text.find("![").unwrap(), TargetBlock::Paragraph)
+    };
+    assert_eq!(*heard.borrow(), [expected]);
+}
+
+#[gpui::test]
+fn a_secondary_press_writes_the_open_block_first(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    type_in(&document, Some(0), Some("First, longer."), cx);
+    press_on(1, 4, MouseButton::Right, cx);
+    let written = "First, longer.\n\nSay **bold** and more.\n";
+    assert_eq!(super::text(&document, cx), written);
+    let at = written.find("bold").unwrap();
+    assert_eq!(caret(&document, cx), at, "the byte moved with the write");
+    assert_eq!(*heard.borrow(), [target(at, TargetBlock::Paragraph)]);
+}
+
+#[gpui::test]
+fn a_secondary_press_past_the_end_goes_to_the_end(cx: &mut TestAppContext) {
+    let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    let end = cx.debug_bounds("markdown-block-1").expect("drawn").bottom() + px(12.0);
+    cx.simulate_mouse_down(point(px(40.0), end), MouseButton::Right, Modifiers::none());
+    cx.run_until_parked();
+    let expected = DocumentTarget {
+        block: None,
+        ..target(TEXT.len(), TargetBlock::Paragraph)
+    };
+    assert_eq!(*heard.borrow(), [expected]);
+    assert!(document.read_with(cx, |document, _| document.open.is_none()));
+}

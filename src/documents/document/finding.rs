@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use gpui::{Context, Window};
 
-use super::MarkdownDocument;
+use super::{MarkdownDocument, edit::Landing};
 use crate::documents::MarkdownMode;
 
 impl MarkdownDocument {
@@ -42,7 +42,7 @@ impl MarkdownDocument {
                     return self.reveal(line(self, cx), window, cx);
                 };
                 let start = block.start;
-                self.open(Some(ix), false, window, cx);
+                self.open(Some(ix), Landing::End, window, cx);
                 self.list.scroll_to_reveal_item(ix);
                 if let Some(open) = &self.open {
                     let input = open.input.clone();

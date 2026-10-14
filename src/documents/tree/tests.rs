@@ -25,7 +25,8 @@ fn blocks_nest_as_written() {
         nodes[4],
         Node::Code {
             language: Some("rust".into()),
-            text: "fn main() {}".into()
+            text: "fn main() {}".into(),
+            from: Some(95)
         }
     );
     assert_eq!(nodes[5], Node::Rule);
@@ -39,7 +40,8 @@ fn an_image_inside_an_image_is_the_outer_one() {
         [Node::Image {
             alt: "outer ".into(),
             url: "outer.png".into(),
-            link: None
+            link: None,
+            at: 0
         }]
     );
 }
@@ -53,7 +55,8 @@ fn an_image_splits_its_paragraph_and_references_resolve() {
         Node::Image {
             alt: "a".into(),
             url: "a.png".into(),
-            link: None
+            link: None,
+            at: 7
         }
     );
     let Node::Paragraph(after) = &nodes[2] else {
@@ -95,7 +98,8 @@ fn definitions_nested_in_quotes_and_lists_resolve() {
             Node::Image {
                 alt: "pic".into(),
                 url: "a.png".into(),
-                link: None
+                link: None,
+                at: 7
             }
         );
     }
@@ -116,7 +120,8 @@ fn an_image_inside_styles_and_links_stays_an_image() {
         Node::Image {
             alt: "x".into(),
             url: "x.png".into(),
-            link: None
+            link: None,
+            at: 3
         }
     );
     let Node::Paragraph(after) = &nodes[2] else {
@@ -131,7 +136,8 @@ fn an_image_inside_styles_and_links_stays_an_image() {
         Node::Image {
             alt: "y".into(),
             url: "y.png".into(),
-            link: Some("https://ely.dev".into())
+            link: Some("https://ely.dev".into()),
+            at: 19
         }
     );
     assert_eq!(nodes.len(), 4, "{nodes:?}");

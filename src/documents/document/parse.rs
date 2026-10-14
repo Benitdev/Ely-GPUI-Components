@@ -7,10 +7,13 @@ use crate::documents::{
     tree::{DocumentHeading, Node, Reader},
 };
 
+use super::TargetBlock;
+
 /// A top-level block: its source, and what it draws.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Block {
     pub range: Range<usize>,
+    pub kind: TargetBlock,
     /// None shows a link definition as written.
     pub nodes: Option<Vec<Node>>,
 }
@@ -39,10 +42,12 @@ pub(crate) fn parsed(text: &str) -> Parsed {
             let nodes = (!raw).then(|| {
                 let mut out = Vec::new();
                 reader.top(node, &mut out);
+                out.iter_mut().for_each(|drawn| drawn.rebase(range.start));
                 out
             });
             Block {
                 range: range.start..range.start + kept,
+                kind: TargetBlock::of(node, text),
                 nodes,
             }
         })
@@ -147,6 +152,31 @@ mod tests {
         assert_eq!(alike(&old, &old), (4, 0), "all kept from the head");
         let shorter = parsed("# A\n");
         assert_eq!(alike(&old, &shorter), (1, 0));
+    }
+
+    #[test]
+    fn pictures_and_code_count_from_their_block() {
+        let old = parsed(
+            "a
+
+![p](p.png)
+
+```
+x
+```
+",
+        );
+        let new = parsed(
+            "a and more
+
+![p](p.png)
+
+```
+x
+```
+",
+        );
+        assert_eq!(alike(&old, &new), (0, 2));
     }
 
     #[test]

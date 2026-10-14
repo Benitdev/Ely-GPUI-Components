@@ -2,6 +2,7 @@ use gpui::{TestAppContext, px, rems};
 
 use super::{MarkdownMode, frames, open};
 use crate::documents::DocumentLook;
+use crate::documents::document::edit::Landing;
 
 /// Sixty short paragraphs, each its own block.
 fn long() -> String {
@@ -30,7 +31,7 @@ fn typewriter_keeps_the_open_block_mid_view(cx: &mut TestAppContext) {
     };
     document.update_in(cx, |document, window, cx| {
         document.set_look(look, cx);
-        document.open(Some(40), false, window, cx);
+        document.open(Some(40), Landing::End, window, cx);
         document.list.scroll_to_reveal_item(40);
     });
     frames(cx);
@@ -99,7 +100,7 @@ fn the_scale_sizes_source_lines(cx: &mut TestAppContext) {
 fn focus_counts_the_open_block_as_the_readers(cx: &mut TestAppContext) {
     let (document, cx) = open(&long(), MarkdownMode::Visual, cx);
     document.update_in(cx, |document, window, cx| {
-        document.open(Some(3), false, window, cx)
+        document.open(Some(3), Landing::End, window, cx)
     });
     assert_eq!(
         document.read_with(cx, |document, cx| document.current_block(cx)),
@@ -137,7 +138,7 @@ fn off_middle(
 fn an_open_block_takes_the_scale(cx: &mut TestAppContext) {
     let (document, cx) = open("A paragraph.\n", MarkdownMode::Visual, cx);
     document.update_in(cx, |document, window, cx| {
-        document.open(Some(0), false, window, cx)
+        document.open(Some(0), Landing::End, window, cx)
     });
     frames(cx);
     let plain = document
@@ -163,7 +164,7 @@ fn a_resize_centers_the_block_again(cx: &mut TestAppContext) {
     let (document, cx) = open(&long(), MarkdownMode::Visual, cx);
     document.update_in(cx, |document, window, cx| {
         document.set_look(typewriter(), cx);
-        document.open(Some(40), false, window, cx);
+        document.open(Some(40), Landing::End, window, cx);
         document.list.scroll_to_reveal_item(40);
     });
     frames(cx);
@@ -177,13 +178,13 @@ fn the_first_and_last_blocks_center(cx: &mut TestAppContext) {
     let (document, cx) = open(&long(), MarkdownMode::Visual, cx);
     document.update_in(cx, |document, window, cx| {
         document.set_look(typewriter(), cx);
-        document.open(Some(0), false, window, cx);
+        document.open(Some(0), Landing::End, window, cx);
     });
     frames(cx);
     let first = off_middle(&document, 0, cx);
     assert!(first < px(4.0), "the first is {first:?} off");
     document.update_in(cx, |document, window, cx| {
-        document.open(Some(59), false, window, cx);
+        document.open(Some(59), Landing::End, window, cx);
         document.list.scroll_to_reveal_item(59);
     });
     frames(cx);

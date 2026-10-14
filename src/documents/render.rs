@@ -22,6 +22,9 @@ use crate::{
 };
 
 mod blocks;
+mod point;
+
+pub(crate) use point::{OnPoint, Place, Pointed};
 
 pub(crate) type OnLink = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 /// Reveals the heading whose source starts at a byte.
@@ -87,20 +90,28 @@ impl MarkdownRenderer {
     }
 }
 
-/// Draws nodes under one owner's ids and link handler.
+/// What an owner hands its drawing: pictures' folder and presses.
+pub(crate) struct Hooks<'a> {
+    pub base: &'a Option<Arc<Path>>,
+    pub on_link: &'a Option<OnLink>,
+    pub on_heading: &'a Option<OnHeading>,
+    pub on_point: &'a Option<OnPoint>,
+}
+
+/// Draws nodes under one owner's ids and hooks.
 struct Draw<'a> {
     id: &'a ElementId,
-    on_link: &'a Option<OnLink>,
+    hooks: Hooks<'a>,
     next: std::cell::Cell<usize>,
     sections: &'a Option<Entity<Sections>>,
     headings: std::cell::Cell<usize>,
     code: &'a Option<DrawCode>,
-    base: &'a Option<Arc<Path>>,
     /// Text size against the theme's.
     scale: f32,
     /// Lists open around the node drawn.
     lists: std::cell::Cell<usize>,
-    on_heading: &'a Option<OnHeading>,
+    /// Drawing a table's cells.
+    table: std::cell::Cell<bool>,
 }
 
 impl Draw<'_> {
@@ -174,16 +185,20 @@ impl Draw<'_> {
             .collect();
         let styled =
             StyledText::new(inline.text.clone()).with_highlights(crate::editor::stack(styles));
-        if inline.links.is_empty() {
-            return styled.into_any_element();
-        }
-        let (ranges, urls): (Vec<_>, Vec<_>) = inline.links.iter().cloned().unzip();
-        let on_link = self.on_link.clone();
-        InteractiveText::new(self.key("links"), styled)
-            .on_click(ranges, move |ix, window, cx| {
-                open_link(&on_link, &urls[ix], window, cx)
-            })
-            .into_any_element()
+        let layout = styled.layout().clone();
+        let drawn = match inline.links.is_empty() {
+            true => styled.into_any_element(),
+            false => {
+                let (ranges, urls): (Vec<_>, Vec<_>) = inline.links.iter().cloned().unzip();
+                let on_link = self.hooks.on_link.clone();
+                InteractiveText::new(self.key("links"), styled)
+                    .on_click(ranges, move |ix, window, cx| {
+                        open_link(&on_link, &urls[ix], window, cx)
+                    })
+                    .into_any_element()
+            }
+        };
+        self.point_text(drawn, layout, inline)
     }
 
     fn nodes(&self, nodes: &[Node], cx: &App) -> Vec<AnyElement> {
@@ -191,6 +206,14 @@ impl Draw<'_> {
     }
 
     fn node(&self, node: &Node, cx: &App) -> AnyElement {
+        let table = self.table.get();
+        self.table.set(table || matches!(node, Node::Table { .. }));
+        let drawn = self.drawn(node, cx);
+        self.table.set(table);
+        drawn
+    }
+
+    fn drawn(&self, node: &Node, cx: &App) -> AnyElement {
         let theme = cx.theme();
         let colors = theme.colors.clone();
         match node {
@@ -234,9 +257,14 @@ impl Draw<'_> {
                 .text_color(colors.fg_muted)
                 .children(self.nodes(inner, cx))
                 .into_any_element(),
-            Node::Code { language, text } => {
+            Node::Code {
+                language,
+                text,
+                from,
+            } => {
                 if language.as_deref() == Some("mermaid") {
-                    return Diagram::new(self.key("diagram"), text.clone()).into_any_element();
+                    let diagram = Diagram::new(self.key("diagram"), text.clone());
+                    return self.point_code(diagram.into_any_element(), None, None);
                 }
                 if let Some(draw) = self.code {
                     return draw(
@@ -251,7 +279,9 @@ impl Draw<'_> {
                         .map_or_else(Vec::new, |syntax| code_colors_with(text, syntax, cx)),
                     None => code_colors(text, cx),
                 };
-                div()
+                let code = StyledText::new(text.clone()).with_highlights(styles);
+                let layout = code.layout().clone();
+                let block = div()
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -267,8 +297,9 @@ impl Draw<'_> {
                             .text_color(colors.fg_subtle)
                             .child(name)
                     }))
-                    .child(StyledText::new(text.clone()).with_highlights(styles))
-                    .into_any_element()
+                    .child(code)
+                    .into_any_element();
+                self.point_code(block, Some(layout), *from)
             }
             Node::List { start, items } => self.list(start, items, cx),
             Node::Table { aligns, head, rows } => {
@@ -340,23 +371,28 @@ impl Draw<'_> {
                     Err(error) => failed(&error, tex, cx),
                 })
                 .into_any_element(),
-            Node::Image { alt, url, link } => {
+            Node::Image { alt, url, link, at } => {
                 let picture = div().id(self.key("image")).child(Picture {
                     id: self.key("picture"),
                     alt: alt.clone(),
                     url: url.clone(),
-                    base: self.base.clone(),
+                    base: self.hooks.base.clone(),
                 });
-                let Some(link) = link.clone() else {
-                    return picture.into_any_element();
+                let drawn = match link.clone() {
+                    None => picture.into_any_element(),
+                    Some(address) => {
+                        let on_link = self.hooks.on_link.clone();
+                        picture
+                            .tab_index(0)
+                            .focus_ring(cx)
+                            .cursor_pointer()
+                            .on_click(move |_, window, cx| {
+                                open_link(&on_link, &address, window, cx)
+                            })
+                            .into_any_element()
+                    }
                 };
-                let on_link = self.on_link.clone();
-                picture
-                    .tab_index(0)
-                    .focus_ring(cx)
-                    .cursor_pointer()
-                    .on_click(move |_, window, cx| open_link(&on_link, &link, window, cx))
-                    .into_any_element()
+                self.point_image(drawn, *at, url, link)
             }
             Node::Footnote { label, body } => div()
                 .flex()
@@ -389,27 +425,24 @@ fn open_link(on_link: &Option<OnLink>, url: &str, window: &mut Window, cx: &mut 
     }
 }
 
-/// Parsed `nodes` drawn under `id`; pictures read from `base`.
+/// Parsed `nodes` drawn under `id`, with the owner's hooks.
 pub(crate) fn draw_nodes(
     id: &ElementId,
     nodes: &[Node],
-    base: &Option<Arc<Path>>,
-    on_link: &Option<OnLink>,
-    on_heading: &Option<OnHeading>,
+    hooks: Hooks,
     scale: f32,
     cx: &App,
 ) -> Vec<AnyElement> {
     let draw = Draw {
         id,
-        on_link,
+        hooks,
         next: std::cell::Cell::new(0),
         sections: &None,
         headings: std::cell::Cell::new(0),
         code: &None,
-        base,
         scale,
         lists: std::cell::Cell::new(0),
-        on_heading,
+        table: std::cell::Cell::new(false),
     };
     draw.nodes(nodes, cx)
 }
@@ -420,15 +453,19 @@ impl RenderOnce for MarkdownRenderer {
         let nodes = parse(&self.source);
         let draw = Draw {
             id: &self.id,
-            on_link: &self.on_link,
+            hooks: Hooks {
+                base: &self.base,
+                on_link: &self.on_link,
+                on_heading: &None,
+                on_point: &None,
+            },
             next: std::cell::Cell::new(0),
             sections: &self.sections,
             headings: std::cell::Cell::new(0),
             code: &self.code,
-            base: &self.base,
             scale: 1.0,
             lists: std::cell::Cell::new(0),
-            on_heading: &None,
+            table: std::cell::Cell::new(false),
         };
         div()
             .flex()

@@ -4,9 +4,12 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, actions, div, list, prelude::FluentBuilder as _,
 };
 
-use super::MarkdownDocument;
+use super::{MarkdownDocument, edit::Landing};
 use crate::{
-    documents::{MarkdownMode, render::draw_nodes},
+    documents::{
+        MarkdownMode,
+        render::{Hooks, Pointed, draw_nodes},
+    },
     forms::{self, Down, Up},
     primitives::FocusRing as _,
     theme::{ActiveTheme, Radius, TextSize},
@@ -55,6 +58,9 @@ impl MarkdownDocument {
 
     /// A block, or the end.
     fn block_item(&mut self, ix: usize, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let editing = self.mode == MarkdownMode::Visual;
+        let drawn = editing && ix < self.parsed.blocks.len();
+        let on_point = drawn.then(|| self.on_point(ix, cx));
         let theme = cx.theme();
         let colors = theme.colors.clone();
         let (radius, body, mono) = (
@@ -64,7 +70,6 @@ impl MarkdownDocument {
         );
         // Focus fades all but the reader's block.
         let faded = self.look.focus && editing_mode(self.mode) && ix != self.current_block(cx);
-        let editing = self.mode == MarkdownMode::Visual;
         let open = self.open.as_ref();
         let field = |open: &super::Open| {
             div()
@@ -99,9 +104,12 @@ impl MarkdownDocument {
                 .children(draw_nodes(
                     &("render", ix).into(),
                     nodes,
-                    &self.base,
-                    &self.on_link,
-                    &self.on_heading,
+                    Hooks {
+                        base: &self.base,
+                        on_link: &self.on_link,
+                        on_heading: &self.on_heading,
+                        on_point: &on_point,
+                    },
                     self.look.scale,
                     cx,
                 )),
@@ -125,7 +133,7 @@ impl MarkdownDocument {
         }
     }
 
-    /// `element` opens block `ix` on a press, Enter or Space.
+    /// `element` opens block `ix`; a right press points.
     fn pressable(
         &self,
         element: gpui::Stateful<gpui::Div>,
@@ -149,13 +157,21 @@ impl MarkdownDocument {
                     }
                     window.prevent_default();
                     cx.stop_propagation();
-                    document.open(ix, false, window, cx);
+                    document.open(ix, Landing::End, window, cx);
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |document, _: &MouseDownEvent, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    document.point(ix, None, Pointed::block(), window, cx);
                 }),
             )
             .on_click(
                 cx.listener(move |document, event: &ClickEvent, window, cx| {
                     if event.is_keyboard() {
-                        document.open(ix, false, window, cx);
+                        document.open(ix, Landing::End, window, cx);
                     }
                 }),
             )

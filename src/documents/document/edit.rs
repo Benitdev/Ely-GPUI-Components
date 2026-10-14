@@ -12,8 +12,17 @@ use crate::{
     forms::{InputEvent, TextInput},
 };
 
+/// Where an opened block's caret lands.
+#[derive(Clone, Copy, Debug)]
+pub(super) enum Landing {
+    Start,
+    End,
+    /// A source byte of the drawn read.
+    At(usize),
+}
+
 /// Where byte `at` lies after `edit`, if it survives.
-fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<usize> {
+pub(super) fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<usize> {
     match edit {
         None => Some(at),
         Some((replaced, _)) if at < replaced.start => Some(at),
@@ -27,7 +36,7 @@ impl MarkdownDocument {
     pub(super) fn focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let empty = self.editor.read(cx).text().trim().is_empty() && self.read_now(cx);
         if self.mode == MarkdownMode::Visual && self.open.is_none() && empty {
-            self.open(None, false, window, cx);
+            self.open(None, Landing::End, window, cx);
         }
     }
 
@@ -47,7 +56,7 @@ impl MarkdownDocument {
     pub(super) fn open(
         &mut self,
         ix: Option<usize>,
-        at_start: bool,
+        landing: Landing,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -78,6 +87,17 @@ impl MarkdownDocument {
                 (block.range.clone(), false)
             }
         };
+        let caret = match landing {
+            Landing::Start => Some(0),
+            Landing::End => None,
+            Landing::At(at) => match moved(at, &written) {
+                Some(at) if range.contains(&at) || at == range.end => Some(at - range.start),
+                _ => {
+                    log::warn!("markdown document: the pressed byte left its block");
+                    None
+                }
+            },
+        };
         let source = text[range.clone()].to_string();
         let input = cx.new(|cx| {
             TextInput::new(window, cx)
@@ -86,8 +106,8 @@ impl MarkdownDocument {
         });
         input.update(cx, |input, cx| {
             input.set_text(source, cx);
-            if at_start {
-                input.select(0..0, cx);
+            if let Some(caret) = caret {
+                input.select(caret..caret, cx);
             }
         });
         window.focus(&input.focus_handle(cx), cx);
@@ -166,7 +186,8 @@ impl MarkdownDocument {
         let Some(next) = next else {
             return false;
         };
-        self.open(Some(next), down, window, cx);
+        let landing = if down { Landing::Start } else { Landing::End };
+        self.open(Some(next), landing, window, cx);
         true
     }
 }

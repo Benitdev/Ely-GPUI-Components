@@ -5,6 +5,7 @@ mod lists;
 mod look;
 mod parse;
 mod place;
+mod point;
 mod tables;
 #[cfg(all(test, feature = "test-support"))]
 mod tests;
@@ -23,6 +24,7 @@ pub use crate::documents::tree::DocumentHeading;
 pub use attach::Attachment;
 pub use look::DocumentLook;
 use parse::{Parsed, alike, parsed};
+pub use point::{DocumentTarget, TargetBlock};
 pub use tables::{TableEdit, TableRefusal};
 
 use super::{
@@ -46,12 +48,14 @@ pub const LARGEST_READ: usize = 2 << 20;
 const PAUSE: Duration = Duration::from_millis(300);
 
 /// What the document tells its owner.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentEvent {
     /// The text changed, typed in any mode or replaced.
     Changed,
     /// A new read of the text: blocks and headings.
     Parsed,
+    /// A secondary press moved the caret onto this.
+    Pointed(DocumentTarget),
 }
 
 /// A top line asked, numbered so late callbacks know theirs.

@@ -7,6 +7,7 @@ use super::markdown::{span, tree, walk};
 mod blocks;
 mod emoji;
 mod html;
+mod sources;
 
 use blocks::html_block_text;
 pub use blocks::{AlertKind, DocumentHeading, alert, is_toc};
@@ -33,6 +34,8 @@ pub struct Inline {
     pub text: String,
     pub styles: Vec<(Range<usize>, Style)>,
     pub links: Vec<(Range<usize>, String)>,
+    /// Where each piece was written: drawn start, source span.
+    pub sources: Vec<(usize, Range<usize>)>,
 }
 
 /// A block of a markdown document.
@@ -44,6 +47,8 @@ pub enum Node {
     Code {
         language: Option<String>,
         text: String,
+        /// Where `text` starts in the source, if written as drawn.
+        from: Option<usize>,
     },
     /// Items and blocks; ordered from `start`; tasks carry checkboxes.
     List {
@@ -63,6 +68,8 @@ pub enum Node {
         alt: String,
         url: String,
         link: Option<String>,
+        /// Its source start.
+        at: usize,
     },
     Footnote {
         label: String,
@@ -315,6 +322,7 @@ impl<'a> Reader<'a> {
             mdast::Node::Code(code) => out.push(Node::Code {
                 language: code.lang.clone(),
                 text: code.value.clone(),
+                from: sources::code_from(self.source, node, &code.value),
             }),
             mdast::Node::Math(math) => out.push(Node::Math(math.value.clone())),
             mdast::Node::List(list) => {
@@ -386,7 +394,10 @@ impl<'a> Reader<'a> {
     pub fn label(&self, note: &mdast::FootnoteDefinition) -> String {
         match self.note(&note.identifier) {
             Some(number) => number.to_string(),
-            None => note.label.clone().unwrap_or_else(|| note.identifier.clone()),
+            None => note
+                .label
+                .clone()
+                .unwrap_or_else(|| note.identifier.clone()),
         }
     }
 
@@ -403,6 +414,9 @@ impl<'a> Reader<'a> {
         // Any element ends the DOM text node.
         if !matches!(node, mdast::Node::Text(_) | mdast::Node::Html(_)) {
             run.shortcodes.split();
+        }
+        if let Some(written) = sources::written(node, self.source) {
+            run.text.sources.push((run.text.text.len(), written));
         }
         let text = &mut run.text;
         let (children, (name, style), url) = match node {
@@ -422,14 +436,14 @@ impl<'a> Reader<'a> {
                     }
                     _ => unreachable!("matched as an image"),
                 };
-                let link = run.link();
+                let (link, at) = (run.link(), span(node).start);
                 return match images {
                     Images::Alt => run.text.text.push_str(&alt),
                     Images::Split(out) => {
                         text_block(run.cut(), out);
-                        out.push(Node::Image { alt, url, link })
+                        out.push(Node::Image { alt, url, link, at })
                     }
-                    Images::After(out) => out.push(Node::Image { alt, url, link }),
+                    Images::After(out) => out.push(Node::Image { alt, url, link, at }),
                 };
             }
             mdast::Node::Html(written) => return run.html(&written.value),
