@@ -2,11 +2,15 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use gpui::{Entity, Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
+use gpui::{Entity, Modifiers, MouseButton, Pixels, TestAppContext, VisualTestContext, point, px};
 
 use super::{open, type_in};
 use crate::{
-    documents::{DocumentEvent, DocumentTarget, MarkdownDocument, MarkdownMode, TargetBlock},
+    documents::{
+        DocumentEvent, DocumentTarget, MarkdownDocument, MarkdownMode, TargetBlock,
+        document::parse::parsed,
+        tree::{Inline, Node},
+    },
     theme::{ActiveTheme, TextSize},
 };
 
@@ -162,4 +166,165 @@ fn a_secondary_press_past_the_end_goes_to_the_end(cx: &mut TestAppContext) {
     };
     assert_eq!(*heard.borrow(), [expected]);
     assert!(document.read_with(cx, |document, _| document.open.is_none()));
+}
+
+/// Base and small text sizes, in pixels.
+fn sizes(cx: &mut VisualTestContext) -> (Pixels, Pixels) {
+    cx.update(|window, cx| {
+        let size = |size| cx.theme().text_size(size).to_pixels(window.rem_size());
+        (size(TextSize::Base), size(TextSize::Sm))
+    })
+}
+
+fn press_at(x: Pixels, y: Pixels, button: MouseButton, cx: &mut VisualTestContext) {
+    cx.simulate_mouse_down(point(x, y), button, Modifiers::none());
+    cx.simulate_mouse_up(point(x, y), button, Modifiers::none());
+    cx.run_until_parked();
+}
+
+/// Presses block 0's code glyph `k` on `line`.
+fn press_lines(k: usize, line: usize, button: MouseButton, cx: &mut VisualTestContext) {
+    let bounds = cx.debug_bounds("markdown-block-0").expect("drawn");
+    let (body, small) = sizes(cx);
+    let x = bounds.left() + px(25.0) + small * 0.6 * (k as f32 + 0.25);
+    let y = bounds.top() + px(17.0) + body * 1.6 * (line as f32 + 0.25);
+    press_at(x, y, button, cx);
+}
+
+/// The source byte under drawn `shown` in block 0.
+fn read_back(source: &str, shown: &str) -> Option<usize> {
+    fn find<'a>(nodes: &'a [Node], shown: &str) -> Option<&'a Inline> {
+        nodes.iter().find_map(|node| match node {
+            Node::Paragraph(inline) | Node::Heading(_, inline) if inline.text.contains(shown) => {
+                Some(inline)
+            }
+            Node::Quote(body) | Node::Alert { body, .. } | Node::Footnote { body, .. } => {
+                find(body, shown)
+            }
+            _ => None,
+        })
+    }
+    let parsed = parsed(source);
+    let block = &parsed.blocks[0];
+    let inline = find(block.nodes.as_ref().expect("drawn"), shown).expect("shown");
+    let at = inline.text.find(shown).expect("shown");
+    let written = inline.source_at(&source[block.range.start..], at)?;
+    Some(block.range.start + written)
+}
+
+#[test]
+fn quote_marks_escapes_trims_and_alert_markers_read_back() {
+    let cases = [
+        ("> alpha\n> beta", "eta"),
+        ("> [!NOTE]\n> alpha beta", "beta"),
+        ("a \\*star\\* z", "*star"),
+        ("a ` xy ` z", "xy"),
+        ("<div>alpha beta</div>\n", "eta"),
+        ("> <div>\n> alpha beta</div>\n", "beta"),
+    ];
+    for (source, shown) in cases {
+        assert_eq!(read_back(source, shown), source.find(shown), "{source:?}");
+    }
+}
+
+#[gpui::test]
+fn a_secondary_press_in_a_quote_lands_past_its_mark(cx: &mut TestAppContext) {
+    let source = "> alpha\n> beta";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    let bounds = cx.debug_bounds("markdown-block-0").expect("drawn");
+    let (body, _) = sizes(cx);
+    let x = bounds.left() + px(31.0) + body * 0.6 * 7.25;
+    press_at(x, bounds.top() + px(10.0), MouseButton::Right, cx);
+    let at = source.find("eta").unwrap();
+    assert_eq!(*events.borrow(), [target(at, TargetBlock::Quote)]);
+}
+
+#[gpui::test]
+fn a_secondary_press_in_an_alert_lands_past_its_marker(cx: &mut TestAppContext) {
+    let source = "> [!NOTE]\n> alpha beta";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    let bounds = cx.debug_bounds("markdown-block-0").expect("drawn");
+    let (body, _) = sizes(cx);
+    let x = bounds.left() + px(31.0) + body * 0.6 * 6.25;
+    let y = bounds.top() + px(15.0) + body * 1.6;
+    press_at(x, y, MouseButton::Right, cx);
+    let at = source.find("beta").unwrap();
+    assert_eq!(*events.borrow(), [target(at, TargetBlock::Alert)]);
+}
+
+#[gpui::test]
+fn an_html_block_press_lands_on_its_character(cx: &mut TestAppContext) {
+    let source = "<div>alpha beta</div>\n";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    press_on(0, 7, MouseButton::Right, cx);
+    let at = source.find("eta").unwrap();
+    assert_eq!(*events.borrow(), [target(at, TargetBlock::Html)]);
+    press_on(0, 7, MouseButton::Left, cx);
+    assert_eq!(opened_caret(&document, cx), at);
+}
+
+#[gpui::test]
+fn a_definition_press_lands_on_its_character(cx: &mut TestAppContext) {
+    let source = "[ref]: https://ely.dev\n";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    press_on(0, 10, MouseButton::Right, cx);
+    assert_eq!(*events.borrow(), [target(10, TargetBlock::Definition)]);
+}
+
+#[gpui::test]
+fn code_presses_land_line_for_line(cx: &mut TestAppContext) {
+    for source in ["    alpha\n    beta\n", "```\r\nalpha\r\nbeta\r\n```\r\n"] {
+        let (document, cx) = open(source, MarkdownMode::Visual, cx);
+        let events = heard(&document, cx);
+        press_lines(1, 1, MouseButton::Right, cx);
+        let at = source.find("eta").unwrap();
+        let expected = DocumentTarget {
+            in_code: true,
+            ..target(at, TargetBlock::Code)
+        };
+        assert_eq!(*events.borrow(), [expected], "{source:?}");
+        press_lines(1, 1, MouseButton::Left, cx);
+        assert_eq!(opened_caret(&document, cx), at, "{source:?}");
+    }
+}
+
+#[gpui::test]
+fn a_front_matter_press_lands_past_its_fence(cx: &mut TestAppContext) {
+    let source = "---\ntitle: value\n---\n";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    press_lines(7, 0, MouseButton::Right, cx);
+    let at = source.find("value").unwrap();
+    assert_eq!(*events.borrow(), [target(at, TargetBlock::FrontMatter)]);
+    press_lines(7, 0, MouseButton::Left, cx);
+    assert_eq!(opened_caret(&document, cx), at);
+}
+
+#[gpui::test]
+fn a_secondary_press_on_an_empty_document_opens_nothing(cx: &mut TestAppContext) {
+    let (document, cx) = open("", MarkdownMode::Visual, cx);
+    assert!(document.read_with(cx, |document, _| document.open.is_none()));
+    let events = heard(&document, cx);
+    press_at(px(25.0), px(25.0), MouseButton::Right, cx);
+    assert_eq!(events.borrow().len(), 1);
+    assert!(document.read_with(cx, |document, _| document.open.is_none()));
+}
+
+#[gpui::test]
+fn a_write_back_that_changes_the_pressed_block_points_nowhere(cx: &mut TestAppContext) {
+    let (document, cx) = open("First.\n\nalpha beta\n", MarkdownMode::Visual, cx);
+    let events = heard(&document, cx);
+    type_in(&document, Some(0), Some("```"), cx);
+    press_on(1, 7, MouseButton::Right, cx);
+    let written = "```\n\nalpha beta\n";
+    assert_eq!(super::text(&document, cx), written);
+    assert!(
+        events.borrow().is_empty(),
+        "the pressed paragraph became code"
+    );
+    assert_ne!(caret(&document, cx), written.find("eta").unwrap());
 }

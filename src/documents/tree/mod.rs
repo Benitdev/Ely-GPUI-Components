@@ -7,11 +7,14 @@ use super::markdown::{span, tree, walk};
 mod blocks;
 mod emoji;
 mod html;
+mod html_block;
 mod sources;
+mod stack;
 
-use blocks::html_block_text;
 pub use blocks::{AlertKind, DocumentHeading, alert, is_toc};
-use html::InlineTag;
+use html_block::html_block_text;
+pub(crate) use sources::lines_at;
+use stack::close;
 
 /// How a stretch of inline text prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,8 +50,8 @@ pub enum Node {
     Code {
         language: Option<String>,
         text: String,
-        /// Where `text` starts in the source, if written as drawn.
-        from: Option<usize>,
+        /// Where its lines start in the source.
+        from: usize,
     },
     /// Items and blocks; ordered from `start`; tasks carry checkboxes.
     List {
@@ -82,8 +85,11 @@ pub enum Node {
     },
     /// `[toc]`: the file's headings.
     Toc(Vec<DocumentHeading>),
-    /// Front matter, its fences cut.
-    FrontMatter(String),
+    /// Front matter, its fences cut; lines start at `from`.
+    FrontMatter {
+        text: String,
+        from: usize,
+    },
 }
 
 /// A tree read against its source and its link definitions.
@@ -152,90 +158,6 @@ impl Run {
     fn push_plain(&mut self, shown: &str) {
         let soft = shown.replace("\r\n", " ").replace(['\r', '\n'], " ");
         self.text.text.push_str(&soft);
-    }
-
-    fn push(&mut self, opened: Opened) {
-        *self.named.entry(opened.name.clone()).or_default() += 1;
-        self.open.push(opened);
-    }
-
-    /// The innermost open link's address.
-    fn link(&self) -> Option<String> {
-        self.open.iter().rev().find_map(|opened| opened.url.clone())
-    }
-
-    /// Opens or closes an element for an inline HTML tag.
-    fn html(&mut self, written: &str) {
-        match html::inline_tag(written) {
-            InlineTag::Text(shown) => self.push_text(&shown),
-            InlineTag::Open { name, style, href } => self.start(&name, style, href),
-            InlineTag::Close(name) => {
-                self.shortcodes.split();
-                self.end(&name);
-            }
-            InlineTag::Break => {
-                self.shortcodes.split();
-                self.text.text.push('\n');
-            }
-            InlineTag::Gone => self.shortcodes.split(),
-        }
-    }
-
-    /// Opens `name`; a new `a` ends the open one.
-    fn start(&mut self, name: &str, style: Option<Style>, url: Option<String>) {
-        if name == "a" {
-            self.end("a");
-        }
-        self.shortcodes.split();
-        self.push(Opened {
-            name: name.to_string(),
-            start: self.text.text.len(),
-            style,
-            url,
-        });
-    }
-
-    /// Ends the innermost `name`, as HTML5 repairs nesting.
-    fn end(&mut self, name: &str) {
-        if self.count(name) == 0 {
-            return;
-        }
-        self.shortcodes.split();
-        let at = self
-            .open
-            .iter()
-            .rposition(|opened| opened.name == name)
-            .expect("a counted name is open");
-        let end = self.text.text.len();
-        if let Some((_, from)) = &mut self.owed {
-            *from = (*from).min(at);
-        }
-        let closed = self.open.split_off(at);
-        for opened in &closed {
-            close(&mut self.text, opened, end);
-            *self.named.get_mut(&opened.name).expect("counted") -= 1;
-        }
-        for opened in closed.into_iter().skip(1) {
-            if html::reopens(&opened.name) {
-                self.push(Opened {
-                    start: end,
-                    ..opened
-                });
-            }
-        }
-    }
-}
-
-/// Records `opened` as styled up to `end`.
-fn close(text: &mut Inline, opened: &Opened, end: usize) {
-    if opened.start >= end {
-        return;
-    }
-    if let Some(style) = opened.style {
-        text.styles.push((opened.start..end, style));
-    }
-    if let Some(url) = &opened.url {
-        text.links.push((opened.start..end, url.clone()));
     }
 }
 
@@ -322,7 +244,7 @@ impl<'a> Reader<'a> {
             mdast::Node::Code(code) => out.push(Node::Code {
                 language: code.lang.clone(),
                 text: code.value.clone(),
-                from: sources::code_from(self.source, node, &code.value),
+                from: sources::body(self.source, node),
             }),
             mdast::Node::Math(math) => out.push(Node::Math(math.value.clone())),
             mdast::Node::List(list) => {
@@ -363,9 +285,14 @@ impl<'a> Reader<'a> {
                 label: self.label(note),
                 body: self.nested(&note.children),
             }),
-            mdast::Node::Html(html) => text_block(html_block_text(&html.value), out),
-            mdast::Node::Yaml(yaml) => out.push(Node::FrontMatter(yaml.value.clone())),
-            mdast::Node::Toml(toml) => out.push(Node::FrontMatter(toml.value.clone())),
+            mdast::Node::Html(html) => {
+                text_block(html_block_text(&html.value, self.source, span(node)), out)
+            }
+            mdast::Node::Yaml(mdast::Yaml { value, .. })
+            | mdast::Node::Toml(mdast::Toml { value, .. }) => out.push(Node::FrontMatter {
+                text: value.clone(),
+                from: sources::body(self.source, node),
+            }),
             mdast::Node::Definition(_) => {}
             other => unreachable!("{other:?} is no block outside MDX"),
         }

@@ -1,14 +1,15 @@
 use gpui::{
     AnyElement, App, ClickEvent, Context, ExternalPaths, FontWeight, InteractiveElement,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, actions, div, list, prelude::FluentBuilder as _,
+    StatefulInteractiveElement, Styled, StyledText, Window, actions, div, list,
+    prelude::FluentBuilder as _,
 };
 
 use super::{MarkdownDocument, edit::Landing};
 use crate::{
     documents::{
         MarkdownMode,
-        render::{Hooks, Pointed, draw_nodes},
+        render::{Hooks, Pointed, draw_nodes, point_lines},
     },
     forms::{self, Down, Up},
     primitives::FocusRing as _,
@@ -113,11 +114,25 @@ impl MarkdownDocument {
                     self.look.scale,
                     cx,
                 )),
-            None => div()
-                .text_size(body)
-                .font_family(mono)
-                .text_color(colors.fg_muted)
-                .child(self.parsed.text[block.range.clone()].to_string()),
+            None => {
+                let raw = &self.parsed.text[block.range.clone()];
+                let drawn = StyledText::new(raw.to_string());
+                let layout = drawn.layout().clone();
+                let shown = div()
+                    .text_size(body)
+                    .font_family(mono)
+                    .text_color(colors.fg_muted)
+                    .child(drawn)
+                    .into_any_element();
+                div().child(point_lines(
+                    shown,
+                    layout,
+                    raw,
+                    0,
+                    &on_point,
+                    (false, false),
+                ))
+            }
         };
         let block = div()
             .id(("block", ix))

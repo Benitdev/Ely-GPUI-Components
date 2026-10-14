@@ -6,6 +6,7 @@ use markdown::mdast;
 use super::{DocumentEvent, MarkdownDocument, edit::Landing, edit::moved};
 use crate::documents::{
     render::{OnPoint, Place, Pointed},
+    tree::lines_at,
     tree::{alert, is_toc},
 };
 
@@ -35,7 +36,7 @@ impl TargetBlock {
             mdast::Node::Paragraph(_) if is_toc(node, source) => Self::Toc,
             mdast::Node::Paragraph(_) => Self::Paragraph,
             mdast::Node::Heading(heading) => Self::Heading(heading.depth),
-            mdast::Node::Blockquote(quote) if alert(quote).is_some() => Self::Alert,
+            mdast::Node::Blockquote(quote) if alert(quote, source).is_some() => Self::Alert,
             mdast::Node::Blockquote(_) => Self::Quote,
             mdast::Node::List(_) => Self::List,
             mdast::Node::Code(_) => Self::Code,
@@ -73,6 +74,10 @@ impl MarkdownDocument {
             // The drawing counts from its block's start.
             let at = match &pointed.place {
                 Place::Text(inline, drawn) => inline.source_at(&parsed.text[start..], *drawn),
+                // Unreadable lines land at their start.
+                Place::Lines { text, from, at } => {
+                    Some(lines_at(&parsed.text[start..], *from, text, *at).unwrap_or(*from))
+                }
                 Place::At(at) => Some(*at),
                 Place::Block => None,
             }
@@ -104,6 +109,7 @@ impl MarkdownDocument {
             block => block.flatten(),
         };
         let kind = block.map(|block| block.kind);
+        let pressed = block.map(|block| self.parsed.text[block.range.clone()].to_string());
         let at = at.or(block.map(|block| block.range.start));
         let written = self.commit(cx);
         if written.is_some() {
@@ -119,8 +125,17 @@ impl MarkdownDocument {
                 None => return log::warn!("markdown document: the pressed text was written over"),
             },
         };
+        // A write-back may change the pressed block.
+        let now = (self.parsed.blocks.iter())
+            .find(|block| block.range.start <= at && at <= block.range.end)
+            .map(|block| self.parsed.text[block.range.clone()].to_string());
+        if written.is_some() && pressed.is_some() && now != pressed {
+            return log::warn!("markdown document: the write-back changed the pressed block");
+        }
         self.editor
             .update(cx, |editor, cx| editor.select(std::iter::once(at..at), cx));
+        // Its focus opens no empty block.
+        self.pointing = !self.focus.is_focused(window);
         window.focus(&self.focus, cx);
         log::info!("markdown document: a secondary press puts the caret at byte {at}");
         cx.emit(DocumentEvent::Pointed(DocumentTarget {

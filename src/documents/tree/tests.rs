@@ -26,7 +26,7 @@ fn blocks_nest_as_written() {
         Node::Code {
             language: Some("rust".into()),
             text: "fn main() {}".into(),
-            from: Some(95)
+            from: 95
         }
     );
     assert_eq!(nodes[5], Node::Rule);

@@ -34,6 +34,9 @@ pub(super) fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<u
 impl MarkdownDocument {
     /// An empty, read visual document takes typing at once.
     pub(super) fn focused(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.pointing) {
+            return;
+        }
         let empty = self.editor.read(cx).text().trim().is_empty() && self.read_now(cx);
         if self.mode == MarkdownMode::Visual && self.open.is_none() && empty {
             self.open(None, Landing::End, window, cx);

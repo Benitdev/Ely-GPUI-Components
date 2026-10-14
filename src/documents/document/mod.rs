@@ -102,6 +102,8 @@ pub struct MarkdownDocument {
     /// The block, text, typing and heights last centered.
     centered: Option<(usize, u64, u64, [u64; 2])>,
     focus: FocusHandle,
+    /// A secondary press took focus.
+    pointing: bool,
     on_link: Option<OnLink>,
     on_heading: Option<OnHeading>,
     _subscriptions: Vec<Subscription>,
@@ -165,6 +167,7 @@ impl MarkdownDocument {
             centered: None,
             room: Pixels::ZERO,
             focus,
+            pointing: false,
             on_link: None,
             on_heading: Some(on_heading),
             _subscriptions: subscriptions,

@@ -14,6 +14,12 @@ pub(crate) enum Place {
     Text(Rc<Inline>, usize),
     /// A source byte.
     At(usize),
+    /// Drawn byte `at` of `text`, its lines written from `from`.
+    Lines {
+        text: Rc<str>,
+        from: usize,
+        at: usize,
+    },
     /// Somewhere the block holds no byte for.
     Block,
 }
@@ -47,36 +53,70 @@ impl Pointed {
 /// Takes a press's button and what it fell on.
 pub(crate) type OnPoint = Rc<dyn Fn(Pointed, MouseButton, &mut Window, &mut App)>;
 
+/// `element` hands its left and right presses to `on_point`.
+fn pointable(
+    element: AnyElement,
+    on_point: &Option<OnPoint>,
+    table: bool,
+    point: impl Fn(&MouseDownEvent) -> Pointed + 'static,
+) -> AnyElement {
+    let Some(on_point) = on_point.clone() else {
+        return element;
+    };
+    let point = Rc::new(point);
+    let press = move |button: MouseButton| {
+        let (on_point, point) = (on_point.clone(), point.clone());
+        move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+            // Cmd or Ctrl leaves the press to a link.
+            if button == MouseButton::Left && event.modifiers.secondary() {
+                return;
+            }
+            window.prevent_default();
+            cx.stop_propagation();
+            let mut pointed = point(event);
+            pointed.table |= table;
+            on_point(pointed, button, window, cx);
+        }
+    };
+    div()
+        .on_mouse_down(MouseButton::Left, press(MouseButton::Left))
+        .on_mouse_down(MouseButton::Right, press(MouseButton::Right))
+        .child(element)
+        .into_any_element()
+}
+
+/// Drawn `text`, its lines written from source byte `from`.
+pub(crate) fn point_lines(
+    element: AnyElement,
+    layout: TextLayout,
+    text: &str,
+    from: usize,
+    on_point: &Option<OnPoint>,
+    (table, code): (bool, bool),
+) -> AnyElement {
+    let text: Rc<str> = Rc::from(text);
+    pointable(element, on_point, table, move |event| {
+        let at = layout
+            .index_for_position(event.position)
+            .unwrap_or_else(|near| near);
+        Pointed {
+            code,
+            ..Pointed::at(Place::Lines {
+                text: text.clone(),
+                from,
+                at,
+            })
+        }
+    })
+}
+
 impl Draw<'_> {
-    /// `element` hands its left and right presses to the owner.
     fn pointable(
         &self,
         element: AnyElement,
         point: impl Fn(&MouseDownEvent) -> Pointed + 'static,
     ) -> AnyElement {
-        let Some(on_point) = self.hooks.on_point.clone() else {
-            return element;
-        };
-        let (point, table) = (Rc::new(point), self.table.get());
-        let press = move |button: MouseButton| {
-            let (on_point, point) = (on_point.clone(), point.clone());
-            move |event: &MouseDownEvent, window: &mut Window, cx: &mut App| {
-                // Cmd or Ctrl leaves the press to a link.
-                if button == MouseButton::Left && event.modifiers.secondary() {
-                    return;
-                }
-                window.prevent_default();
-                cx.stop_propagation();
-                let mut pointed = point(event);
-                pointed.table |= table;
-                on_point(pointed, button, window, cx);
-            }
-        };
-        div()
-            .on_mouse_down(MouseButton::Left, press(MouseButton::Left))
-            .on_mouse_down(MouseButton::Right, press(MouseButton::Right))
-            .child(element)
-            .into_any_element()
+        pointable(element, self.hooks.on_point, self.table.get(), point)
     }
 
     /// Drawn `inline`; a press finds its byte through `layout`.
@@ -102,27 +142,28 @@ impl Draw<'_> {
         })
     }
 
-    /// A code block; its text starts at source byte `from`.
+    /// A code block; its lines start at source byte `from`.
     pub(super) fn point_code(
         &self,
         element: AnyElement,
-        layout: Option<TextLayout>,
-        from: Option<usize>,
+        drawn: Option<(TextLayout, &str)>,
+        from: usize,
     ) -> AnyElement {
-        self.pointable(element, move |event| {
-            let place = match (&layout, from) {
-                (Some(layout), Some(from)) => Place::At(
-                    from + layout
-                        .index_for_position(event.position)
-                        .unwrap_or_else(|near| near),
-                ),
-                _ => Place::Block,
-            };
-            Pointed {
+        let table = self.table.get();
+        match drawn {
+            Some((layout, text)) => point_lines(
+                element,
+                layout,
+                text,
+                from,
+                self.hooks.on_point,
+                (table, true),
+            ),
+            None => self.pointable(element, |_| Pointed {
                 code: true,
-                ..Pointed::at(place)
-            }
-        })
+                ..Pointed::block()
+            }),
+        }
     }
 
     /// A picture written at source byte `at`.

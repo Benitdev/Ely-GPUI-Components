@@ -107,7 +107,8 @@ mod tests {
             ]
         );
         let drawn = |ix: usize| found.blocks[ix].nodes.clone().expect("drawn");
-        assert_eq!(drawn(0), [Node::FrontMatter("title: a".into())]);
+        let text = "title: a".into();
+        assert_eq!(drawn(0), [Node::FrontMatter { text, from: 4 }]);
         assert!(matches!(&drawn(3)[..], [Node::Paragraph(line)] if line.text == "x"));
         let headings: Vec<(u8, &str, usize)> = found
             .headings

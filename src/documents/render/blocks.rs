@@ -1,8 +1,9 @@
 use gpui::{
-    AnyElement, App, FontWeight, IntoElement, MouseButton, ParentElement, Styled, div, prelude::*,
+    AnyElement, App, FontWeight, IntoElement, MouseButton, ParentElement, Styled, StyledText, div,
+    prelude::*,
 };
 
-use super::Draw;
+use super::{Draw, point::point_lines};
 use crate::{
     documents::tree::{AlertKind, DocumentHeading, Node},
     primitives::{FocusRing as _, Icon, IconName},
@@ -171,16 +172,26 @@ impl Draw<'_> {
     }
 
     /// Front matter as written, inside its box.
-    pub(super) fn front_matter(&self, text: &str, cx: &App) -> AnyElement {
+    pub(super) fn front_matter(&self, text: &str, from: usize, cx: &App) -> AnyElement {
         let theme = cx.theme();
-        div()
+        let drawn = StyledText::new(text.to_string());
+        let layout = drawn.layout().clone();
+        let block = div()
             .p_3()
             .rounded(theme.radius(Radius::Md))
             .bg(theme.colors.sunken)
             .font_family(theme.mono_family.clone())
             .text_size(theme.text_size(TextSize::Sm) * self.scale)
             .text_color(theme.colors.fg_muted)
-            .child(text.to_string())
-            .into_any_element()
+            .child(drawn)
+            .into_any_element();
+        point_lines(
+            block,
+            layout,
+            text,
+            from,
+            self.hooks.on_point,
+            (false, false),
+        )
     }
 }

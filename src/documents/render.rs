@@ -24,7 +24,7 @@ use crate::{
 mod blocks;
 mod point;
 
-pub(crate) use point::{OnPoint, Place, Pointed};
+pub(crate) use point::{OnPoint, Place, Pointed, point_lines};
 
 pub(crate) type OnLink = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 /// Reveals the heading whose source starts at a byte.
@@ -264,7 +264,7 @@ impl Draw<'_> {
             } => {
                 if language.as_deref() == Some("mermaid") {
                     let diagram = Diagram::new(self.key("diagram"), text.clone());
-                    return self.point_code(diagram.into_any_element(), None, None);
+                    return self.point_code(diagram.into_any_element(), None, *from);
                 }
                 if let Some(draw) = self.code {
                     return draw(
@@ -299,7 +299,7 @@ impl Draw<'_> {
                     }))
                     .child(code)
                     .into_any_element();
-                self.point_code(block, Some(layout), *from)
+                self.point_code(block, Some((layout, text)), *from)
             }
             Node::List { start, items } => self.list(start, items, cx),
             Node::Table { aligns, head, rows } => {
@@ -410,7 +410,7 @@ impl Draw<'_> {
                 .into_any_element(),
             Node::Alert { kind, body } => self.alert(*kind, body, cx),
             Node::Toc(headings) => self.toc(headings, cx),
-            Node::FrontMatter(text) => self.front_matter(text, cx),
+            Node::FrontMatter { text, from } => self.front_matter(text, *from, cx),
         }
     }
 }
