@@ -4,6 +4,8 @@ use markdown::mdast::{self, AlignKind};
 
 use super::markdown::{span, tree, walk};
 
+mod html;
+
 /// How a stretch of inline text prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Style {
@@ -14,6 +16,9 @@ pub enum Style {
     Link,
     Math,
     Footnote,
+    Underline,
+    /// A highlighted run, as `<mark>`.
+    Mark,
 }
 
 /// Inline text, its styled stretches and link addresses.
@@ -63,13 +68,23 @@ pub enum Node {
 pub(crate) struct Reader<'a> {
     source: &'a str,
     urls: HashMap<String, String>,
+    /// Footnotes numbered by their first reference.
+    notes: HashMap<String, usize>,
+}
+
+/// A style open in a run; `tag` names an HTML one.
+struct Opened {
+    start: usize,
+    style: Style,
+    url: Option<String>,
+    tag: Option<String>,
 }
 
 /// Inline text being built, and the containers open around it.
 #[derive(Default)]
 struct Run {
     text: Inline,
-    open: Vec<(usize, Style, Option<String>)>,
+    open: Vec<Opened>,
 }
 
 impl Run {
@@ -77,21 +92,65 @@ impl Run {
     fn cut(&mut self) -> Inline {
         let mut done = std::mem::take(&mut self.text);
         let end = done.text.len();
-        for (start, style, url) in self.open.iter_mut().rev() {
-            if *start < end {
-                done.styles.push((*start..end, *style));
-                if let Some(url) = url {
-                    done.links.push((*start..end, url.clone()));
-                }
-            }
-            *start = 0;
+        for opened in self.open.iter_mut().rev() {
+            close(&mut done, opened, end);
+            opened.start = 0;
         }
         done
     }
 
     /// The innermost open link's address.
     fn link(&self) -> Option<String> {
-        self.open.iter().rev().find_map(|(_, _, url)| url.clone())
+        self.open.iter().rev().find_map(|opened| opened.url.clone())
+    }
+
+    /// Opens or closes a style for an inline HTML tag.
+    fn html(&mut self, written: &str) {
+        let Some(tag) = html::tag(written) else {
+            return;
+        };
+        if tag.name == "br" {
+            return self.text.text.push('\n');
+        }
+        let Some(style) = html::inline_style(&tag.name) else {
+            return;
+        };
+        // Only tags inside the innermost container match.
+        let floor = self
+            .open
+            .iter()
+            .rposition(|opened| opened.tag.is_none())
+            .map_or(0, |at| at + 1);
+        if tag.closing {
+            let found = self.open[floor..]
+                .iter()
+                .rposition(|opened| opened.tag.as_ref() == Some(&tag.name));
+            if let Some(at) = found {
+                let (opened, end) = (self.open.remove(floor + at), self.text.text.len());
+                close(&mut self.text, &opened, end);
+            }
+            return;
+        }
+        let url = tag.attribute("href").map(str::to_string);
+        if style == Style::Link && url.is_none() {
+            return;
+        }
+        self.open.push(Opened {
+            start: self.text.text.len(),
+            style,
+            url,
+            tag: Some(tag.name),
+        });
+    }
+}
+
+/// Records `opened` as styled up to `end`.
+fn close(text: &mut Inline, opened: &Opened, end: usize) {
+    if opened.start < end {
+        text.styles.push((opened.start..end, opened.style));
+        if let Some(url) = &opened.url {
+            text.links.push((opened.start..end, url.clone()));
+        }
     }
 }
 
@@ -111,14 +170,25 @@ impl<'a> Reader<'a> {
     pub(crate) fn new(source: &'a str, root: &mdast::Node) -> Self {
         let mut nodes = Vec::new();
         walk(root, &mut nodes);
-        let mut urls = HashMap::new();
+        let (mut urls, mut notes) = (HashMap::new(), HashMap::new());
         for node in nodes {
-            if let mdast::Node::Definition(definition) = node {
-                urls.entry(definition.identifier.clone())
-                    .or_insert_with(|| definition.url.clone());
+            match node {
+                mdast::Node::Definition(definition) => {
+                    urls.entry(definition.identifier.clone())
+                        .or_insert_with(|| definition.url.clone());
+                }
+                mdast::Node::FootnoteReference(note) => {
+                    let next = notes.len() + 1;
+                    notes.entry(note.identifier.clone()).or_insert(next);
+                }
+                _ => {}
             }
         }
-        Self { source, urls }
+        Self {
+            source,
+            urls,
+            notes,
+        }
     }
 
     fn blocks(&self, nodes: &[mdast::Node], out: &mut Vec<Node>) {
@@ -193,10 +263,13 @@ impl<'a> Reader<'a> {
             }
             mdast::Node::ThematicBreak(_) => out.push(Node::Rule),
             mdast::Node::FootnoteDefinition(note) => out.push(Node::Footnote {
-                label: note
-                    .label
-                    .clone()
-                    .unwrap_or_else(|| note.identifier.clone()),
+                label: match self.notes.get(&note.identifier) {
+                    Some(number) => number.to_string(),
+                    None => note
+                        .label
+                        .clone()
+                        .unwrap_or_else(|| note.identifier.clone()),
+                },
                 body: self.nested(&note.children),
             }),
             mdast::Node::Html(_) | mdast::Node::Definition(_) => {}
@@ -232,14 +305,14 @@ impl<'a> Reader<'a> {
         let (children, style, url) = match node {
             mdast::Node::Text(words) => {
                 let soft = words.value.replace("\r\n", " ").replace(['\r', '\n'], " ");
-                return text.text.push_str(&soft);
+                return text.text.push_str(&html::emoji(&soft));
             }
             mdast::Node::Break(_) => return text.text.push('\n'),
             mdast::Node::InlineCode(code) => return styled(text, &code.value, Style::Code),
             mdast::Node::InlineMath(math) => return styled(text, &math.value, Style::Math),
             mdast::Node::FootnoteReference(note) => {
-                let label = note.label.as_ref().unwrap_or(&note.identifier);
-                return styled(text, &format!("[{label}]"), Style::Footnote);
+                let number = self.notes[&note.identifier];
+                return styled(text, &html::superscript(number), Style::Footnote);
             }
             mdast::Node::Image(_) | mdast::Node::ImageReference(_) => {
                 let (alt, url) = match node {
@@ -259,7 +332,7 @@ impl<'a> Reader<'a> {
                     Images::After(out) => out.push(Node::Image { alt, url, link }),
                 };
             }
-            mdast::Node::Html(_) => return,
+            mdast::Node::Html(written) => return run.html(&written.value),
             mdast::Node::Strong(strong) => (&strong.children, Style::Strong, None),
             mdast::Node::Emphasis(emphasis) => (&emphasis.children, Style::Emphasis, None),
             mdast::Node::Delete(delete) => (&delete.children, Style::Strike, None),
@@ -271,17 +344,24 @@ impl<'a> Reader<'a> {
             ),
             other => unreachable!("{other:?} is no inline outside MDX"),
         };
-        run.open.push((run.text.text.len(), style, url));
+        run.open.push(Opened {
+            start: run.text.text.len(),
+            style,
+            url,
+            tag: None,
+        });
         for child in children {
             self.inline_into(child, run, images);
         }
-        let (start, style, url) = run.open.pop().expect("the container opened above");
+        // Tags left open end with their container.
+        let at = run
+            .open
+            .iter()
+            .rposition(|opened| opened.tag.is_none())
+            .expect("the container opened above");
         let end = run.text.text.len();
-        if start < end {
-            run.text.styles.push((start..end, style));
-            if let Some(url) = url {
-                run.text.links.push((start..end, url));
-            }
+        for opened in run.open.drain(at..) {
+            close(&mut run.text, &opened, end);
         }
     }
 }

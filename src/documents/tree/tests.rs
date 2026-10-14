@@ -189,7 +189,75 @@ fn footnotes_number_their_references_and_hold_their_body() {
     let Node::Paragraph(line) = &nodes[0] else {
         panic!("a paragraph, not {:?}", nodes[0])
     };
-    assert_eq!(line.text, "Lift[a].");
-    assert_eq!(line.styles, [(4..7, Style::Footnote)]);
-    assert!(matches!(&nodes[1], Node::Footnote { label, body } if label == "a" && body.len() == 1));
+    assert_eq!(line.text, "Lift¹.");
+    assert_eq!(line.styles, [(4..6, Style::Footnote)]);
+    assert!(matches!(&nodes[1], Node::Footnote { label, body } if label == "1" && body.len() == 1));
+    let alone = parse(
+        "[^z]: Unread.
+",
+    );
+    assert!(matches!(&alone[0], Node::Footnote { label, .. } if label == "z"));
+}
+
+fn line(source: &str) -> Inline {
+    match parse(source).into_iter().next() {
+        Some(Node::Paragraph(text)) => text,
+        other => panic!("a paragraph, not {other:?}"),
+    }
+}
+
+#[test]
+fn inline_html_shows_as_typora_shows_it() {
+    let text = line(
+        "a <u>un</u> <b>bo</b> <kbd>K</kbd> <mark>hi</mark> <a href=\"https://ely.dev\">x</a><br>end <span>sp</span> <a name=\"n\">no</a>",
+    );
+    assert_eq!(text.text, "a un bo K hi x\nend sp no");
+    assert_eq!(
+        text.styles,
+        [
+            (2..4, Style::Underline),
+            (5..7, Style::Strong),
+            (8..9, Style::Code),
+            (10..12, Style::Mark),
+            (13..14, Style::Link)
+        ]
+    );
+    assert_eq!(text.links, [(13..14, "https://ely.dev".to_string())]);
+}
+
+#[test]
+fn a_tag_left_open_ends_with_its_container() {
+    let text = line("**a <u>b** c</u> d");
+    assert_eq!(text.text, "a b c d");
+    assert!(text.styles.contains(&(2..3, Style::Underline)), "{text:?}");
+    assert!(text.styles.contains(&(0..3, Style::Strong)), "{text:?}");
+    assert_eq!(text.styles.len(), 2, "the stray close is ignored: {text:?}");
+}
+
+#[test]
+fn shortcodes_draw_as_emoji_outside_code() {
+    let text = line("go :rocket: `:rocket:`");
+    assert_eq!(text.text, "go 🚀 :rocket:");
+}
+
+#[test]
+fn footnotes_number_by_their_first_reference() {
+    let nodes = parse("x[^b] y[^a] z[^b]\n\n[^a]: A\n\n[^b]: B\n");
+    let Node::Paragraph(text) = &nodes[0] else {
+        panic!("a paragraph, not {:?}", nodes[0])
+    };
+    assert_eq!(text.text, "x¹ y² z¹");
+    let labels: Vec<&str> = nodes[1..]
+        .iter()
+        .map(|node| match node {
+            Node::Footnote { label, .. } => label.as_str(),
+            other => panic!("a footnote, not {other:?}"),
+        })
+        .collect();
+    assert_eq!(labels, ["2", "1"]);
+}
+
+#[test]
+fn one_tilde_still_strikes() {
+    assert_eq!(line("H~2~O").styles, [(1..2, Style::Strike)]);
 }

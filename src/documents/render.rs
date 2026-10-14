@@ -149,6 +149,18 @@ impl Draw<'_> {
                         color: Some(colors.fg_subtle),
                         ..HighlightStyle::default()
                     },
+                    Style::Underline => HighlightStyle {
+                        underline: Some(UnderlineStyle {
+                            thickness: rule,
+                            color: None,
+                            wavy: false,
+                        }),
+                        ..HighlightStyle::default()
+                    },
+                    Style::Mark => HighlightStyle {
+                        background_color: Some(colors.warning_subtle),
+                        ..HighlightStyle::default()
+                    },
                 };
                 (range.clone(), highlight)
             })
