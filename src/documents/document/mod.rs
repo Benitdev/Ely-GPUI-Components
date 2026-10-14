@@ -41,7 +41,7 @@ use crate::{
 };
 
 /// Texts this long parse at once; longer ones elsewhere.
-const AT_ONCE: usize = 128 << 10;
+const AT_ONCE: usize = 16 << 10;
 
 /// Longer texts are never read: source alone.
 pub const LARGEST_READ: usize = 2 << 20;
@@ -58,6 +58,8 @@ pub enum DocumentEvent {
     Parsed,
     /// A secondary press moved the caret onto this.
     Pointed(DocumentTarget),
+    /// A long format, accepted, did not happen.
+    FormatRefused(FormatRefusal),
 }
 
 /// A top line asked, numbered so late callbacks know theirs.
@@ -87,7 +89,7 @@ pub struct MarkdownDocument {
     /// Text changes counted; a read of an older one lapses.
     edits: u64,
     _parsing: Option<Task<()>>,
-    _formatting: Option<Task<()>>,
+    formatting: bool,
     list: ListState,
     open: Option<Open>,
     /// A top line asked for, until the view holds it.
@@ -159,7 +161,7 @@ impl MarkdownDocument {
             parsed: Arc::default(),
             edits: 0,
             _parsing: None,
-            _formatting: None,
+            formatting: false,
             list: ListState::new(1, ListAlignment::Top, overdraw),
             open: None,
             top: None,

@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use markdown::mdast::Node;
 
-use super::{Change, FormatRefusal, after, block, cut, marks, room};
+use super::{Change, FormatRefusal, after, block, cut, holder, marks, room};
 use crate::documents::{markdown::span, tree::inside};
 
 /// The backslashes of escapes in a text node's span.
@@ -25,10 +25,12 @@ fn escapes(text: &str, whole: Range<usize>) -> Vec<Range<usize>> {
 }
 
 /// A node's inline marks, as Typora's `.md-meta`.
-fn meta(node: &Node, text: &str) -> Vec<Range<usize>> {
+fn meta(node: &Node, text: &str, autolinks: &[Range<usize>]) -> Vec<Range<usize>> {
     let whole = span(node);
     match node {
         Node::Html(_) => vec![whole],
+        // Autolink text keeps its backslashes.
+        Node::Text(_) if holder(autolinks, &whole).is_some() => Vec::new(),
         Node::Text(_) => escapes(text, whole),
         Node::InlineMath(_) => {
             let inner = inside(text, whole.clone(), '$');
@@ -45,7 +47,7 @@ pub(super) fn clear(
     nodes: &[&Node],
     selection: Range<usize>,
 ) -> Result<Change, FormatRefusal> {
-    let blocks: Vec<Range<usize>> = (nodes.iter())
+    let mut blocks: Vec<Range<usize>> = (nodes.iter())
         .filter(|node| block(node))
         .map(|node| room(node, text))
         .filter(|range| range.start <= selection.end && selection.start <= range.end)
@@ -53,25 +55,29 @@ pub(super) fn clear(
     if blocks.is_empty() {
         return Err(FormatRefusal::Outside);
     }
-    let held = |hole: &Range<usize>| {
-        blocks
-            .iter()
-            .any(|block| block.start <= hole.start && hole.end <= block.end)
-    };
-    let mut holes: Vec<Range<usize>> = (nodes.iter())
-        .flat_map(|node| meta(node, text))
-        .filter(|hole| !hole.is_empty() && held(hole))
+    blocks.sort_by_key(|block| block.start);
+    let mut autolinks: Vec<Range<usize>> = (nodes.iter())
+        .filter(|node| matches!(node, Node::Link(_)))
+        .map(|node| span(node))
+        .filter(|whole| !text[whole.clone()].starts_with('['))
         .collect();
-    holes.sort_by_key(|hole| hole.start);
-    let edits = (blocks.iter())
-        .filter_map(|block| {
-            let inside: Vec<Range<usize>> = (holes.iter())
-                .filter(|hole| block.start <= hole.start && hole.end <= block.end)
-                .cloned()
-                .collect();
-            (!inside.is_empty()).then(|| (block.clone(), cut(text, block.clone(), &inside)))
-        })
-        .collect();
+    autolinks.sort_by_key(|link| link.start);
+    let mut inside: Vec<Vec<Range<usize>>> = vec![Vec::new(); blocks.len()];
+    for hole in (nodes.iter()).flat_map(|node| meta(node, text, &autolinks)) {
+        if let Some(at) = holder(&blocks, &hole).filter(|_| !hole.is_empty()) {
+            inside[at].push(hole);
+        }
+    }
+    let mut holes = Vec::new();
+    let mut edits = Vec::new();
+    for (block, mut cuts) in blocks.into_iter().zip(inside) {
+        if cuts.is_empty() {
+            continue;
+        }
+        cuts.sort_by_key(|hole| hole.start);
+        edits.push((block.clone(), cut(text, block, &cuts)));
+        holes.extend(cuts);
+    }
     Ok((
         edits,
         after(selection.start, &holes)..after(selection.end, &holes),

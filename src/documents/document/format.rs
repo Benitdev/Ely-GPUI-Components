@@ -41,6 +41,10 @@ pub enum FormatRefusal {
     Across,
     /// Past the largest read: source alone.
     TooLong,
+    /// A long format still runs.
+    Busy,
+    /// The text changed before a long format finished.
+    Changed,
 }
 
 /// The edits and the selection after them.
@@ -60,7 +64,7 @@ fn content(node: &Node) -> Range<usize> {
     }
 }
 
-/// Room for text: a cell inside its pipes, end spaces too.
+/// Room for text: inside a cell's pipes, trailing spaces too.
 fn room(node: &Node, text: &str) -> Range<usize> {
     let inner = match node {
         Node::TableCell(_) => {
@@ -74,6 +78,12 @@ fn room(node: &Node, text: &str) -> Range<usize> {
     let rest = &text[inner.end..];
     let spaces = rest.len() - rest.trim_start_matches([' ', '\t']).len();
     inner.start..inner.end + spaces
+}
+
+/// Which of `sorted`, disjoint spans, holds `inner`.
+pub(super) fn holder(sorted: &[Range<usize>], inner: &Range<usize>) -> Option<usize> {
+    let at = sorted.partition_point(|span| span.start <= inner.start);
+    (at > 0 && inner.end <= sorted[at - 1].end).then(|| at - 1)
 }
 
 fn block(node: &Node) -> bool {
@@ -151,11 +161,12 @@ fn verbatim(
     selection: &Range<usize>,
     format: InlineFormat,
 ) -> Result<(), FormatRefusal> {
-    let blocks: Vec<Range<usize>> = nodes
+    let mut blocks: Vec<Range<usize>> = nodes
         .iter()
         .filter(|node| block(node))
         .map(|node| span(node))
         .collect();
+    blocks.sort_by_key(|block| block.start);
     for node in nodes {
         let whole = span(node);
         let touches = |edge: bool| {
@@ -166,9 +177,6 @@ fn verbatim(
                     false => whole.start < at && at < whole.end,
                 })
         };
-        let inline = blocks
-            .iter()
-            .any(|block| block.start <= whole.start && whole.end <= block.end);
         // Clear takes a block's inline code and tags too.
         let held = format != InlineFormat::Clear && touches(false);
         let why = match node {
@@ -177,7 +185,11 @@ fn verbatim(
             Node::Yaml(_) | Node::Toml(_) if touches(true) => FormatRefusal::FrontMatter,
             Node::InlineCode(_) if format != InlineFormat::Code && held => FormatRefusal::Code,
             Node::InlineMath(_) if held => FormatRefusal::Math,
-            Node::Html(_) if (inline && held) || (!inline && touches(true)) => FormatRefusal::Html,
+            Node::Html(_) => match holder(&blocks, &whole).is_some() {
+                true if held => FormatRefusal::Html,
+                false if touches(true) => FormatRefusal::Html,
+                _ => continue,
+            },
             _ => continue,
         };
         return Err(why);
@@ -222,9 +234,18 @@ pub(super) fn toggle(
     selection: Range<usize>,
     format: InlineFormat,
 ) -> Result<Change, FormatRefusal> {
-    let root = file_tree(text);
+    toggle_tree(text, &file_tree(text), selection, format)
+}
+
+/// `toggle` on `root`, the tree `text` parses to.
+pub(super) fn toggle_tree(
+    text: &str,
+    root: &Node,
+    selection: Range<usize>,
+    format: InlineFormat,
+) -> Result<Change, FormatRefusal> {
     let mut nodes = Vec::new();
-    walk(&root, &mut nodes);
+    walk(root, &mut nodes);
     verbatim(&nodes, &selection, format)?;
     if format == InlineFormat::Clear {
         return clear::clear(text, &nodes, selection);
@@ -248,6 +269,7 @@ pub(super) fn toggle(
         .filter(|node| styled(format, node) && holds(node))
         .min_by_key(|node| span(node).len());
     if let Some(node) = found {
+        crossed(text, &nodes, &span(node), s, e, format)?;
         return Ok(unwrap(
             span(node),
             marks(node, text).expect("a styled node has marks"),
@@ -283,6 +305,7 @@ pub(super) fn toggle(
     if format == InlineFormat::Underline
         && let Some(tags) = underline(&nodes, &within, s, e)
     {
+        crossed(text, &nodes, &(tags[0].start..tags[1].end), s, e, format)?;
         return Ok(unwrap(tags[0].start..tags[1].end, tags));
     }
     if s != e {

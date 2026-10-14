@@ -7,7 +7,7 @@ use gpui::{AppContext as _, Context};
 use super::{Change, FormatRefusal, InlineFormat, toggle};
 use crate::documents::{
     MarkdownMode,
-    document::{AT_ONCE, LARGEST_READ, MarkdownDocument},
+    document::{AT_ONCE, DocumentEvent, LARGEST_READ, MarkdownDocument},
     modes::joint,
 };
 
@@ -15,9 +15,7 @@ use crate::documents::{
 type Snapshot = (String, usize, Range<usize>);
 
 impl MarkdownDocument {
-    /// `format` at the selection, Typora's way, or why not.
-    ///
-    /// Long texts toggle off the UI thread; refusals then log.
+    /// `format` at the selection; long texts refuse by event.
     pub fn format(
         &mut self,
         format: InlineFormat,
@@ -34,6 +32,10 @@ impl MarkdownDocument {
             );
             return Err(FormatRefusal::TooLong);
         }
+        if self.formatting {
+            log::info!("markdown document: format {format:?} refused: one runs");
+            return Err(FormatRefusal::Busy);
+        }
         if full.len() <= AT_ONCE {
             let change = toggle(&full, selection, format).inspect_err(|why| {
                 log::info!("markdown document: format {format:?} refused: {why:?}");
@@ -45,26 +47,31 @@ impl MarkdownDocument {
             full.len()
         );
         let taken = (full.clone(), offset, selection.clone());
-        self._formatting = Some(cx.spawn(async move |document, cx| {
+        self.formatting = true;
+        cx.spawn(async move |document, cx| {
             let change = cx
                 .background_spawn(async move { toggle(&full, selection, format) })
                 .await;
             document
                 .update(cx, |document, cx| {
-                    if document.snapshot(cx) != taken {
-                        return log::warn!("markdown document: format {format:?} lapsed");
-                    }
-                    match change {
-                        // Apply logs its own refusal.
-                        Ok(change) => document.apply(format, change, &taken.0, taken.1, cx).ok(),
-                        Err(why) => {
-                            log::info!("markdown document: format {format:?} refused: {why:?}");
-                            None
-                        }
+                    document.formatting = false;
+                    let done = if document.mode == MarkdownMode::Preview {
+                        Err(FormatRefusal::Preview)
+                    } else if document.snapshot(cx) != taken {
+                        Err(FormatRefusal::Changed)
+                    } else {
+                        change.and_then(|change| {
+                            document.apply(format, change, &taken.0, taken.1, cx)
+                        })
                     };
+                    if let Err(why) = done {
+                        log::info!("markdown document: format {format:?} refused: {why:?}");
+                        cx.emit(DocumentEvent::FormatRefused(why));
+                    }
                 })
                 .ok();
-        }));
+        })
+        .detach();
         Ok(())
     }
 
