@@ -261,3 +261,29 @@ fn footnotes_number_by_their_first_reference() {
 fn one_tilde_still_strikes() {
     assert_eq!(line("H~2~O").styles, [(1..2, Style::Strike)]);
 }
+
+#[test]
+fn escapes_references_and_autolinks_keep_their_shortcodes() {
+    assert_eq!(line(r"Show \:smile: now.").text, "Show :smile: now.");
+    assert_eq!(line("Show &#58;smile: now.").text, "Show :smile: now.");
+    assert_eq!(
+        line("<https://x.test/:smile:>").text,
+        "https://x.test/:smile:"
+    );
+    assert_eq!(line("[go :smile:](https://x.test)").text, "go 😄");
+}
+
+#[test]
+fn unknown_tags_show_text_and_only_anchors_link() {
+    let custom = line("a <u-box>word</u-box> <br-box>in</br-box> end");
+    assert_eq!(
+        (custom.text.as_str(), custom.styles.len()),
+        ("a word in end", 0)
+    );
+    let bold = line("See <b href=\"https://x.test/\">bold</b>.");
+    assert_eq!(bold.styles, [(4..8, Style::Strong)]);
+    assert!(bold.links.is_empty(), "{bold:?}");
+    let query = line("<a href=\"https://x.test/?q=1&amp;p=2\">r</a> <a href=/path/>s</a>");
+    let urls: Vec<&str> = query.links.iter().map(|(_, url)| url.as_str()).collect();
+    assert_eq!(urls, ["https://x.test/?q=1&p=2", "/path/"]);
+}

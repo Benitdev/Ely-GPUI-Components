@@ -72,7 +72,7 @@ pub(crate) struct Reader<'a> {
     notes: HashMap<String, usize>,
 }
 
-/// A style open in a run; `tag` names an HTML one.
+/// An open style; `tag` names an HTML one.
 struct Opened {
     start: usize,
     style: Style,
@@ -85,6 +85,8 @@ struct Opened {
 struct Run {
     text: Inline,
     open: Vec<Opened>,
+    /// Inside an autolink: its text stays as written.
+    verbatim: bool,
 }
 
 impl Run {
@@ -131,10 +133,13 @@ impl Run {
             }
             return;
         }
-        let url = tag.attribute("href").map(str::to_string);
-        if style == Style::Link && url.is_none() {
-            return;
-        }
+        let url = match style {
+            Style::Link => match tag.attribute("href") {
+                Some(href) => Some(href.to_string()),
+                None => return,
+            },
+            _ => None,
+        };
         self.open.push(Opened {
             start: self.text.text.len(),
             style,
@@ -304,8 +309,12 @@ impl<'a> Reader<'a> {
         let text = &mut run.text;
         let (children, style, url) = match node {
             mdast::Node::Text(words) => {
-                let soft = words.value.replace("\r\n", " ").replace(['\r', '\n'], " ");
-                return text.text.push_str(&html::emoji(&soft));
+                let shown = match run.verbatim {
+                    true => words.value.clone(),
+                    false => html::emoji(&self.source[span(node)], &words.value),
+                };
+                let soft = shown.replace("\r\n", " ").replace(['\r', '\n'], " ");
+                return run.text.text.push_str(&soft);
             }
             mdast::Node::Break(_) => return text.text.push('\n'),
             mdast::Node::InlineCode(code) => return styled(text, &code.value, Style::Code),
@@ -350,9 +359,14 @@ impl<'a> Reader<'a> {
             url,
             tag: None,
         });
+        let autolink =
+            matches!(node, mdast::Node::Link(_)) && !self.source[span(node)].starts_with('[');
+        let outer = run.verbatim;
+        run.verbatim |= autolink;
         for child in children {
             self.inline_into(child, run, images);
         }
+        run.verbatim = outer;
         // Tags left open end with their container.
         let at = run
             .open
