@@ -11,7 +11,7 @@ use super::{
 use crate::documents::{
     alert,
     document::format::{Change, EditRefusal},
-    markdown::span,
+    markdown::{file_tree, span},
 };
 
 pub(super) fn run(here: &Here) -> Result<Change, EditRefusal> {
@@ -72,27 +72,27 @@ fn unwrap(here: &Here, ix: usize) -> Result<Vec<(Range<usize>, String)>, EditRef
     if let Node::Blockquote(inner) = quote
         && alert(inner).is_some()
     {
-        let head = text[whole.start + 1..line_end(text, line)].trim();
-        let name = head
-            .strip_prefix("[!")
-            .and_then(|head| head.strip_suffix(']'));
-        if !name
-            .is_some_and(|name| !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphabetic()))
-        {
+        if !marker_only(&text[whole.start..line_end(text, line)]) {
             return Err(check::misread("an alert marker shares its line"));
         }
+        // A body block keeps its indent; text sheds it.
+        let continues = inner
+            .children
+            .first()
+            .is_some_and(|head| span(head).end > line_end(text, line));
         // The marker goes with blank lines; an outer opener stays.
         let (mut cut, mut rest) = (whole.end, whole.end);
         let mut next = next_line(text, line);
         while let Some(at) = next.filter(|at| *at < whole.end) {
-            let body = match mark(text, at, &outer) {
+            let lead = match mark(text, at, &outer) {
                 Some(mark) => mark.end,
                 None => content(text, at, &outer),
             };
             let body =
-                body + text[body..].len() - text[body..].trim_start_matches([' ', '\t']).len();
+                lead + text[lead..].len() - text[lead..].trim_start_matches([' ', '\t']).len();
             if body < line_end(text, at) {
-                (cut, rest) = (body, next_line(text, at).unwrap_or(text.len()));
+                cut = if continues { body } else { lead };
+                rest = next_line(text, at).unwrap_or(text.len());
                 break;
             }
             next = next_line(text, at);
@@ -114,6 +114,17 @@ fn unwrap(here: &Here, ix: usize) -> Result<Vec<(Range<usize>, String)>, EditRef
         edits.push((next..next, blank.clone()));
     }
     Ok(edits)
+}
+
+/// Whether `line`, a quote's first, holds only an alert marker.
+fn marker_only(line: &str) -> bool {
+    let root = file_tree(&format!("{line}\n> x"));
+    let Some(Node::Blockquote(quote)) = root.children().and_then(|kids| kids.first()) else {
+        return false;
+    };
+    matches!(alert(quote), Some((_, body)) if matches!(&body[..],
+        [Node::Paragraph(head)] if matches!(&head.children[..],
+            [Node::Text(text)] if text.value == "x")))
 }
 
 /// `line`'s `>` and one space after, inside `outer`.

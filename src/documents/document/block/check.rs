@@ -5,9 +5,15 @@ use std::ops::Range;
 use markdown::mdast::Node;
 
 use crate::documents::{
+    MarkdownReader, Style,
     document::format::EditRefusal,
     markdown::{file_tree, span, walk},
 };
+
+const KEPT: u16 = bit(Style::Code) | bit(Style::Math);
+const CODE: u16 = 1 << 9;
+const MATH: u16 = 1 << 10;
+const HTML: u16 = 1 << 11;
 
 /// Refuses a result that reads as something else.
 pub(super) fn misread(why: &str) -> EditRefusal {
@@ -15,8 +21,8 @@ pub(super) fn misread(why: &str) -> EditRefusal {
     EditRefusal::Misread
 }
 
-/// `text` with sorted `edits` written, parsed.
-pub(super) fn reread(text: &str, edits: &[(Range<usize>, String)]) -> Node {
+/// `text` with sorted `edits` written, and its parse.
+pub(super) fn reread(text: &str, edits: &[(Range<usize>, String)]) -> (String, Node) {
     let mut out = String::with_capacity(text.len());
     let mut at = 0;
     for (range, with) in edits {
@@ -25,59 +31,79 @@ pub(super) fn reread(text: &str, edits: &[(Range<usize>, String)]) -> Node {
         at = range.end;
     }
     out.push_str(&text[at..]);
-    file_tree(&out)
+    let root = file_tree(&out);
+    (out, root)
 }
 
-/// Each shown character under `node`, with its formats.
-pub(super) fn styled(node: &Node) -> Vec<(char, u16)> {
-    let mut out = Vec::new();
-    read(node, 0, &mut out);
-    out
+const fn bit(style: Style) -> u16 {
+    1 << style as u16
 }
 
-fn read(node: &Node, formats: u16, out: &mut Vec<(char, u16)>) {
-    let (own, value) = match node {
-        Node::Text(text) => (0, Some(text.value.as_str())),
-        Node::Strong(_) => (1, None),
-        Node::Emphasis(_) => (2, None),
-        Node::Delete(_) => (4, None),
-        Node::Link(_) | Node::LinkReference(_) => (8, None),
-        Node::InlineCode(code) => (16, Some(code.value.as_str())),
-        Node::InlineMath(math) => (32, Some(math.value.as_str())),
-        Node::Html(html) => (64, Some(html.value.as_str())),
-        Node::Image(image) => (128, Some(image.alt.as_str())),
-        Node::ImageReference(image) => (128, Some(image.alt.as_str())),
-        Node::FootnoteReference(note) => (256, Some(note.identifier.as_str())),
-        Node::Code(code) => (512, Some(code.value.as_str())),
-        Node::Math(math) => (1024, Some(math.value.as_str())),
-        _ => (0, None),
-    };
-    let formats = formats | own;
-    match value {
-        Some(value) => out.extend(
-            (value.chars())
-                .filter(|ch| !ch.is_whitespace())
-                .map(|ch| (ch, formats)),
-        ),
-        None => {
-            for kid in node.children().map(Vec::as_slice).unwrap_or_default() {
-                read(kid, formats, out);
+/// A parsed document read as the drawing reads it.
+pub(super) struct Shown<'a> {
+    root: &'a Node,
+    reader: MarkdownReader<'a>,
+}
+
+impl<'a> Shown<'a> {
+    pub(super) fn new(source: &'a str, root: &'a Node) -> Self {
+        let reader = MarkdownReader::new(source, root);
+        Self { root, reader }
+    }
+
+    /// Each shown character, with its formats.
+    pub(super) fn all(&self) -> Vec<(char, u16)> {
+        let mut out = Vec::new();
+        self.read(self.root, &mut out);
+        out
+    }
+
+    fn read(&self, node: &Node, out: &mut Vec<(char, u16)>) {
+        let (value, format) = match node {
+            Node::Paragraph(_) | Node::Heading(_) | Node::TableCell(_) => {
+                return out.extend(self.inline(node));
+            }
+            Node::Code(code) => (code.value.as_str(), CODE),
+            Node::Math(math) => (math.value.as_str(), MATH),
+            Node::Html(html) => (html.value.as_str(), HTML),
+            _ => {
+                for kid in node.children().map(Vec::as_slice).unwrap_or_default() {
+                    self.read(kid, out);
+                }
+                return;
+            }
+        };
+        out.extend(value.chars().map(|ch| (ch, format)));
+    }
+
+    /// `node`'s drawn text; white space counts only in code.
+    pub(super) fn inline(&self, node: &Node) -> Vec<(char, u16)> {
+        let kids = node.children().map(Vec::as_slice).unwrap_or_default();
+        let inline = self.reader.inline(kids);
+        let mut formats = vec![0u16; inline.text.len()];
+        for (range, style) in &inline.styles {
+            for format in &mut formats[range.clone()] {
+                *format |= bit(*style);
             }
         }
+        (inline.text.char_indices())
+            .map(|(at, ch)| (ch, formats[at]))
+            .filter(|(ch, format)| !ch.is_whitespace() || format & KEPT != 0)
+            .collect()
     }
-}
 
-/// The level (0 a paragraph) and characters at `at`.
-pub(super) fn block_at(root: &Node, at: usize) -> Option<(u8, Vec<(char, u16)>)> {
-    let mut nodes = Vec::new();
-    walk(root, &mut nodes);
-    nodes.into_iter().find_map(|node| {
-        let level = match node {
-            Node::Paragraph(_) => 0,
-            Node::Heading(heading) => heading.depth,
-            _ => return None,
-        };
-        let whole = span(node);
-        (whole.start <= at && at <= whole.end).then(|| (level, styled(node)))
-    })
+    /// The level (0 a paragraph) and characters at `at`.
+    pub(super) fn at(&self, at: usize) -> Option<(u8, Vec<(char, u16)>)> {
+        let mut nodes = Vec::new();
+        walk(self.root, &mut nodes);
+        nodes.into_iter().find_map(|node| {
+            let level = match node {
+                Node::Paragraph(_) => 0,
+                Node::Heading(heading) => heading.depth,
+                _ => return None,
+            };
+            let whole = span(node);
+            (whole.start <= at && at <= whole.end).then(|| (level, self.inline(node)))
+        })
+    }
 }

@@ -195,13 +195,14 @@ pub(super) fn split(
     }
     let change = placed(edits, from + shift + caret);
     let edits = &change.0;
-    let after_root = check::reread(text, edits);
+    let (written, after_root) = check::reread(text, edits);
+    let now = check::Shown::new(&written, &after_root);
     let level = match node {
         Node::Heading(heading) => heading.depth,
         _ => 0,
     };
     let piece = |at: usize| {
-        check::block_at(&after_root, shifted(at, edits))
+        now.at(shifted(at, edits))
             .and_then(|(got, chars)| (got == level).then_some(chars))
     };
     let head = if before {
@@ -210,7 +211,7 @@ pub(super) fn split(
         Some(Vec::new())
     };
     let tail = if follows { piece(to) } else { Some(Vec::new()) };
-    let want = check::styled(node);
+    let want = check::Shown::new(text, here.root).inline(node);
     let kept = head
         .zip(tail)
         .is_some_and(|(head, tail)| match here.selection.is_empty() {

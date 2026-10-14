@@ -2,11 +2,11 @@
 
 use std::ops::Range;
 
-use markdown::mdast::{List, Node};
+use markdown::mdast::{Code, List, Node};
 
 use super::{
     BlockCommand, Here, change, column, eol, indent, inside, line_end, line_start, next_line,
-    opener, prefix, refusal,
+    opener, prefix, refusal, unblocked,
 };
 use crate::documents::{
     document::format::{Change, EditRefusal},
@@ -60,7 +60,7 @@ pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefu
         && (here.path_at(caret.end).iter()).any(|node| std::ptr::eq(*node, path[ix - 1]))
     {
         let edits = match kind(list) == command {
-            true => unwrap(here, ix - 1, list),
+            true => unwrap(here, ix - 1, list)?,
             false => {
                 let start = if list.ordered {
                     list.start.unwrap_or(1)
@@ -125,7 +125,7 @@ fn continued<'a>(
 }
 
 /// Every item's marker off, its lines out one level.
-fn unwrap(here: &Here, ix: usize, list: &List) -> Vec<(Range<usize>, String)> {
+fn unwrap(here: &Here, ix: usize, list: &List) -> Result<Vec<(Range<usize>, String)>, EditRefusal> {
     let text = here.text;
     let outer = here.containers(ix);
     let blank = format!("{}{}", prefix(text, &outer).trim_end(), eol(text));
@@ -142,15 +142,22 @@ fn unwrap(here: &Here, ix: usize, list: &List) -> Vec<(Range<usize>, String)> {
             edits.push((line..line, blank.clone()));
         }
         let first = item.children().and_then(|kids| kids.first()).map(span);
-        match first {
+        let boxed = matches!(item, Node::ListItem(item) if item.checked.is_some());
+        match &first {
             Some(kid) if !text[start..kid.start].contains(['\n', '\r']) => {
                 edits.push((start..kid.start, String::new()));
             }
-            Some(_) => {
+            Some(kid) => {
                 let next = next_line(text, start).expect("an item's text lies below");
                 edits.push((line..next, String::new()));
+                if boxed {
+                    edits.push((unbox(text, kid.start), String::new()));
+                }
             }
             None => edits.push((start..line_end(text, start), String::new())),
+        }
+        if boxed && let Some(kid) = first {
+            edits.extend(escaped(text, kid.start)?);
         }
         for (at, cut, past) in continued(text, item, &outer) {
             edits.push((at..cut, " ".repeat(past)));
@@ -160,7 +167,26 @@ fn unwrap(here: &Here, ix: usize, list: &List) -> Vec<(Range<usize>, String)> {
         let next = next_line(text, whole.end).expect("a joining line follows");
         edits.push((next..next, blank.clone()));
     }
-    edits
+    Ok(edits)
+}
+
+/// The task box before the text at `kid`.
+fn unbox(text: &str, kid: usize) -> Range<usize> {
+    let line = line_start(text, kid);
+    line + text[line..kid].rfind('[').expect("a task's box")..kid
+}
+
+/// A backslash where text at `at`, unboxed, opens a block.
+fn escaped(text: &str, at: usize) -> Result<Option<(Range<usize>, String)>, EditRefusal> {
+    let mark = unblocked(&text[at..line_end(text, at)])?;
+    Ok(mark.map(|mark| (at + mark..at + mark, "\\".to_string())))
+}
+
+/// Whether `node`, holding `code`, is fenced in the source.
+fn fenced(text: &str, node: &Node, code: &Code) -> bool {
+    code.lang.is_some()
+        || code.value.is_empty()
+        || text[span(node)].lines().count() > code.value.lines().count()
 }
 
 /// Whether the line before `line` holds text inside `outer`.
@@ -200,9 +226,8 @@ fn retype(
             edits.push((at..end, marker(kind, number, bullet)));
             if !task {
                 let kid = span(first.expect("a boxed item has text")).start;
-                let line = line_start(text, kid);
-                let mark = line + text[line..kid].rfind('[').expect("a task's box");
-                edits.push((mark..kid, String::new()));
+                edits.push((unbox(text, kid), String::new()));
+                edits.extend(escaped(text, kid)?);
             }
         } else if task && let Some(kid) = first.filter(|kid| !matches!(kid, Node::Paragraph(_))) {
             // GFM boxes only a paragraph.
@@ -211,13 +236,10 @@ fn retype(
             edits.push((at..opener(text, item), marker(kind, number, bullet)));
         } else {
             // Indented code is written again from its value.
-            let fence = ["```", "~~~"]
-                .iter()
-                .any(|fence| text[body..].starts_with(fence));
             let pad = match first {
-                Some(Node::Code(code)) if !fence => {
+                Some(kid @ Node::Code(code)) if !fenced(text, kid, code) => {
                     let line = code.value.lines().next().unwrap_or_default();
-                    4 + line.len() - line.trim_start().len()
+                    4 + line.len() - line.trim_start_matches(' ').len()
                 }
                 _ => 0,
             };

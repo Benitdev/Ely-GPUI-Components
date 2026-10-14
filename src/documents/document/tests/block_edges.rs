@@ -141,3 +141,83 @@ fn delete_keeps_neighbors_apart_past_gone_openers() {
     assert_eq!(out, "p\n\nq");
     assert_eq!(kinds(&out), ["p", "p"]);
 }
+
+fn inline_codes(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    nodes(text, &mut |node| {
+        if let Node::InlineCode(code) = node {
+            out.push(code.value.clone());
+        }
+    });
+    out
+}
+
+#[test]
+fn a_heading_join_keeps_white_space_in_code() {
+    let source = "a `x\n  y`‸\n===";
+    match ran(source, BlockCommand::Heading(3)) {
+        Err(EditRefusal::Misread) => {}
+        Ok(out) => assert_eq!(inline_codes(&plain(&out)), inline_codes(&plain(source))),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_split_that_draws_otherwise_refuses() {
+    for (source, command) in [
+        ("<u>ab‸cd</u>", BlockCommand::Rule),
+        ("<u>a‸\nb</u>", BlockCommand::Heading(1)),
+        ("x:smile: ‸:smile:", BlockCommand::Rule),
+    ] {
+        assert_eq!(ran(source, command), Err(EditRefusal::Misread), "{source}");
+    }
+}
+
+#[test]
+fn an_alert_body_block_keeps_its_indent() {
+    let out = plain(&ok("> [!NOTE]\n>\n>     co‸de", BlockCommand::Quote));
+    assert_eq!(
+        (kinds(&out), codes(&out)),
+        (vec!["code"], vec!["code".to_string()])
+    );
+    let out = plain(&ok(
+        "> [!NOTE]\n>\n>   ```\n>   co‸de\n>   ```",
+        BlockCommand::Quote,
+    ));
+    assert_eq!(
+        (kinds(&out), codes(&out)),
+        (vec!["code"], vec!["code".to_string()])
+    );
+}
+
+#[test]
+fn retyping_reads_a_fence_from_its_source() {
+    let out = plain(&ok("-     ```lang‸", BlockCommand::OrderedList));
+    assert_eq!(codes(&out), vec!["```lang".to_string()]);
+    let out = plain(&ok("-     \u{a0}code‸", BlockCommand::OrderedList));
+    assert_eq!(codes(&out), vec!["\u{a0}code".to_string()]);
+}
+
+#[test]
+fn a_removed_box_leaves_text() {
+    assert_eq!(
+        plain(&ok("- [x] ---‸", BlockCommand::BulletList)),
+        "- \\---"
+    );
+    assert_eq!(
+        plain(&ok("- [x] # h‸", BlockCommand::BulletList)),
+        "- \\# h"
+    );
+    assert_eq!(plain(&ok("-\n  [x] a‸", BlockCommand::TaskList)), "a");
+    assert_eq!(plain(&ok("- [x] # h‸", BlockCommand::TaskList)), "\\# h");
+}
+
+#[test]
+fn an_empty_heading_becomes_an_empty_paragraph() {
+    assert!(ran("# ‸", BlockCommand::Paragraph).is_ok());
+}
+
+#[test]
+fn an_escaped_alert_marker_on_its_own_line_unwraps() {
+    assert_eq!(plain(&ok("> \\[!NOTE]\n> a‸", BlockCommand::Quote)), "a");
+}
