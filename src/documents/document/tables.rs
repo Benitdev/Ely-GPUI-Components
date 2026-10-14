@@ -6,6 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 use super::{
     MarkdownDocument,
+    block::{eol, line_end, line_start, next_line, prev_line},
     format::{Change, EditRefusal},
 };
 use crate::documents::{
@@ -59,14 +60,15 @@ pub(super) fn edit_table(text: &str, at: usize, edit: TableEdit) -> Result<Chang
             _ => None,
         })
         .ok_or(TableRefusal::Outside)?;
-    let prefix = &text[text[..range.start].rfind('\n').map_or(0, |found| found + 1)..range.start];
-    if text[range.clone()]
-        .split('\n')
-        .skip(1)
-        .any(|line| !line.starts_with(prefix))
-    {
-        return Err(TableRefusal::Mixed);
+    let prefix = &text[line_start(text, range.start)..range.start];
+    let mut line = range.start;
+    while let Some(next) = next_line(text, line).filter(|next| *next < range.end) {
+        if !text[next..].starts_with(prefix) {
+            return Err(TableRefusal::Mixed);
+        }
+        line = next;
     }
+    let eol = eol(&text[range.clone()]);
     let rows: Vec<&mdast::Node> = table.children.iter().collect();
     let row = rows
         .iter()
@@ -157,7 +159,7 @@ pub(super) fn edit_table(text: &str, at: usize, edit: TableEdit) -> Result<Chang
         TableEdit::Tidy => (row, column, offset),
         _ => return Err(TableRefusal::Kept),
     };
-    let (out, caret) = table_text(&grid, &aligns, caret, prefix);
+    let (out, caret) = table_text(&grid, &aligns, caret, prefix, eol);
     let caret = range.start + caret;
     Ok((vec![(range, out)], caret..caret))
 }
@@ -183,18 +185,29 @@ fn within(cell: &mdast::Node, at: usize) -> usize {
     }
 }
 
+/// Display columns, a tab four and controls none, as Typora's.
+fn width(cell: &str) -> usize {
+    let tabs = cell.matches('\t').count();
+    let shown: usize = cell
+        .split(char::is_control)
+        .map(UnicodeWidthStr::width)
+        .sum();
+    shown + 4 * tabs
+}
+
 /// The table's text and the caret at row, column, byte.
 fn table_text(
     grid: &[Vec<String>],
     aligns: &[AlignKind],
     at: (usize, usize, usize),
     prefix: &str,
+    eol: &str,
 ) -> (String, usize) {
     // Typora pads columns 4 to 60 display columns wide.
     let widths: Vec<usize> = (0..aligns.len())
         .map(|column| {
             (grid.iter())
-                .map(|cells| cells[column].width())
+                .map(|cells| width(&cells[column]))
                 .fold(4, usize::max)
                 .min(60)
         })
@@ -206,7 +219,7 @@ fn table_text(
         for (column, cell) in cells.iter().enumerate() {
             let room = widths
                 .get(column)
-                .map_or(0, |width| width.saturating_sub(cell.width()));
+                .map_or(0, |widest| widest.saturating_sub(width(cell)));
             let before = match aligns.get(column) {
                 Some(AlignKind::Right) => room,
                 Some(AlignKind::Center) => room / 2,
@@ -222,7 +235,7 @@ fn table_text(
             out.push_str(" |");
         }
         if row == 0 {
-            out.push('\n');
+            out.push_str(eol);
             out.push_str(prefix);
             out.push('|');
             for (align, width) in aligns.iter().zip(&widths) {
@@ -236,7 +249,7 @@ fn table_text(
             }
         }
         if row + 1 < grid.len() {
-            out.push('\n');
+            out.push_str(eol);
             out.push_str(prefix);
         }
     }
@@ -252,26 +265,22 @@ impl MarkdownDocument {
         self.commit(cx);
         let text = self.editor.read(cx).text().to_string();
         let at = self.editor.read(cx).primary().range().start;
-        let end = text[at..].find('\n').map_or(text.len(), |found| at + found);
-        let start = text[..at].rfind('\n').map_or(0, |found| found + 1);
+        let (start, end, eol) = (line_start(&text, at), line_end(&text, at), eol(&text));
         // A blank line gives way; a written one keeps.
         let blank = text[start..end].trim().is_empty();
-        let above = text[..start.saturating_sub(1)]
-            .rsplit('\n')
-            .next()
-            .unwrap_or_default();
+        let above = prev_line(&text, start).map_or("", |line| &text[line..line_end(&text, line)]);
         let (from, before) = match (blank, above.trim().is_empty()) {
-            (true, true) => (start, ""),
-            (true, false) => (start, "\n"),
-            (false, _) => (end, "\n\n"),
+            (true, true) => (start, String::new()),
+            (true, false) => (start, eol.to_string()),
+            (false, _) => (end, eol.repeat(2)),
         };
-        let after = if text[end..].starts_with("\n\n") || end == text.len() {
+        let after = if text[end..].starts_with(&eol.repeat(2)) || end == text.len() {
             ""
         } else {
-            "\n"
+            eol
         };
         let grid = vec![vec![String::new(); 3]; 3];
-        let (table, caret) = table_text(&grid, &[AlignKind::None; 3], (0, 0, 0), "");
+        let (table, caret) = table_text(&grid, &[AlignKind::None; 3], (0, 0, 0), "", eol);
         let caret = from + before.len() + caret;
         log::info!("markdown document: a table goes in");
         self.editor.update(cx, |editor, cx| {
@@ -375,6 +384,39 @@ mod tests {
         assert_eq!(
             out,
             "|     名前     | x    |\n| :----------: | ---- |\n| 長い名前です | yy‸z  |"
+        );
+    }
+
+    #[test]
+    fn a_rewrite_keeps_the_tables_line_ending() {
+        let crlf = "Before\r\n\r\n| A | B |\r\n| - | - |\r\n| 1 | 2 |\r\n\r\nAfter\r\n";
+        assert_eq!(
+            edited_in(crlf, "1", TableEdit::Tidy),
+            Ok("Before\r\n\r\n| A    | B    |\r\n| ---- | ---- |\r\n| ‸1    | 2    |\r\n\r\nAfter\r\n".into())
+        );
+        let cr = "Before\r\r| A | B |\r| - | - |\r| 1 | 2 |\r\rAfter\r";
+        assert_eq!(
+            edited_in(cr, "1", TableEdit::Tidy),
+            Ok("Before\r\r| A    | B    |\r| ---- | ---- |\r| ‸1    | 2    |\r\rAfter\r".into())
+        );
+        let moved = "| A | B |\r\n| - | - |\r\n| 1 | 2 |\r\n";
+        assert_eq!(
+            edited_in(moved, "1", TableEdit::MoveRowUp),
+            Ok("| ‸1    | 2    |\r\n| ---- | ---- |\r\n| A    | B    |\r\n".into())
+        );
+        let quoted = "> | A |\r> | - |\r> | 1 |\r";
+        assert_eq!(
+            edited_in(quoted, "1", TableEdit::RowBelow),
+            Ok("> | A    |\r> | ---- |\r> | 1    |\r> | ‸     |\r".into())
+        );
+    }
+
+    #[test]
+    fn a_tab_counts_four_columns_as_in_typora() {
+        let text = "| a\tb | x |\n| - | - |\n| q | r |\n";
+        assert_eq!(
+            edited_in(text, "q", TableEdit::Tidy),
+            Ok("| a\tb | x    |\n| ------ | ---- |\n| ‸q      | r    |\n".into())
         );
     }
 

@@ -292,6 +292,37 @@ fn a_table_edit_at_an_edge_refuses_by_event(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn tidy_in_cr_text_keeps_what_comes_before(cx: &mut TestAppContext) {
+    let source = "Before\r\r| A | B |\r| - | - |\r| 1 | 2 |\r\rAfter\r";
+    let (document, cx) = open(source, MarkdownMode::Source, cx);
+    let at = source.find('1').expect("a cell");
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    editor.update(cx, |editor, cx| editor.select(std::iter::once(at..at), cx));
+    document.update(cx, |document, cx| {
+        document
+            .edit_table(crate::documents::TableEdit::Tidy, cx)
+            .expect("taken")
+    });
+    cx.run_until_parked();
+    assert_eq!(
+        text(&document, cx),
+        "Before\r\r| A    | B    |\r| ---- | ---- |\r| 1    | 2    |\r\rAfter\r"
+    );
+}
+
+#[gpui::test]
+fn a_new_table_takes_the_texts_line_ending(cx: &mut TestAppContext) {
+    let (document, cx) = open("Intro\rNext\r", MarkdownMode::Visual, cx);
+    document.update(cx, |document, cx| {
+        document.insert_table(cx).expect("inserted")
+    });
+    assert_eq!(
+        text(&document, cx),
+        "Intro\r\r|      |      |      |\r| ---- | ---- | ---- |\r|      |      |      |\r|      |      |      |\r\rNext\r"
+    );
+}
+
+#[gpui::test]
 fn tidy_in_an_open_table_keeps_it_open(cx: &mut TestAppContext) {
     let (document, cx) = open(SMALL, MarkdownMode::Visual, cx);
     press(0, Modifiers::none(), cx);
