@@ -5,6 +5,7 @@ use markdown::mdast::{self, AlignKind};
 use super::markdown::{span, tree, walk};
 
 mod blocks;
+mod emoji;
 mod html;
 
 pub use blocks::{AlertKind, DocumentHeading};
@@ -102,8 +103,8 @@ struct Run {
     named: HashMap<String, usize>,
     /// Inside an autolink: its text stays as written.
     verbatim: bool,
-    /// Filtered tags open: their text keeps shortcodes.
-    filtered: usize,
+    /// The current DOM text node's shortcodes.
+    shortcodes: emoji::Shortcodes,
     /// White space owed, and the open elements before it.
     owed: Option<(char, usize)>,
 }
@@ -124,30 +125,23 @@ impl Run {
         self.named.get(name).copied().unwrap_or(0)
     }
 
-    /// Outside autolinks, `<code>` and filtered tags.
-    fn reads_emoji(&self) -> bool {
-        !self.verbatim && self.count("code") == 0 && self.filtered == 0
+    /// Text with its shortcodes read, outside autolinks and `<code>`.
+    fn shown(&mut self, written: &str) -> String {
+        match !self.verbatim && self.count("code") == 0 {
+            true => self.shortcodes.read(written),
+            false => written.to_string(),
+        }
     }
 
     /// Text as shown: shortcodes read, lines joined.
     fn push_text(&mut self, written: &str) {
-        match self.reads_emoji() {
-            true => self.push_plain(&html::emoji(written)),
-            false => self.push_plain(written),
-        }
+        let shown = self.shown(written);
+        self.push_plain(&shown);
     }
 
     fn push_plain(&mut self, shown: &str) {
         let soft = shown.replace("\r\n", " ").replace(['\r', '\n'], " ");
         self.text.text.push_str(&soft);
-    }
-
-    /// Counts a filtered tag opened or closed.
-    fn filter(&mut self, tag: &html::Tag) {
-        self.filtered = match tag.closing {
-            true => self.filtered.saturating_sub(1),
-            false => self.filtered + 1,
-        };
     }
 
     fn push(&mut self, opened: Opened) {
@@ -163,14 +157,14 @@ impl Run {
     /// Opens or closes an element for an inline HTML tag.
     fn html(&mut self, written: &str) {
         let Some(tag) = html::tag(written) else {
-            return;
+            return self.shortcodes.split();
         };
+        if html::filtered(&tag.name) {
+            return self.push_text(&html::text(written));
+        }
+        self.shortcodes.split();
         if tag.name == "br" {
             return self.text.text.push('\n');
-        }
-        if html::filtered(&tag.name) {
-            self.filter(&tag);
-            return self.push_plain(&html::text(written));
         }
         let Some(style) = html::inline_style(&tag.name) else {
             return;
@@ -191,6 +185,7 @@ impl Run {
         if name == "a" {
             self.end("a");
         }
+        self.shortcodes.split();
         self.push(Opened {
             name: name.to_string(),
             start: self.text.text.len(),
@@ -204,6 +199,7 @@ impl Run {
         if self.count(name) == 0 {
             return;
         }
+        self.shortcodes.split();
         let at = self
             .open
             .iter()
@@ -402,6 +398,10 @@ impl<'a> Reader<'a> {
     }
 
     fn inline_into(&self, node: &mdast::Node, run: &mut Run, images: &mut Images) {
+        // Any element ends the DOM text node.
+        if !matches!(node, mdast::Node::Text(_) | mdast::Node::Html(_)) {
+            run.shortcodes.split();
+        }
         let text = &mut run.text;
         let (children, (name, style), url) = match node {
             mdast::Node::Text(words) => return run.push_text(&words.value),

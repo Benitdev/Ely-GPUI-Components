@@ -96,6 +96,52 @@ pub(crate) fn breaks(name: &str) -> bool {
     )
 }
 
+/// Start tags that end an open `p`, as HTML5 lists them.
+pub(crate) fn closes_p(name: &str) -> bool {
+    matches!(
+        name,
+        "address"
+            | "article"
+            | "aside"
+            | "blockquote"
+            | "center"
+            | "details"
+            | "dialog"
+            | "dir"
+            | "div"
+            | "dl"
+            | "dd"
+            | "dt"
+            | "fieldset"
+            | "figcaption"
+            | "figure"
+            | "footer"
+            | "form"
+            | "h1"
+            | "h2"
+            | "h3"
+            | "h4"
+            | "h5"
+            | "h6"
+            | "header"
+            | "hgroup"
+            | "hr"
+            | "li"
+            | "listing"
+            | "main"
+            | "menu"
+            | "nav"
+            | "ol"
+            | "p"
+            | "pre"
+            | "search"
+            | "section"
+            | "summary"
+            | "table"
+            | "ul"
+    )
+}
+
 /// Bytes through the `>` ending the tag at `html`'s start.
 pub(crate) fn tag_end(html: &str) -> Option<usize> {
     let (mut quote, mut last) = (None, '<');
@@ -280,39 +326,6 @@ fn numeric(code: Option<u32>) -> char {
     .unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
-/// `text` with each known `:shortcode:` as its emoji.
-pub(crate) fn emoji(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find(':') {
-        out.push_str(&rest[..at]);
-        let after = &rest[at + 1..];
-        let len = after
-            .find(|ch: char| !shortcode_char(ch))
-            .unwrap_or(after.len());
-        let found = after[len..]
-            .starts_with(':')
-            .then(|| emojis::get_by_shortcode(&after[..len]))
-            .flatten();
-        match found {
-            Some(found) => {
-                out.push_str(found.as_str());
-                rest = &after[len + 1..];
-            }
-            None => {
-                out.push(':');
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-fn shortcode_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '+' | '-')
-}
-
 /// `n` in superscript digits.
 pub(crate) fn superscript(n: usize) -> String {
     const DIGITS: [char; 10] = ['⁰', '¹', '²', '³', '⁴', '⁵', '⁶', '⁷', '⁸', '⁹'];
@@ -385,21 +398,12 @@ mod tests {
 
     #[test]
     fn long_runs_scan_in_linear_time() {
-        let (amps, colons) = ("&".repeat(1 << 18), ":zq".repeat(1 << 16));
+        let amps = "&".repeat(1 << 18);
         let started = web_time::Instant::now();
         assert_eq!(decoded(&amps, true).len(), amps.len());
         assert_eq!(text(&amps).len(), amps.len());
-        assert_eq!(emoji(&colons).len(), colons.len());
         let spent = started.elapsed();
         assert!(spent.as_secs() < 2, "256 KiB took {spent:?}");
-    }
-
-    #[test]
-    fn known_shortcodes_become_emoji() {
-        assert_eq!(emoji("hi :smile: :+1:"), "hi 😄 👍");
-        assert_eq!(emoji(":nope: at 10:30 and ::"), ":nope: at 10:30 and ::");
-        assert_eq!(emoji("a:smile:b :x:smile:"), "a😄b ❌smile:");
-        assert_eq!(emoji("é :smile: 中"), "é 😄 中");
     }
 
     #[test]

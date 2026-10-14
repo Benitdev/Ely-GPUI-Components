@@ -1,11 +1,6 @@
-use std::sync::Arc;
-
 use gpui::{App, Context, Focusable as _, ListOffset, ScrollStrategy, Window, px};
 
-use super::{
-    MarkdownDocument, Placement,
-    edit::{between, moved},
-};
+use super::{MarkdownDocument, Placement};
 use crate::documents::{MarkdownMode, modes::joint};
 
 /// Line and column, from zero, of byte `at` in `text`.
@@ -194,24 +189,31 @@ impl MarkdownDocument {
             .saturating_sub(1)
     }
 
-    /// Reveals the pressed heading, moved by the edit since.
+    /// Reveals the pressed heading where the edits since carried it.
     pub(super) fn reveal_at(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.parsed.headings.iter().any(|heading| heading.at == at) {
+        let headings = &self.parsed.headings;
+        let Some(index) = headings.iter().position(|heading| heading.at == at) else {
             return log::warn!("markdown document: a heading read away");
-        }
-        // The heading list drew from this read.
-        let drawn = Arc::clone(&self.parsed);
-        if self.commit(cx).is_some() || !self.read_now(cx) {
+        };
+        self.commit(cx);
+        let anchors = self.editor.read(cx).anchors();
+        let Some(found) = *anchors.get(index).expect("an anchor per heading read") else {
+            return log::warn!("markdown document: the pressed heading changed as one wrote");
+        };
+        if !self.read_now(cx) {
             self.reparse(true, cx);
         }
         if !self.read_now(cx) {
             return log::warn!("markdown document: a heading pressed while the text is read again");
         }
-        let edit = between(&drawn.text, self.editor.read(cx).text());
-        let headings = &self.parsed.headings;
-        let Some(found) = moved(at, &edit).filter(|at| headings.iter().any(|h| h.at == *at)) else {
-            return log::warn!("markdown document: the pressed heading changed as one wrote");
-        };
+        if !self
+            .parsed
+            .headings
+            .iter()
+            .any(|heading| heading.at == found)
+        {
+            return log::warn!("markdown document: the pressed heading reads as no heading now");
+        }
         let line = self.editor.read(cx).buffer.line_of(found);
         self.reveal(line, window, cx);
     }

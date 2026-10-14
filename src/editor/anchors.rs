@@ -1,12 +1,27 @@
 use std::ops::Range;
 
-use super::state::Marks;
+use super::state::{CodeEditor, Marks};
 
 /// Where `offset` lands after `edits`, sorted and apart, each a replaced range and the length written; none when an edit replaced it.
 fn moved(offset: usize, edits: &[(Range<usize>, usize)]) -> Option<usize> {
     let mut at = offset as isize;
     for (range, written) in edits {
         if offset <= range.start {
+            break;
+        }
+        if offset < range.end {
+            return None;
+        }
+        at += *written as isize - range.len() as isize;
+    }
+    Some(at as usize)
+}
+
+/// Where the character at `offset` lands; text written at it goes before.
+fn carried(offset: usize, edits: &[(Range<usize>, usize)]) -> Option<usize> {
+    let mut at = offset as isize;
+    for (range, written) in edits {
+        if offset < range.start {
             break;
         }
         if offset < range.end {
@@ -43,6 +58,9 @@ pub(crate) fn shift(marks: &mut Marks, edits: &[(Range<usize>, usize)]) {
         ghost.offset = moved(ghost.offset, edits)?;
         Some(ghost)
     });
+    for anchor in &mut marks.anchors {
+        *anchor = anchor.and_then(|at| carried(at, edits));
+    }
 }
 
 /// Drops the owner's offsets when the whole text changes; they named the old one.
@@ -51,6 +69,27 @@ pub(crate) fn clear(marks: &mut Marks) {
     marks.backgrounds.clear();
     marks.hints.clear();
     marks.ghost = None;
+    marks.anchors.fill(None);
+}
+
+impl CodeEditor {
+    /// Offsets the editor carries through each edit.
+    pub fn set_anchors(&mut self, offsets: impl IntoIterator<Item = usize>) {
+        let text = self.buffer.text();
+        let whole = |at: usize| {
+            let fits = text.is_char_boundary(at);
+            if !fits {
+                log::error!("code editor: anchor {at} splits a character");
+            }
+            fits.then_some(at)
+        };
+        self.marks.anchors = offsets.into_iter().map(whole).collect();
+    }
+
+    /// Where each anchor is now; none once an edit took it.
+    pub fn anchors(&self) -> &[Option<usize>] {
+        &self.marks.anchors
+    }
 }
 
 /// Whether `range` runs forward between whole characters of `text`.
@@ -62,7 +101,7 @@ pub(crate) fn fits(text: &str, range: &Range<usize>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{fits, moved};
+    use super::{carried, fits, moved};
 
     #[test]
     fn offsets_ride_their_edits() {
@@ -79,5 +118,14 @@ mod tests {
         );
         assert_eq!(moved(8, &edits), Some(10));
         assert!(fits("héllo", &(1..3)) && !fits("héllo", &cut) && !fits("ab", &(1..9)));
+    }
+
+    #[test]
+    fn anchors_go_after_text_written_at_them() {
+        let edits = [(2..4, 1), (6..6, 3)];
+        assert_eq!(carried(2, &edits), None, "its character replaced");
+        assert_eq!(carried(4, &edits), Some(3), "just past a replace");
+        assert_eq!(carried(6, &edits), Some(8), "after an insertion at it");
+        assert_eq!(carried(1, &edits), Some(1));
     }
 }

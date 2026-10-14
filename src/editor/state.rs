@@ -84,6 +84,8 @@ pub(crate) struct Marks {
     pub git: Vec<(usize, GitMark)>,
     pub breakpoints: BTreeSet<usize>,
     pub chat: Option<usize>,
+    /// The owner's offsets; an edit over one drops it.
+    pub anchors: Vec<Option<usize>>,
 }
 
 /// The text and cursors one undo step returns to.

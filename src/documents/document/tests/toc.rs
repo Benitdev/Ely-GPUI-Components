@@ -132,3 +132,59 @@ fn a_press_while_the_text_waits_to_be_read_finds_the_heading(cx: &mut TestAppCon
         (26, 0)
     );
 }
+
+/// Makes `edits` while the text waits, caret at the top.
+fn edit_waiting<'a>(
+    text: &str,
+    edits: Vec<(std::ops::Range<usize>, String)>,
+    cx: &'a mut TestAppContext,
+) -> (Entity<MarkdownDocument>, &'a mut VisualTestContext) {
+    let (document, cx) = open(text, MarkdownMode::Split, cx);
+    document.update(cx, |document, cx| {
+        document
+            .editor
+            .update(cx, |editor, cx| editor.edit(edits, cx));
+        document.set_caret(0, 0, cx);
+    });
+    frames(cx);
+    assert!(!document.read_with(cx, |document, cx| document.read_now(cx)));
+    (document, cx)
+}
+
+fn caret(document: &Entity<MarkdownDocument>, cx: &mut VisualTestContext) -> (usize, usize) {
+    document.read_with(cx, |document, cx| document.caret(cx))
+}
+
+#[gpui::test]
+fn a_twin_written_right_at_the_heading_goes_before_it(cx: &mut TestAppContext) {
+    let edits = vec![(7..7, "## B\n\n".to_string())];
+    let (document, cx) = edit_waiting("[toc]\n\n## B\n\ntext\n", edits, cx);
+    press_entry(0, Modifiers::none(), cx);
+    assert_eq!(caret(&document, cx), (4, 0));
+}
+
+#[gpui::test]
+fn adjacent_twins_keep_who_was_deleted(cx: &mut TestAppContext) {
+    let twins = "[toc]\n\n## B\n\n## B\n\ntext\n";
+    let (document, cx) = edit_waiting(twins, vec![(7..13, String::new())], cx);
+    press_entry(0, Modifiers::none(), cx);
+    assert_eq!(
+        caret(&document, cx),
+        (0, 0),
+        "the deleted one moves nothing"
+    );
+    press_entry(1, Modifiers::none(), cx);
+    assert_eq!(caret(&document, cx), (2, 0), "the kept one moved up");
+}
+
+#[gpui::test]
+fn a_heading_between_two_edits_stays_found(cx: &mut TestAppContext) {
+    let text = "before\n\n[toc]\n\n# A\n\nafter\n";
+    let edits = vec![
+        (0..0, "start\n".to_string()),
+        (text.len()..text.len(), "end\n".to_string()),
+    ];
+    let (document, cx) = edit_waiting(text, edits, cx);
+    press_entry(0, Modifiers::none(), cx);
+    assert_eq!(caret(&document, cx), (5, 0));
+}

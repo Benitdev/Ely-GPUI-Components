@@ -362,3 +362,40 @@ fn unknown_tags_show_text_and_only_anchors_link() {
     let urls: Vec<&str> = query.links.iter().map(|(_, url)| url.as_str()).collect();
     assert_eq!(urls, ["https://x.test/?q=1&p=2", "/path/"]);
 }
+
+#[test]
+fn the_first_shortcode_decides_its_text_node() {
+    // GitHub's answers, `.work/R4.3-fix3/github-*.log`.
+    for (source, shown) in [
+        ("a>:smile: :smile:", "a>:smile: :smile:"),
+        ("a> :smile: :smile:", "a> 😄 😄"),
+        ("x:smile: :smile:", "x:smile: :smile:"),
+        ("a;:smile: :smile:", "a;:smile: :smile:"),
+        ("a :smile: b>:smile:", "a 😄 b>😄"),
+        ("a :zzzq: x:smile: :smile:", "a :zzzq: x😄 😄"),
+        ("ax:zzzq: :smile:", "ax:zzzq: :smile:"),
+        ("a :x-y: z:smile:", "a :x-y: z😄"),
+        ("a :x.y: z:smile:", "a :x.y: z:smile:"),
+        ("a.:x.y: :smile:", "a.:x.y: 😄"),
+        ("x\t:smile: y:smile:", "x\t:smile: y:smile:"),
+        ("x\u{a0}:smile: y:smile:", "x\u{a0}:smile: y:smile:"),
+        ("x\n:smile: y:smile:", "x :smile: y:smile:"),
+        ("*x*:smile: :smile:", "x😄 😄"),
+        ("*x*\n:smile: y:smile:", "x 😄 y😄"),
+        ("x:smile: `c` :smile:", "x:smile: c 😄"),
+        ("x:smile:<!-- c --> :smile:", "x:smile: 😄"),
+        ("x:smile:<span>s</span> :smile:", "x:smile:s 😄"),
+        ("x&amp;:smile: :smile:", "x&:smile: :smile:"),
+        ("x:smile:  \n:smile:", "x:smile:\n😄"),
+        (
+            "a <script>x</style>:smile:</script> :smile:",
+            "a <script>x</style>:smile:</script> :smile:",
+        ),
+        (
+            "a <script><b>:smile:</b></script> :smile:",
+            "a <script>😄</script> 😄",
+        ),
+    ] {
+        assert_eq!(line(source).text, shown, "{source:?}");
+    }
+}

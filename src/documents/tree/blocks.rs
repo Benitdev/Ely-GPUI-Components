@@ -99,6 +99,7 @@ impl Reader<'_> {
             rest = &rest[at..];
             if let Some(comment) = rest.strip_prefix("<!--") {
                 rest = comment.split_once("-->").map_or("", |(_, after)| after);
+                run.shortcodes.split();
                 continue;
             }
             let opens =
@@ -116,10 +117,7 @@ impl Reader<'_> {
             let (written, after) = rest.split_at(end);
             rest = after;
             match html::tag(written) {
-                Some(tag) if html::filtered(&tag.name) => {
-                    run.filter(&tag);
-                    run.spaced(&html::text(written));
-                }
+                Some(tag) if html::filtered(&tag.name) => run.words(written),
                 // A block closes what opened inside it.
                 Some(tag) if html::breaks(&tag.name) => {
                     run.line();
@@ -127,11 +125,17 @@ impl Reader<'_> {
                         true => run.end(&tag.name),
                         false => {
                             run.implied(&tag.name);
-                            if tag.name != "hr" {
-                                run.start(&tag.name, None, None);
+                            match tag.name == "hr" {
+                                true => run.shortcodes.split(),
+                                false => run.start(&tag.name, None, None),
                             }
                         }
                     }
+                }
+                // It ends a `p` but lays no block.
+                Some(tag) if !tag.closing && html::closes_p(&tag.name) => {
+                    run.implied(&tag.name);
+                    run.html(written);
                 }
                 // A line's end drops its space.
                 Some(tag) if tag.closing || tag.name == "br" => {
@@ -142,7 +146,7 @@ impl Reader<'_> {
                     run.pay();
                     run.html(written);
                 }
-                None => {}
+                None => run.shortcodes.split(),
             }
         }
         run.words(rest);
@@ -153,11 +157,8 @@ impl Reader<'_> {
 impl Run {
     /// HTML text: references decoded, white space collapsed.
     fn words(&mut self, written: &str) {
-        let decoded = html::text(written);
-        match self.reads_emoji() {
-            true => self.spaced(&html::emoji(&decoded)),
-            false => self.spaced(&decoded),
-        }
+        let shown = self.shown(&html::text(written));
+        self.spaced(&shown);
     }
 
     /// Text with its white space collapsed.
@@ -215,8 +216,8 @@ impl Run {
         if let Some(item) = found {
             self.end(&item);
         }
-        // A table start closes it, so it is in scope.
-        if name != "tr" && self.count("p") > 0 {
+        if html::closes_p(name) && self.count("p") > 0 {
+            self.line();
             self.end("p");
         }
     }
@@ -417,16 +418,48 @@ mod tests {
     }
 
     #[test]
-    fn filtered_tags_keep_shortcodes_and_names_end_as_html5_ends_them() {
-        let block = html("<script title=\":smile:\">:smile:</script>").expect("text");
-        assert_eq!(block.text, "<script title=\":smile:\">:smile:</script>");
-        assert_eq!(html("<div>:smile:</div>").expect("text").text, "😄");
-        let attribute = html("a <script title=\":smile:\">x</script> c").expect("text");
-        assert_eq!(attribute.text, "a <script title=\":smile:\">x</script> c");
-        let body = html("a <script>:smile:</script> :smile:").expect("text");
-        assert_eq!(body.text, "a <script>:smile:</script> 😄");
+    fn filtered_tags_are_text_and_names_end_as_html5_ends_them() {
+        // GitHub's answers, `.work/R4.3-fix3/github-*.log`.
+        for (source, shown) in [
+            (
+                "<div><script>:smile:</script> :smile:</div>",
+                "<script>:smile:</script> :smile:",
+            ),
+            (
+                "<div><script><b>:smile:</b></script> :smile:</div>",
+                "<script>😄</script> 😄",
+            ),
+            (
+                "<div><script> :smile:</script> :smile:</div>",
+                "<script> 😄</script> 😄",
+            ),
+            (
+                "<div><script title=\" :smile:\"> x:smile:</div>",
+                "<script title=\" 😄\"> x😄",
+            ),
+            (
+                "<div><iframe title=\":smile:\"> :smile:</div>",
+                "<iframe title=\":smile:\"> :smile:",
+            ),
+            ("<div>\n:smile: x:smile:\n</div>", "😄 x😄"),
+            ("<div>\t:smile: x:smile:</div>", "😄 x😄"),
+            ("<div>a\n :smile: x:smile:</div>", "a 😄 x😄"),
+            ("<div>y\n:smile: x:smile:</div>", "y :smile: x:smile:"),
+            ("<div>:smile:</div>", "😄"),
+        ] {
+            assert_eq!(html(source).expect("text").text, shown, "{source:?}");
+        }
         let named = "<div>a<script:custom>x</script:custom>b<script!>y</script!>c</div>";
         assert_eq!(html(named).expect("text").text, "axbyc");
+    }
+
+    #[test]
+    fn every_html5_p_closer_ends_a_p() {
+        for name in ["fieldset", "menu"] {
+            let line = html(&format!("<div><p><mark>x<{name}>y</{name}>z</div>")).expect("text");
+            let mark = [(0..1, Style::Mark)];
+            assert_eq!((line.text.as_str(), &line.styles[..]), ("x\nyz", &mark[..]));
+        }
     }
 
     #[test]
