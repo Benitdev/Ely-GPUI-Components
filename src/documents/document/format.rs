@@ -1,15 +1,14 @@
 //! Inline formats toggle at the selection, as Typora's (R4.6).
 
+mod apply;
+mod clear;
+
 use std::ops::Range;
 
-use gpui::Context;
 use markdown::mdast::Node;
 
-use super::MarkdownDocument;
 use crate::documents::{
-    MarkdownMode,
     markdown::{file_tree, span, walk},
-    modes::joint,
     tree::inside,
 };
 
@@ -40,6 +39,8 @@ pub enum FormatRefusal {
     Outside,
     /// The selection crosses a block or another mark.
     Across,
+    /// Past the largest read: source alone.
+    TooLong,
 }
 
 /// The edits and the selection after them.
@@ -57,6 +58,22 @@ fn content(node: &Node) -> Range<usize> {
         Some((Some(first), Some(last))) => span(first).start..span(last).end,
         _ => whole.end..whole.end,
     }
+}
+
+/// Room for text: a cell inside its pipes, end spaces too.
+fn room(node: &Node, text: &str) -> Range<usize> {
+    let inner = match node {
+        Node::TableCell(_) => {
+            let whole = span(node);
+            let cell = &text[whole.clone()];
+            whole.start + usize::from(cell.starts_with('|'))
+                ..whole.end - usize::from(cell.len() > 1 && cell.ends_with('|'))
+        }
+        _ => content(node),
+    };
+    let rest = &text[inner.end..];
+    let spaces = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+    inner.start..inner.end + spaces
 }
 
 fn block(node: &Node) -> bool {
@@ -83,6 +100,11 @@ fn marks(node: &Node, text: &str) -> Option<[Range<usize>; 2]> {
     Some([whole.start..inner.start, inner.end..whole.end])
 }
 
+/// Whether `at` lies strictly inside one of `node`'s marks.
+fn in_marks(node: &Node, text: &str, at: usize) -> bool {
+    marks(node, text).is_some_and(|holes| holes.iter().any(|hole| hole.start < at && at < hole.end))
+}
+
 fn styled(format: InlineFormat, node: &Node) -> bool {
     match format {
         InlineFormat::Strong => matches!(node, Node::Strong(_)),
@@ -93,6 +115,13 @@ fn styled(format: InlineFormat, node: &Node) -> bool {
         InlineFormat::Image => matches!(node, Node::Image(_) | Node::ImageReference(_)),
         InlineFormat::Underline | InlineFormat::Clear => false,
     }
+}
+
+fn merges(format: InlineFormat) -> bool {
+    matches!(
+        format,
+        InlineFormat::Strong | InlineFormat::Emphasis | InlineFormat::Strike
+    )
 }
 
 /// `text[range]` without `holes`, sorted and inside it.
@@ -156,31 +185,35 @@ fn verbatim(
     Ok(())
 }
 
-/// The `<u>` and `</u>` around `s..e` in `within`.
+/// The nearest `<u>` and `</u>` pair around `s..e` in `within`.
 fn underline(
     nodes: &[&Node],
     within: &Range<usize>,
     s: usize,
     e: usize,
 ) -> Option<[Range<usize>; 2]> {
-    let tag = |node: &&&Node, name: &str| match node {
-        Node::Html(html) => html.value.trim().eq_ignore_ascii_case(name),
-        _ => false,
-    };
-    let tags: Vec<(&Node, Range<usize>)> = nodes
-        .iter()
-        .filter(|node| matches!(node, Node::Html(_)) && within.contains(&span(node).start))
-        .map(|node| (*node, span(node)))
+    let mut tags: Vec<(&str, Range<usize>)> = (nodes.iter())
+        .filter_map(|node| match node {
+            Node::Html(html) => Some((html.value.trim(), span(node))),
+            _ => None,
+        })
+        .filter(|(_, at)| within.start <= at.start && at.end <= within.end)
         .collect();
-    let open = tags.iter().rfind(|(_, at)| at.end <= s)?;
-    let close = tags.iter().find(|(_, at)| at.start >= e)?;
-    let between = |from: usize, to: usize, name: &str| {
-        tags.iter()
-            .any(|(node, at)| at.start >= from && at.end <= to && tag(&node, name))
-    };
-    let paired = tag(&&open.0, "<u>") && tag(&&close.0, "</u>");
-    (paired && !between(open.1.end, s, "</u>") && !between(e, close.1.start, "<u>"))
-        .then(|| [open.1.clone(), close.1.clone()])
+    tags.sort_by_key(|(_, at)| at.start);
+    let mut opened = Vec::new();
+    for (tag, at) in tags {
+        if tag.eq_ignore_ascii_case("<u>") {
+            opened.push(at);
+        } else if tag.eq_ignore_ascii_case("</u>")
+            && let Some(open) = opened.pop()
+            && open.end <= s
+            && e <= at.start
+        {
+            // Inner pairs close first.
+            return Some([open, at]);
+        }
+    }
+    None
 }
 
 /// `format` toggled at `selection` in `text`, or why not.
@@ -194,21 +227,25 @@ pub(super) fn toggle(
     walk(&root, &mut nodes);
     verbatim(&nodes, &selection, format)?;
     if format == InlineFormat::Clear {
-        return clear(text, &nodes, selection);
+        return clear::clear(text, &nodes, selection);
     }
     let picked = &text[selection.clone()];
     let s = selection.start + (picked.len() - picked.trim_start().len());
     let e = (selection.end - (picked.len() - picked.trim_end().len())).max(s);
-    let holds = |whole: &Range<usize>| match s == e {
-        true => whole.start < s && s < whole.end,
-        false => whole.start <= s && e <= whole.end,
+    let holds = |node: &Node| {
+        let whole = span(node);
+        let inside = match s == e {
+            true => whole.start < s && s < whole.end,
+            false => whole.start <= s && e <= whole.end,
+        };
+        inside && !in_marks(node, text, s) && !in_marks(node, text, e)
     };
     let unwrap = |range: Range<usize>, holes: [Range<usize>; 2]| -> Change {
         let written = cut(text, range.clone(), &holes);
         (vec![(range, written)], after(s, &holes)..after(e, &holes))
     };
     let found = (nodes.iter())
-        .filter(|node| styled(format, node) && holds(&span(node)))
+        .filter(|node| styled(format, node) && holds(node))
         .min_by_key(|node| span(node).len());
     if let Some(node) = found {
         return Ok(unwrap(
@@ -216,19 +253,29 @@ pub(super) fn toggle(
             marks(node, text).expect("a styled node has marks"),
         ));
     }
-    let within = (nodes.iter())
+    let rooms: Vec<Range<usize>> = (nodes.iter())
         .filter(|node| block(node))
-        .map(|node| content(node))
+        .map(|node| room(node, text))
+        .collect();
+    let within = (rooms.iter())
         .filter(|range| range.start <= s && e <= range.end)
-        .min_by_key(|range| range.len());
+        .min_by_key(|range| range.len())
+        .cloned();
     let Some(within) = within else {
+        if s != e {
+            let touched = (rooms.iter()).any(|range| range.start <= e && s <= range.end);
+            return Err(match touched {
+                true => FormatRefusal::Across,
+                false => FormatRefusal::Outside,
+            });
+        }
         let line = text[..s]
-            .rsplit('\n')
+            .rsplit(['\r', '\n'])
             .next()
             .unwrap_or_default()
             .to_string()
-            + text[s..].split('\n').next().unwrap_or_default();
-        return match s == e && line.trim().is_empty() {
+            + text[s..].split(['\r', '\n']).next().unwrap_or_default();
+        return match line.trim().is_empty() {
             true => Ok(pair(s, format)),
             false => Err(FormatRefusal::Outside),
         };
@@ -299,7 +346,7 @@ fn pair(at: usize, format: InlineFormat) -> Change {
     (vec![(at..at, format!("{open}{close}"))], caret..caret)
 }
 
-/// Refuses `s..e` cutting a node or landing in its marks.
+/// Refuses an end in marks, or a mark split off.
 fn crossed(
     text: &str,
     nodes: &[&Node],
@@ -308,18 +355,9 @@ fn crossed(
     e: usize,
     format: InlineFormat,
 ) -> Result<(), FormatRefusal> {
-    let merges = matches!(
-        format,
-        InlineFormat::Strong | InlineFormat::Emphasis | InlineFormat::Strike
-    );
     for node in nodes {
         let whole = span(node);
-        let merged = merges && styled(format, node) && s <= whole.start && whole.end <= e;
-        if matches!(node, Node::Text(_))
-            || merged
-            || whole.start < within.start
-            || whole.end > within.end
-        {
+        if matches!(node, Node::Text(_)) || whole.start < within.start || whole.end > within.end {
             continue;
         }
         let holes = match node {
@@ -331,11 +369,12 @@ fn crossed(
                 None => continue,
             },
         };
-        let holds = whole.start <= s && e <= whole.end;
-        let cuts =
-            whole.start < e && s < whole.end && !holds && !(s <= whole.start && whole.end <= e);
-        let in_mark = |at: usize| holes.iter().any(|hole| hole.start < at && at < hole.end);
-        if cuts || in_mark(s) || in_mark(e) {
+        let strictly = |at: usize| holes.iter().any(|hole| hole.start < at && at < hole.end);
+        let overlaps = holes.iter().any(|hole| s < hole.end && hole.start < e);
+        let holds_all = s <= whole.start && whole.end <= e;
+        // A same style cut is taken in whole.
+        let same = merges(format) && styled(format, node);
+        if strictly(s) || strictly(e) || (overlaps && !holds_all && !same) {
             return Err(FormatRefusal::Across);
         }
     }
@@ -351,10 +390,8 @@ fn wrap(
     mut e: usize,
     format: InlineFormat,
 ) -> Result<Change, FormatRefusal> {
-    if matches!(
-        format,
-        InlineFormat::Strong | InlineFormat::Emphasis | InlineFormat::Strike
-    ) {
+    crossed(text, nodes, within, s, e, format)?;
+    if merges(format) {
         for node in nodes.iter().filter(|node| styled(format, node)) {
             let whole = span(node);
             if whole.start < e
@@ -365,8 +402,8 @@ fn wrap(
                 (s, e) = (s.min(whole.start), e.max(whole.end));
             }
         }
+        crossed(text, nodes, within, s, e, format)?;
     }
-    crossed(text, nodes, within, s, e, format)?;
     let mut holes: Vec<Range<usize>> = (nodes.iter())
         .filter(|node| styled(format, node) && s <= span(node).start && span(node).end <= e)
         .flat_map(|node| marks(node, text).expect("a styled node has marks"))
@@ -381,112 +418,4 @@ fn wrap(
         _ => at..at + inner.len(),
     };
     Ok((vec![(s..e, format!("{open}{inner}{close}"))], selection))
-}
-
-/// Every inline mark in the blocks `selection` touches.
-fn clear(text: &str, nodes: &[&Node], selection: Range<usize>) -> Result<Change, FormatRefusal> {
-    let blocks: Vec<Range<usize>> = (nodes.iter())
-        .filter(|node| block(node))
-        .map(|node| content(node))
-        .filter(|range| range.start <= selection.end && selection.start <= range.end)
-        .collect();
-    if blocks.is_empty() {
-        return Err(FormatRefusal::Outside);
-    }
-    let held = |hole: &Range<usize>| {
-        blocks
-            .iter()
-            .any(|block| block.start <= hole.start && hole.end <= block.end)
-    };
-    let mut holes: Vec<Range<usize>> = (nodes.iter())
-        .flat_map(|node| match node {
-            Node::Html(_) => vec![span(node)],
-            _ => marks(node, text).map(Vec::from).unwrap_or_default(),
-        })
-        .filter(|hole| !hole.is_empty() && held(hole))
-        .collect();
-    holes.sort_by_key(|hole| hole.start);
-    let edits = (blocks.iter())
-        .filter_map(|block| {
-            let inside: Vec<Range<usize>> = (holes.iter())
-                .filter(|hole| block.start <= hole.start && hole.end <= block.end)
-                .cloned()
-                .collect();
-            (!inside.is_empty()).then(|| (block.clone(), cut(text, block.clone(), &inside)))
-        })
-        .collect();
-    Ok((
-        edits,
-        after(selection.start, &holes)..after(selection.end, &holes),
-    ))
-}
-
-impl MarkdownDocument {
-    /// `format` at the selection, Typora's way, or why not.
-    pub fn format(
-        &mut self,
-        format: InlineFormat,
-        cx: &mut Context<Self>,
-    ) -> Result<(), FormatRefusal> {
-        if self.mode == MarkdownMode::Preview {
-            return Err(FormatRefusal::Preview);
-        }
-        let text = self.editor.read(cx).text();
-        let (full, offset, selection) = match &self.open {
-            Some(open) => {
-                let input = open.input.read(cx);
-                let (before, after) = match open.append {
-                    true => (format!("{text}{}", joint(text)), ""),
-                    false => (
-                        text[..open.range.start].to_string(),
-                        &text[open.range.end..],
-                    ),
-                };
-                let picked = input.selection();
-                let offset = before.len();
-                let full = format!("{before}{}{after}", input.text());
-                (full, offset, offset + picked.start..offset + picked.end)
-            }
-            None => (text.to_string(), 0, self.editor.read(cx).primary().range()),
-        };
-        let (edits, selected) = toggle(&full, selection, format).inspect_err(|why| {
-            log::info!("markdown document: format {format:?} refused: {why:?}");
-        })?;
-        log::info!("markdown document: format {format:?}");
-        let Some(open) = &self.open else {
-            self.editor.update(cx, |editor, cx| {
-                editor.edit(edits, cx);
-                editor.select(std::iter::once(selected), cx);
-            });
-            return Ok(());
-        };
-        let end = offset + open.input.read(cx).text().len();
-        if !edits
-            .iter()
-            .all(|(range, _)| offset <= range.start && range.end <= end)
-        {
-            log::warn!("markdown document: format {format:?} reaches past the open block");
-            return Err(FormatRefusal::Across);
-        }
-        let (Some(from), Some(to)) = (
-            edits.iter().map(|(range, _)| range.start).min(),
-            edits.iter().map(|(range, _)| range.end).max(),
-        ) else {
-            return Ok(());
-        };
-        let mut written = String::new();
-        let mut at = from;
-        for (range, with) in &edits {
-            written.push_str(&full[at..range.start]);
-            written.push_str(with);
-            at = range.end;
-        }
-        written.push_str(&full[at..to]);
-        open.input.update(cx, |input, cx| {
-            input.select(from - offset..to - offset, cx);
-            input.insert(&written, cx);
-            input.select(selected.start - offset..selected.end - offset, cx);
-        });
-        Ok(())
-    }
 }

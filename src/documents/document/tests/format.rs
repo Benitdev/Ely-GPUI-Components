@@ -1,11 +1,11 @@
 //! Inline formats toggle as Typora's (R4.6).
 
-use gpui::{Modifiers, TestAppContext};
+use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
 
 use super::{open, opened, press, text};
 use crate::documents::{
-    FormatRefusal, InlineFormat, MarkdownMode,
-    document::{format::toggle, visual},
+    FormatRefusal, InlineFormat, LARGEST_READ, MarkdownDocument, MarkdownMode,
+    document::{AT_ONCE, format::toggle, visual},
 };
 
 /// `marked` toggled: `‸` is the caret, `⟨…⟩` the selection.
@@ -177,4 +177,86 @@ fn preview_refuses_a_format(cx: &mut TestAppContext) {
     let refused = document.update(cx, |document, cx| document.format(InlineFormat::Strong, cx));
     assert_eq!(refused, Err(FormatRefusal::Preview));
     assert_eq!(text(&document, cx), "alpha\n");
+}
+
+#[test]
+fn an_end_in_marks_or_an_address_refuses() {
+    use InlineFormat::*;
+    let across = Err(FormatRefusal::Across);
+    assert_eq!(toggled("a *‸*bold** z", Strong), across);
+    assert_eq!(toggled("[a](ht‸tps://example.com)", Link), across);
+    assert_eq!(toggled("a *⟨*b** c⟩", Strong), across);
+    assert_eq!(toggled("*a⟨b*⟩", Strong), across);
+    assert_eq!(toggled("⟨alpha\n\nbeta⟩", Strong), across);
+}
+
+#[test]
+fn end_spaces_cells_and_cr_lines_take_a_pair() {
+    use InlineFormat::*;
+    assert_eq!(ok("alpha ‸", Strong), "alpha **‸**");
+    assert_eq!(ok("| h |\n| - |\n| ‸ |", Strong), "| h |\n| - |\n| **‸** |");
+    assert_eq!(ok("a\r‸\rb", Strong), "a\r**‸**\rb");
+}
+
+#[test]
+fn clear_takes_math_footnote_and_escape_marks() {
+    use InlineFormat::Clear;
+    assert_eq!(ok("**a** $x‸+y$", Clear), "a x‸+y");
+    assert_eq!(ok("a‸ [^n]\n\n[^n]: note", Clear), "a‸ n\n\n[^n]: note");
+    assert_eq!(ok(r"a‸ \*b\*", Clear), "a‸ *b*");
+}
+
+#[test]
+fn underline_comes_off_past_other_tags() {
+    use InlineFormat::Underline;
+    assert_eq!(ok("<u>a <br>b‸c</u>", Underline), "a <br>b‸c");
+    assert_eq!(ok("<u>a <em>b‸c</em> d</u>", Underline), "a <em>b‸c</em> d");
+}
+
+/// A source document of one long word, caret at 1.
+fn long(cx: &mut TestAppContext, len: usize) -> (Entity<MarkdownDocument>, &mut VisualTestContext) {
+    let (document, cx) = open(&"x".repeat(len), MarkdownMode::Source, cx);
+    document.update(cx, |document, cx| {
+        document
+            .editor
+            .update(cx, |editor, cx| editor.select(std::iter::once(1..1), cx));
+    });
+    (document, cx)
+}
+
+#[gpui::test]
+fn a_long_text_formats_once_read_apart(cx: &mut TestAppContext) {
+    let (document, cx) = long(cx, AT_ONCE + 1);
+    document.update(cx, |document, cx| {
+        document.format(InlineFormat::Strong, cx).expect("taken")
+    });
+    assert!(
+        !text(&document, cx).starts_with("**"),
+        "not on the UI thread"
+    );
+    cx.run_until_parked();
+    assert!(text(&document, cx).starts_with("**x"));
+}
+
+#[gpui::test]
+fn a_long_format_lapses_when_the_text_moves(cx: &mut TestAppContext) {
+    let (document, cx) = long(cx, AT_ONCE + 1);
+    document.update(cx, |document, cx| {
+        document.format(InlineFormat::Strong, cx).expect("taken");
+        document
+            .editor
+            .update(cx, |editor, cx| editor.edit([(0..0, "y".to_string())], cx));
+    });
+    cx.run_until_parked();
+    assert!(
+        text(&document, cx).starts_with("yx"),
+        "the typing stays, unformatted"
+    );
+}
+
+#[gpui::test]
+fn a_text_past_the_largest_read_refuses(cx: &mut TestAppContext) {
+    let (document, cx) = long(cx, LARGEST_READ + 1);
+    let refused = document.update(cx, |document, cx| document.format(InlineFormat::Strong, cx));
+    assert_eq!(refused, Err(FormatRefusal::TooLong));
 }

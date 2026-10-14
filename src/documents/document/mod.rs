@@ -87,6 +87,7 @@ pub struct MarkdownDocument {
     /// Text changes counted; a read of an older one lapses.
     edits: u64,
     _parsing: Option<Task<()>>,
+    _formatting: Option<Task<()>>,
     list: ListState,
     open: Option<Open>,
     /// A top line asked for, until the view holds it.
@@ -158,6 +159,7 @@ impl MarkdownDocument {
             parsed: Arc::default(),
             edits: 0,
             _parsing: None,
+            _formatting: None,
             list: ListState::new(1, ListAlignment::Top, overdraw),
             open: None,
             top: None,
