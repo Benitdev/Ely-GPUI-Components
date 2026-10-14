@@ -25,7 +25,8 @@ pub use divider::Divider;
 pub use files::IconTheme;
 pub(crate) use files::{file_icon, icon_theme};
 pub(crate) use focus::{
-    CONTEXT as FOCUS_CONTEXT, Takeover, give_back, hand_back, hold_focus, tab_stop, take_focus,
+    CONTEXT as FOCUS_CONTEXT, Takeover, give_back, hand_back, hold_focus, lent, tab_stop,
+    take_focus,
 };
 pub use focus::{FocusNext, FocusPrev, FocusRing, FocusScope};
 pub use ghost::DragGhost;

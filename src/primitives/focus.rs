@@ -210,6 +210,14 @@ pub(crate) fn take_focus(
     state
 }
 
+/// Whether an open overlay holds the window's focus.
+pub(crate) fn lent(window: &Window, cx: &App) -> bool {
+    cx.try_global::<Holders>().is_some_and(|holders| {
+        (holders.0.iter())
+            .any(|holder| holder.takeover.upgrade().is_some() && holder.focus.is_focused(window))
+    })
+}
+
 /// Returns focus to whatever held it before the overlay opened.
 pub(crate) fn give_back(state: &Entity<Takeover>, window: &mut Window, cx: &mut App) {
     let closed = state.downgrade();

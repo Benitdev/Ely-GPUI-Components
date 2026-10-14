@@ -10,6 +10,7 @@ use crate::{
         modes::{at_edge, joint},
     },
     forms::{InputEvent, TextInput},
+    primitives::lent,
 };
 
 /// Where an opened block's caret lands.
@@ -114,27 +115,54 @@ impl MarkdownDocument {
             }
         });
         window.focus(&input.focus_handle(cx), cx);
-        let subscriptions =
-            vec![
-                cx.subscribe(&input, |document, _, event: &InputEvent, cx| match event {
-                    InputEvent::Blur => {
-                        document.commit(cx);
-                    }
-                    InputEvent::Changed => {
-                        document.typed += 1;
-                        cx.emit(DocumentEvent::Changed)
-                    }
-                    _ => {}
-                }),
-            ];
+        let subscriptions = vec![cx.subscribe_in(
+            &input,
+            window,
+            |document, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Blur if lent(window, cx) => document.lend(window, cx),
+                InputEvent::Blur => {
+                    document.commit(cx);
+                }
+                InputEvent::Changed => {
+                    document.typed += 1;
+                    cx.emit(DocumentEvent::Changed)
+                }
+                _ => {}
+            },
+        )];
         log::info!("markdown document: block {range:?} opens");
         self.open = Some(Open {
             range,
             input,
             append,
+            lent: None,
             _subscriptions: subscriptions,
         });
         cx.notify();
+    }
+
+    /// Keeps the block open while an overlay holds focus.
+    fn lend(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(open), Some(holder)) = (self.open.as_mut(), window.focused(cx)) else {
+            return;
+        };
+        log::info!("markdown document: an overlay borrows the open block's focus");
+        let watch = cx.on_focus_out(&holder, window, |document, _, window, cx| {
+            let back = (document.open.as_ref())
+                .is_some_and(|open| open.input.focus_handle(cx).is_focused(window));
+            match (back, lent(window, cx)) {
+                (true, _) => {
+                    if let Some(open) = document.open.as_mut() {
+                        open.lent = None;
+                    }
+                }
+                (false, true) => document.lend(window, cx),
+                (false, false) => {
+                    document.commit(cx);
+                }
+            }
+        });
+        open.lent = Some(watch);
     }
 
     /// Writes the open block as one step; the edit made.

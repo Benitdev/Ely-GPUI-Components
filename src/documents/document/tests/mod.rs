@@ -370,6 +370,7 @@ mod block;
 mod block_edges;
 mod format;
 mod history;
+mod lend;
 mod links;
 mod look;
 mod place;

@@ -80,6 +80,8 @@ struct Open {
     input: Entity<TextInput>,
     /// Opened past the end, to add a block.
     append: bool,
+    /// Watches an overlay that borrowed focus.
+    lent: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
 }
 
