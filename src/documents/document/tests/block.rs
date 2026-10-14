@@ -62,10 +62,10 @@ fn kinds(text: &str) -> Vec<&'static str> {
 }
 
 #[test]
-fn headings_set_and_toggle_as_typora() {
+fn headings_set_as_typoras_menu() {
     use BlockCommand::*;
     assert_eq!(ok("a‸b", Heading(2)), "## a‸b");
-    assert_eq!(ok("## a‸b", Heading(2)), "a‸b");
+    assert_eq!(ok("## a‸b", Heading(2)), "## a‸b");
     assert_eq!(ok("## a‸b", Heading(3)), "### a‸b");
     assert_eq!(ok("a‸", Promote), "###### a‸");
     assert_eq!(ok("# a‸", Promote), "# a‸");
@@ -189,7 +189,12 @@ fn empty_paragraphs_come_before_and_after() {
     assert_eq!(ok("# a‸\nb", ParagraphAfter), "# a\n\n‸\n\nb");
     assert_eq!(ok("a\n\nb‸", ParagraphBefore), "a\n\n‸\n\nb");
     assert_eq!(ok("a\n# h‸", ParagraphBefore), "a\n\n‸\n\n# h");
-    assert_eq!(ok("- a‸", ParagraphBefore), "- ‸\n\n  a");
+    let out = ok("- a‸", ParagraphBefore);
+    assert_eq!(out, "- ‸\n  a");
+    assert_eq!(kinds(&out), ["list"]);
+    let out = ok("x[^1]\n\n[^1]: a‸", ParagraphBefore);
+    assert_eq!(out, "x[^1]\n\n[^1]: ‸\n    a");
+    assert_eq!(kinds(&out), ["p", "note"]);
 }
 
 #[test]
@@ -267,4 +272,103 @@ fn a_command_past_the_open_block_writes_it_back_first(cx: &mut TestAppContext) {
         "{written:?}"
     );
     document.read_with(cx, |document, _| assert!(document.open.is_none()));
+}
+
+/// The one list's items, each as its blocks' kinds.
+fn items(text: &str) -> Vec<Vec<&'static str>> {
+    let text: String = text.chars().filter(|ch| !"‸⟨⟩".contains(*ch)).collect();
+    let root = file_tree(&text);
+    let Some(Node::List(list)) = root.children().and_then(|kids| kids.first()) else {
+        panic!("a list first");
+    };
+    (list.children.iter())
+        .map(|item| {
+            (item
+                .children()
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+                .iter())
+            .map(|kid| match kid {
+                Node::Paragraph(_) => "p",
+                Node::Code(_) => "code",
+                _ => "other",
+            })
+            .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn a_caret_in_heading_marks_splits_at_the_text() {
+    use BlockCommand::Rule;
+    assert_eq!(ok("‸# alpha", Rule), "---\n\n# ‸alpha");
+    let out = ok("# alpha #‸##", Rule);
+    assert_eq!(kinds(&out), ["h", "rule"]);
+}
+
+#[test]
+fn a_task_list_keeps_checked_boxes() {
+    assert_eq!(
+        ok("- a\n- [x] b‸", BlockCommand::TaskList),
+        "- [ ] a\n- [x] b‸"
+    );
+}
+
+#[test]
+fn an_alert_in_an_item_keeps_the_item() {
+    let out = ok("- > [!NOTE]\n  > a‸\n- b", BlockCommand::Quote);
+    assert_eq!(out, "- a‸\n- b");
+    assert_eq!(items(&out), [vec!["p"], vec!["p"]]);
+}
+
+#[test]
+fn a_split_closes_and_reopens_inline_marks() {
+    use BlockCommand::Rule;
+    let out = ok("**ab‸cd**", Rule);
+    assert_eq!(out, "**ab**\n\n---\n\n**‸cd**");
+    assert_eq!(kinds(&out), ["p", "rule", "p"]);
+    assert_eq!(ran("[a‸b](u)", Rule), Err(EditRefusal::Across));
+    assert_eq!(ran("`a‸b`", Rule), Err(EditRefusal::Across));
+}
+
+#[test]
+fn a_retyped_item_keeps_its_code_indent() {
+    let out = ok("-     code‸", BlockCommand::OrderedList);
+    assert_eq!(out, "1.     code‸");
+    assert_eq!(items(&out), [vec!["code"]]);
+}
+
+#[test]
+fn deleting_keeps_neighbors_apart() {
+    let out = ok("p\n# h‸\nq", BlockCommand::Delete);
+    assert_eq!(out, "p\n‸\nq");
+    assert_eq!(kinds(&out), ["p", "p"]);
+}
+
+#[test]
+fn heading_marks_keep_their_text() {
+    use BlockCommand::*;
+    let out = ok("alpha #‸", Heading(1));
+    assert_eq!(out, "# alpha \\#‸");
+    assert_eq!(kinds(&out), ["h"]);
+    let out = ok("# - alpha‸", Paragraph);
+    assert_eq!(out, "\\- alpha‸");
+    assert_eq!(kinds(&out), ["p"]);
+    assert_eq!(kinds(&ok("# 1. a‸", Paragraph)), ["p"]);
+}
+
+#[test]
+fn a_tasks_first_text_takes_no_block() {
+    use BlockCommand::*;
+    assert_eq!(ran("- [ ] a‸", Quote), Err(EditRefusal::Outside));
+    assert_eq!(ran("- [ ] ‸ab", Rule), Err(EditRefusal::Outside));
+    assert_eq!(ran("- [ ] ‸ab", CodeBlock), Err(EditRefusal::Outside));
+    assert_eq!(ran("- [ ] a‸", ParagraphBefore), Err(EditRefusal::Outside));
+}
+
+#[test]
+fn a_selection_past_a_list_takes_its_siblings() {
+    let out = ok("- ⟨a\n\nb⟩", BlockCommand::OrderedList);
+    assert_eq!(out, "1. ⟨a\n\n2. b⟩");
+    assert_eq!(kinds(&out), ["list"]);
 }

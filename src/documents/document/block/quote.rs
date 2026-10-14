@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use markdown::mdast::Node;
 
-use super::{Here, change, eol, inside, line_end, line_start, next_line, prefix};
+use super::{Here, change, eol, inside, line_end, line_start, next_line, prefix, task_head};
 use crate::documents::{
     alert,
     document::format::{Change, EditRefusal},
@@ -32,6 +32,10 @@ pub(super) fn run(here: &Here) -> Result<Change, EditRefusal> {
         return Ok(change(vec![(at..at, "> ".to_string())], caret));
     }
     let (k, blocks) = here.blocks().ok_or(EditRefusal::Outside)?;
+    // GFM reads a task's first line as text.
+    if task_head(here.path[k], blocks[0]) {
+        return Err(EditRefusal::Outside);
+    }
     Ok(change(wrap(here, k, &blocks), caret))
 }
 
@@ -65,20 +69,21 @@ fn unwrap(here: &Here, ix: usize) -> Vec<(Range<usize>, String)> {
     if let Node::Blockquote(inner) = quote
         && alert(inner).is_some()
     {
-        // Typora drops an alert's marker with its quote.
-        let next = next_line(text, line).unwrap_or(text.len());
-        edits.push((line..next, String::new()));
-        line = next;
+        // The marker goes; an outer opener stays.
+        let next = next_line(text, line).filter(|next| *next < whole.end);
+        let (cut, rest) = match next {
+            Some(next) => match mark(text, next, &outer) {
+                Some(mark) => (mark.end, next_line(text, next).unwrap_or(text.len())),
+                None => (next, next),
+            },
+            None => (line_end(text, line), whole.end),
+        };
+        edits.push((whole.start..cut, String::new()));
+        line = rest;
     }
     while line < whole.end {
-        if let Some(at) = inside(text, line, &outer) {
-            let end = line_end(text, line);
-            let lead = text[at..end].len() - text[at..end].trim_start_matches(' ').len();
-            let mark = at + lead;
-            if lead <= 3 && text[mark..end].starts_with('>') {
-                let space = usize::from(text[mark + 1..end].starts_with([' ', '\t']));
-                edits.push((mark..mark + 1 + space, String::new()));
-            }
+        if let Some(mark) = mark(text, line, &outer) {
+            edits.push((mark, String::new()));
         }
         match next_line(text, line) {
             Some(next) => line = next,
@@ -90,6 +95,18 @@ fn unwrap(here: &Here, ix: usize) -> Vec<(Range<usize>, String)> {
         edits.push((next..next, blank.clone()));
     }
     edits
+}
+
+/// `line`'s `>` and one space after, inside `outer`.
+fn mark(text: &str, line: usize, outer: &[&Node]) -> Option<Range<usize>> {
+    let at = inside(text, line, outer)?;
+    let end = line_end(text, line);
+    let lead = text[at..end].len() - text[at..end].trim_start_matches(' ').len();
+    let mark = at + lead;
+    (lead <= 3 && text[mark..end].starts_with('>')).then(|| {
+        let space = usize::from(text[mark + 1..end].starts_with([' ', '\t']));
+        mark..mark + 1 + space
+    })
 }
 
 /// `> ` before each line of `blocks`, held by `path[k]`.

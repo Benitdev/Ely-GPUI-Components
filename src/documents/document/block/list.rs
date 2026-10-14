@@ -6,7 +6,7 @@ use markdown::mdast::{List, Node};
 
 use super::{
     BlockCommand, Here, change, column, eol, indent, inside, line_end, line_start, next_line,
-    prefix,
+    opener, prefix,
 };
 use crate::documents::{
     document::format::{Change, EditRefusal},
@@ -54,12 +54,22 @@ pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefu
         }),
         None => Some(path.len() - 1).filter(|ix| matches!(path[*ix], Node::ListItem(_))),
     };
+    // A selection past the list takes every touched sibling.
     if let Some(ix) = item
         && let Node::List(list) = path[ix - 1]
+        && (here.path_at(caret.end).iter()).any(|node| std::ptr::eq(*node, path[ix - 1]))
     {
         let edits = match kind(list) == command {
             true => unwrap(here, ix - 1, list),
-            false => retype(here, ix - 1, list, command),
+            false => {
+                let start = if list.ordered {
+                    list.start.unwrap_or(1)
+                } else {
+                    1
+                };
+                let outer = here.containers(ix - 1);
+                retype(here.text, path[ix - 1], list, &outer, command, start)
+            }
         };
         return Ok(change(edits, caret));
     }
@@ -160,21 +170,18 @@ fn prev_text(text: &str, line: usize, outer: &[&Node]) -> bool {
     })
 }
 
-/// Every item's marker as `kind`'s, its lines moved to match.
-fn retype(here: &Here, ix: usize, list: &List, kind: BlockCommand) -> Vec<(Range<usize>, String)> {
-    let text = here.text;
-    let outer = here.containers(ix);
-    let start = if list.ordered {
-        list.start.unwrap_or(1)
-    } else {
-        1
-    };
+/// Every item's marker as `kind`'s from `start`, lines moved to match.
+fn retype(
+    text: &str,
+    node: &Node,
+    list: &List,
+    outer: &[&Node],
+    kind: BlockCommand,
+    start: u32,
+) -> Vec<(Range<usize>, String)> {
     let bullet = match list.ordered {
         true => '-',
-        false => text[span(here.path[ix]).start..]
-            .chars()
-            .next()
-            .unwrap_or('-'),
+        false => text[span(node).start..].chars().next().unwrap_or('-'),
     };
     let mut edits = Vec::new();
     for (n, item) in list.children.iter().enumerate() {
@@ -183,13 +190,19 @@ fn retype(here: &Here, ix: usize, list: &List, kind: BlockCommand) -> Vec<(Range
         let (mark, spaces) = super::marker(text, item);
         let first = item.children().and_then(|kids| kids.first()).map(span);
         let boxed = matches!(item, Node::ListItem(item) if item.checked.is_some());
-        let end = match first {
-            Some(kid) if boxed && !text[at..kid.start].contains(['\n', '\r']) => kid.start,
-            _ => at + mark + spaces,
+        let inline = first.filter(|kid| !text[at..kid.start].contains(['\n', '\r']));
+        // A box stays when the kind keeps boxes.
+        let (end, written) = match inline {
+            Some(_) if boxed && kind == BlockCommand::TaskList => {
+                (at + mark + spaces, format!("{bullet} "))
+            }
+            Some(kid) if boxed => (kid.start, marker(kind, number, bullet)),
+            // Spaces past the marker's own are the text's.
+            _ => (opener(text, item), marker(kind, number, bullet)),
         };
-        edits.push((at..end, marker(kind, number, bullet)));
+        edits.push((at..end, written));
         let want = column(text, at) + width(kind, number);
-        for (from, cut, past) in continued(text, item, &outer) {
+        for (from, cut, past) in continued(text, item, outer) {
             let pad = want.saturating_sub(column(text, from)) + past;
             edits.push((from..cut, " ".repeat(pad)));
         }
@@ -202,7 +215,7 @@ fn wrap(
     here: &Here,
     k: usize,
     blocks: &[&Node],
-    kind: BlockCommand,
+    command: BlockCommand,
 ) -> Vec<(Range<usize>, String)> {
     let text = here.text;
     let outer = here.containers(k + 1);
@@ -210,6 +223,13 @@ fn wrap(
     let mut edits = Vec::new();
     let mut n = 1;
     for block in blocks {
+        if let Node::List(list) = block {
+            if kind(list) != command {
+                edits.extend(retype(text, block, list, &outer, command, n));
+            }
+            n += list.children.len() as u32;
+            continue;
+        }
         let whole = span(block);
         let mut line = line_start(text, whole.start);
         while line <= whole.end {
@@ -227,9 +247,9 @@ fn wrap(
                 let mark = match first || matches!(block, Node::Paragraph(_)) {
                     true => {
                         n += 1;
-                        marker(kind, n - 1, '-')
+                        marker(command, n - 1, '-')
                     }
-                    false => " ".repeat(width(kind, n - 1)),
+                    false => " ".repeat(width(command, n - 1)),
                 };
                 let at = if matches!(block, Node::Paragraph(_)) {
                     content

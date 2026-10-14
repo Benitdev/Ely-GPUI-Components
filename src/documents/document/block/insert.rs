@@ -7,49 +7,18 @@ use markdown::mdast::Node;
 use super::{
     BlockCommand, Here, container, eol, inside, line_end, line_start, next_line, placed, prefix,
     prev_line, refusal,
+    split::{Room, content, split},
+    task_head,
 };
 use crate::documents::{
     document::format::{Change, EditRefusal},
     markdown::span,
 };
 
-/// Where `line`'s text starts inside `containers`; a lazy line's own.
-fn content(text: &str, line: usize, containers: &[&Node]) -> usize {
-    let at = inside(text, line, containers).unwrap_or(line);
-    at + text[at..].len() - text[at..].trim_start_matches([' ', '\t']).len()
-}
-
 /// Whether `line` holds text past `containers`' prefix.
 fn text_on(text: &str, line: usize, containers: &[&Node]) -> bool {
     let at = content(text, line, containers);
     at < line_end(text, line)
-}
-
-/// Back from `at` over blanks and prefixes, to `floor`.
-fn back(text: &str, mut at: usize, floor: usize, containers: &[&Node]) -> usize {
-    loop {
-        let line = line_start(text, at).max(floor);
-        at = line + text[line..at].trim_end_matches([' ', '\t']).len();
-        if line == floor || at > content(text, line, containers) {
-            return at;
-        }
-        at = line_end(text, prev_line(text, line).expect("a line above the floor"));
-    }
-}
-
-/// On from `at` over blanks and prefixes, to `ceil`.
-fn forth(text: &str, mut at: usize, ceil: usize, containers: &[&Node]) -> usize {
-    loop {
-        let end = line_end(text, at).min(ceil);
-        at = end - text[at..end].trim_start_matches([' ', '\t']).len();
-        if at < end {
-            return at;
-        }
-        match next_line(text, at) {
-            Some(next) if next < ceil => at = content(text, next, containers),
-            _ => return ceil,
-        }
-    }
 }
 
 /// The selection's text, line by line, prefixes cut.
@@ -165,21 +134,6 @@ fn splits(text: &str, node: &Node) -> bool {
     }
 }
 
-/// Where the new block's text goes, ending the edit.
-struct Room<'a> {
-    nl: &'static str,
-    lead: String,
-    blank: String,
-    containers: Vec<&'a Node>,
-}
-
-impl Room<'_> {
-    /// A blank line, then a new line's prefix.
-    fn gap(&self) -> String {
-        format!("{}{}{}{}", self.nl, self.blank, self.nl, self.lead)
-    }
-}
-
 pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefusal> {
     let text = here.text;
     let leaf = here.leaf();
@@ -199,7 +153,7 @@ pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefu
             if here.selection.end > span(node).end {
                 return Err(EditRefusal::Across);
             }
-            Ok(split(here, node, &room, &block, inner))
+            split(here, node, &room, &block, inner)
         }
         Some(node) if !here.selection.is_empty() => Err(refusal(node)),
         Some(node) => {
@@ -251,60 +205,6 @@ pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefu
     }
 }
 
-/// `block` put where the caret splits `node`.
-fn split(here: &Here, node: &Node, room: &Room, block: &str, inner: Option<usize>) -> Change {
-    let text = here.text;
-    let whole = span(node);
-    let kids = node.children().map(Vec::as_slice).unwrap_or_default();
-    let (marks, body) = match node {
-        Node::Heading(heading) => (
-            "#".repeat(usize::from(heading.depth)) + " ",
-            kids.first().map_or(whole.end, |kid| span(kid).start)
-                ..kids.last().map_or(whole.end, |kid| span(kid).end),
-        ),
-        _ => (String::new(), whole.clone()),
-    };
-    let containers = &room.containers;
-    let mut from = back(text, here.selection.start, body.start, containers);
-    let after = forth(text, here.selection.end, body.end, containers);
-    let before = from > body.start;
-    let follows = after < body.end;
-    if !before {
-        from = whole.start;
-    }
-    let to = if follows { after } else { whole.end };
-    let gap = room.gap();
-    let mut written = String::new();
-    if before {
-        written.push_str(&gap);
-    }
-    let start = written.len();
-    written.push_str(block);
-    let caret = match inner {
-        Some(inner) => start + inner,
-        None => {
-            written.push_str(&gap);
-            written.len() + if follows { marks.len() } else { 0 }
-        }
-    };
-    if follows {
-        if inner.is_some() {
-            written.push_str(&gap);
-        }
-        written.push_str(&marks);
-    }
-    let mut edits = Vec::new();
-    let mut shift = 0;
-    if !before && here.joins_before(&whole, None) {
-        let line = line_start(text, whole.start);
-        let blank = format!("{}{}", room.blank, room.nl);
-        shift = blank.len();
-        edits.push((line..line, blank));
-    }
-    edits.push((from..to, written));
-    placed(edits, from + shift + caret)
-}
-
 /// An empty line before or after the caret's block.
 pub(super) fn paragraph(here: &Here, before: bool) -> Result<Change, EditRefusal> {
     let text = here.text;
@@ -319,6 +219,19 @@ pub(super) fn paragraph(here: &Here, before: bool) -> Result<Change, EditRefusal
         containers,
     };
     let gap = room.gap();
+    let holder = here.path[here.path.len() - 2];
+    if before && task_head(holder, leaf) {
+        return Err(EditRefusal::Outside);
+    }
+    // A holder's first line keeps its opener: text moves down.
+    if before
+        && container(holder)
+        && !matches!(holder, Node::Blockquote(_))
+        && line_start(text, span(holder).start) == line_start(text, whole.start)
+    {
+        let down = format!("{}{}", room.nl, room.lead);
+        return Ok(placed(vec![(whole.start..whole.start, down)], whole.start));
+    }
     if before {
         let mut edits = Vec::new();
         let mut shift = 0;
@@ -387,5 +300,11 @@ pub(super) fn delete(here: &Here) -> Result<Change, EditRefusal> {
     if blank_above && end < text.len() && !text_on(text, end, &outer) {
         end = next_line(text, end).unwrap_or(text.len());
     }
-    Ok(placed(vec![(line..end, String::new())], line))
+    // Neighbors that would join keep a blank line between.
+    let joins = here.joins_before(&whole, None) && here.joins_after(&whole);
+    let with = match joins {
+        true => format!("{}{}", prefix(text, &outer).trim_end(), eol(text)),
+        false => String::new(),
+    };
+    Ok(placed(vec![(line..end, with)], line))
 }

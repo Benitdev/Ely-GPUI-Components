@@ -4,6 +4,7 @@ mod heading;
 mod insert;
 mod list;
 mod quote;
+mod split;
 
 use std::ops::Range;
 
@@ -187,6 +188,13 @@ pub(super) fn container(node: &Node) -> bool {
         node,
         Node::Blockquote(_) | Node::ListItem(_) | Node::FootnoteDefinition(_)
     )
+}
+
+/// Whether `node` is task item `holder`'s first text.
+pub(super) fn task_head(holder: &Node, node: &Node) -> bool {
+    matches!(holder, Node::ListItem(item)
+        if item.checked.is_some()
+            && item.children.first().is_some_and(|kid| std::ptr::eq(kid, node)))
 }
 
 /// Whether the path goes on below `node`.

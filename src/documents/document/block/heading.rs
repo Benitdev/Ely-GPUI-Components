@@ -10,7 +10,7 @@ use super::{
 };
 use crate::documents::{
     document::format::{Change, EditRefusal},
-    markdown::span,
+    markdown::{file_tree, span},
 };
 
 /// The level `command` asks at `level`; 0 is a paragraph.
@@ -18,7 +18,7 @@ fn target(level: u8, command: BlockCommand) -> u8 {
     match command {
         BlockCommand::Heading(n) => {
             assert!((1..=6).contains(&n), "a heading level is 1 to 6");
-            if n == level { 0 } else { n }
+            n
         }
         BlockCommand::Promote if level == 0 => 6,
         BlockCommand::Promote => (level - 1).max(1),
@@ -61,7 +61,7 @@ pub(super) fn run(here: &Here, command: BlockCommand) -> Result<Change, EditRefu
     let edits = match (level, goal) {
         (0, _) if task_head(here, &whole) => return Err(EditRefusal::Outside),
         (0, _) => to_heading(here, &containers, &whole, hashes),
-        (_, 0) => to_paragraph(here, node, &containers),
+        (_, 0) => to_paragraph(here, node, &containers)?,
         _ => relevel(here, node, &containers, goal),
     };
     Ok(change(edits, caret))
@@ -75,8 +75,38 @@ fn atx(text: &str, node: &Node) -> bool {
 /// Whether the caret is on a task item's first line.
 fn task_head(here: &Here, whole: &Range<usize>) -> bool {
     let first = line_start(here.text, whole.start) == line_start(here.text, here.selection.start);
-    matches!(here.path.iter().rev().nth(1), Some(Node::ListItem(item)) if item.checked.is_some())
-        && first
+    let leaf = here.path[here.path.len() - 1];
+    first && super::task_head(here.path[here.path.len() - 2], leaf)
+}
+
+/// Where a `#` run that would close the heading starts.
+fn closing(text: &str, at: usize) -> Option<usize> {
+    let line = text[at..line_end(text, at)].trim_end_matches([' ', '\t']);
+    let kept = line.trim_end_matches('#');
+    (kept.len() < line.len() && kept.ends_with([' ', '\t'])).then(|| at + kept.len())
+}
+
+/// The byte to escape if `at`'s line would open a block.
+fn opener(text: &str, at: usize) -> Result<Option<usize>, EditRefusal> {
+    let line = &text[at..line_end(text, at)];
+    let prose = |line: &str| {
+        let root = file_tree(line);
+        matches!(
+            root.children().and_then(|kids| kids.first()),
+            Some(Node::Paragraph(_))
+        )
+    };
+    if prose(line) {
+        return Ok(None);
+    }
+    let mark = line.find(|ch: char| ch.is_ascii_punctuation());
+    match mark.filter(|mark| prose(&format!("{}\\{}", &line[..*mark], &line[*mark..]))) {
+        Some(mark) => Ok(Some(at + mark)),
+        None => {
+            log::warn!("block command: a heading's text stays a block");
+            Err(EditRefusal::Outside)
+        }
+    }
 }
 
 /// The caret's line led by `hashes`; lazy lines kept in.
@@ -105,6 +135,9 @@ fn to_heading(
         };
         if line == first {
             edits.push((at..at, format!("{lazy}{hashes}")));
+            if let Some(run) = closing(text, at) {
+                edits.push((run..run, "\\".to_string()));
+            }
         } else if !lazy.is_empty() {
             edits.push((at..at, lazy.to_string()));
         }
@@ -117,7 +150,11 @@ fn to_heading(
 }
 
 /// A heading's marks off; a blank line where text joins.
-fn to_paragraph(here: &Here, node: &Node, containers: &[&Node]) -> Vec<(Range<usize>, String)> {
+fn to_paragraph(
+    here: &Here,
+    node: &Node,
+    containers: &[&Node],
+) -> Result<Vec<(Range<usize>, String)>, EditRefusal> {
     let text = here.text;
     let whole = span(node);
     let blank = format!("{}{}", prefix(text, containers).trim_end(), eol(text));
@@ -130,7 +167,11 @@ fn to_paragraph(here: &Here, node: &Node, containers: &[&Node]) -> Vec<(Range<us
     match atx(text, node) {
         true => match (kids.first(), kids.last()) {
             (Some(first), Some(last)) => {
-                edits.push((whole.start..span(first).start, String::new()));
+                let start = span(first).start;
+                edits.push((whole.start..start, String::new()));
+                if let Some(mark) = opener(text, start)? {
+                    edits.push((mark..mark, "\\".to_string()));
+                }
                 edits.push((span(last).end..whole.end, String::new()));
             }
             _ => edits.push((whole.clone(), String::new())),
@@ -146,7 +187,7 @@ fn to_paragraph(here: &Here, node: &Node, containers: &[&Node]) -> Vec<(Range<us
         let next = next_line(text, whole.end).expect("a joining line follows");
         edits.push((next..next, blank.clone()));
     }
-    edits
+    Ok(edits)
 }
 
 /// A heading moved to level `goal`.

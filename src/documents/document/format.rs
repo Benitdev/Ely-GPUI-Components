@@ -97,7 +97,7 @@ fn block(node: &Node) -> bool {
 }
 
 /// A styled node's two marks, kept text between.
-fn marks(node: &Node, text: &str) -> Option<[Range<usize>; 2]> {
+pub(super) fn marks(node: &Node, text: &str) -> Option<[Range<usize>; 2]> {
     let whole = span(node);
     let inner = match node {
         Node::Strong(_) | Node::Emphasis(_) | Node::Delete(_) => content(node),
