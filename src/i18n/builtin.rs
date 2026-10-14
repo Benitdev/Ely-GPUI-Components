@@ -115,6 +115,16 @@ const EN: &[(&str, &str)] = &[
     ("theme.light", "Light"),
     ("theme.dark", "Dark"),
     ("theme.system", "System"),
+    ("select.placeholder", "Choose…"),
+    ("input.clear", "Clear"),
+    ("completion.empty", "No suggestions"),
+    ("builder.remove", "Remove"),
+    ("tabs.unpin", "Unpin"),
+    ("theme.size.reset", "Back to the default size"),
+    (
+        "theme.size.sample",
+        "The quick brown fox jumps over the lazy dog.",
+    ),
 ];
 
 const ZH_CN: &[(&str, &str)] = &[
@@ -228,6 +238,16 @@ const ZH_CN: &[(&str, &str)] = &[
     ("theme.light", "浅色"),
     ("theme.dark", "深色"),
     ("theme.system", "跟随系统"),
+    ("select.placeholder", "请选择…"),
+    ("input.clear", "清除"),
+    ("completion.empty", "没有建议"),
+    ("builder.remove", "移除"),
+    ("tabs.unpin", "取消固定"),
+    ("theme.size.reset", "恢复默认大小"),
+    (
+        "theme.size.sample",
+        "天地玄黄，宇宙洪荒。The quick brown fox.",
+    ),
 ];
 
 /// Ely's message for `key`; English if unshipped, fails if unknown.

@@ -251,7 +251,7 @@ pub struct Select {
     id: ElementId,
     choices: Vec<Choice>,
     selected: Option<SharedString>,
-    placeholder: SharedString,
+    placeholder: Option<SharedString>,
     label: Option<SharedString>,
     size: ControlSize,
     disabled: bool,
@@ -264,7 +264,7 @@ impl Select {
             id: id.into(),
             choices: choices.into_iter().collect(),
             selected: None,
-            placeholder: SharedString::from("Choose…"),
+            placeholder: None,
             label: None,
             size: ControlSize::default(),
             disabled: false,
@@ -284,7 +284,7 @@ impl Select {
     }
 
     pub fn placeholder(mut self, text: impl Into<SharedString>) -> Self {
-        self.placeholder = text.into();
+        self.placeholder = Some(text.into());
         self
     }
 
@@ -326,6 +326,8 @@ impl RenderOnce for Select {
             .as_ref()
             .and_then(|value| choices.iter().find(|choice| choice.value == *value))
             .cloned();
+        let placeholder =
+            (self.placeholder.clone()).unwrap_or_else(|| i18n::text(cx, "select.placeholder", &[]));
         let colors = &cx.theme().colors;
         let trigger = field_button(
             self.id.clone(),
@@ -336,7 +338,7 @@ impl RenderOnce for Select {
             cx,
         )
         .role(Role::ComboBox)
-        .aria_placeholder(self.placeholder.clone())
+        .aria_placeholder(placeholder.clone())
         .when_some(self.label.clone(), |trigger, label| {
             trigger.aria_label(label)
         })
@@ -361,7 +363,7 @@ impl RenderOnce for Select {
         )
         .child(field_text(
             shown.map(|choice| choice.label),
-            self.placeholder,
+            placeholder,
             self.disabled,
             cx,
         ))

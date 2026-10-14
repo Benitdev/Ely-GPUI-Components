@@ -223,7 +223,7 @@ impl RenderOnce for FontSizeControl {
                     )
                     .child(
                         IconButton::new((self.id, "reset"), IconName::RotateCcw)
-                            .tooltip("Back to the default size")
+                            .tooltip(i18n::text(cx, "theme.size.reset", &[]))
                             .disabled(self.size == default)
                             .on_click(move |_, window, cx| {
                                 reset(default, window, cx);
@@ -237,7 +237,7 @@ impl RenderOnce for FontSizeControl {
                         .min_w_0()
                         .text_size(Pixels::from(self.size))
                         .text_color(theme.colors.fg)
-                        .child("The quick brown fox jumps over the lazy dog."),
+                        .child(i18n::text(cx, "theme.size.sample", &[])),
                 ),
             )
     }

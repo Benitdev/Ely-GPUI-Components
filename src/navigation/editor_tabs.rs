@@ -195,7 +195,7 @@ impl RenderOnce for EditorTabs {
                     IconButton::new(("pin", ix), IconName::Pin)
                         .size(ControlSize::Sm)
                         .variant(ButtonVariant::Ghost)
-                        .tooltip("Unpin")
+                        .tooltip(i18n::text(cx, "tabs.unpin", &[]))
                         .on_click(move |_, window, cx| {
                             cx.stop_propagation();
                             run(&pin, "unpin", &slot_id, window, cx);

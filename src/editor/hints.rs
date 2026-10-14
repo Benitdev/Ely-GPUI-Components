@@ -7,6 +7,7 @@ use gpui::{
 };
 
 use super::{symbols::SymbolKind, syntax};
+use crate::i18n;
 use crate::{
     buttons::{ButtonVariant, IconButton},
     navigation::{fuzzy, marked},
@@ -185,7 +186,7 @@ impl RenderOnce for CompletionMenu {
                                 .px_2()
                                 .py_1()
                                 .text_color(colors.fg_subtle)
-                                .child("No suggestions"),
+                                .child(i18n::text(cx, "completion.empty", &[])),
                         )
                     })
                     .children(rows),

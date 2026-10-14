@@ -6,6 +6,7 @@ use gpui::{
 };
 
 use super::{FilterRule, SortKey, Test};
+use crate::i18n;
 use crate::{
     buttons::{Button, ButtonVariant, IconButton, SegmentedControl},
     forms::{Choice, Input, InputEvent, Select, TextInput},
@@ -205,7 +206,7 @@ impl RenderOnce for FilterBuilder {
                         IconButton::new((id.clone(), format!("remove-{ix}")), IconName::X)
                             .variant(ButtonVariant::Ghost)
                             .size(ControlSize::Sm)
-                            .tooltip("Remove")
+                            .tooltip(i18n::text(cx, "builder.remove", &[]))
                             .on_click(move |_, window, cx| {
                                 let mut next = for_remove.clone();
                                 next.remove(ix);
@@ -377,7 +378,7 @@ impl RenderOnce for SortBuilder {
                             IconButton::new((id.clone(), format!("sort-remove-{ix}")), IconName::X)
                                 .variant(ButtonVariant::Ghost)
                                 .size(ControlSize::Sm)
-                                .tooltip("Remove")
+                                .tooltip(i18n::text(cx, "builder.remove", &[]))
                                 .on_click(move |_, window, cx| {
                                     let mut next = for_remove.clone();
                                     next.remove(ix);

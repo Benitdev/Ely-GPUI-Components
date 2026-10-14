@@ -5,6 +5,7 @@ use gpui::{
     div, prelude::*,
 };
 
+use crate::i18n;
 use crate::{
     buttons::{Button, ButtonVariant, IconButton, ToggleButton, ToggleItem},
     forms::{Input, TextInput},
@@ -295,7 +296,7 @@ impl RenderOnce for FindWidget {
                         IconButton::new((self.id.clone(), "close"), IconName::X)
                             .variant(ButtonVariant::Ghost)
                             .size(ControlSize::Sm)
-                            .tooltip("Close")
+                            .tooltip(i18n::text(cx, "dialog.close", &[]))
                             .on_click(move |_, window, cx| close(window, cx))
                     })),
             )

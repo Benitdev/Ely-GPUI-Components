@@ -4,6 +4,7 @@ use gpui::{
 };
 
 use super::TextInput;
+use crate::i18n;
 use crate::{
     buttons::IconButton,
     primitives::{Icon, IconName},
@@ -148,7 +149,7 @@ impl RenderOnce for Input {
                 frame.child(
                     IconButton::new(("input-clear", clear_id), IconName::CircleX)
                         .size(ControlSize::Sm)
-                        .tooltip("Clear")
+                        .tooltip(i18n::text(cx, "input.clear", &[]))
                         .on_click(move |_, window, cx| {
                             state.update(cx, |input, cx| input.set_text("", cx));
                             window.focus(&state.read(cx).focus().clone(), cx);
