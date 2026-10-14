@@ -1,4 +1,4 @@
-use markdown::{decode_named, decode_numeric};
+use markdown::decode_named;
 
 use super::Style;
 
@@ -31,6 +31,14 @@ pub(crate) fn inline_style(name: &str) -> Option<Style> {
         "a" => Some(Style::Link),
         _ => None,
     }
+}
+
+/// HTML5's formatting elements reopen past a crossed close.
+pub(crate) fn reopens(name: &str) -> bool {
+    matches!(
+        name,
+        "a" | "b" | "code" | "em" | "i" | "s" | "strike" | "strong" | "u"
+    )
 }
 
 /// `html` as one tag; comments and the rest are none.
@@ -184,99 +192,32 @@ fn numeric(code: Option<u32>) -> char {
     .unwrap_or(char::REPLACEMENT_CHARACTER)
 }
 
-/// The reference `text` starts with, as CommonMark reads one.
-fn reference(text: &str) -> Option<(String, usize)> {
-    let body = text.strip_prefix('&')?;
-    let end = body
-        .bytes()
-        .take(LONGEST + 1)
-        .position(|byte| byte == b';')?;
-    let name = &body[..end];
-    let value = match name.strip_prefix('#') {
-        Some(number) => {
-            let (digits, radix, most) = match number.strip_prefix(['x', 'X']) {
-                Some(hex) => (hex, 16, 6),
-                None => (number, 10, 7),
-            };
-            let valid =
-                (1..=most).contains(&digits.len()) && digits.chars().all(|ch| ch.is_digit(radix));
-            valid.then(|| decode_numeric(digits, radix))?
-        }
-        None if !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric()) => {
-            decode_named(name, true)?
-        }
-        None => return None,
-    };
-    Some((value, end + 2))
-}
-
-/// `value` with each `:shortcode:` written plainly in `source` as emoji.
-pub(crate) fn emoji(source: &str, value: &str) -> String {
-    let mut codes = literal_codes(source).into_iter().peekable();
-    let mut out = String::with_capacity(value.len());
-    let (mut colons, mut rest) = (0, value);
+/// `text` with each known `:shortcode:` as its emoji.
+pub(crate) fn emoji(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
     while let Some(at) = rest.find(':') {
         out.push_str(&rest[..at]);
-        rest = &rest[at..];
-        match codes.peek() {
-            Some((ordinal, code, glyph))
-                if *ordinal == colons
-                    && rest[1..].starts_with(code)
-                    && rest[1 + code.len()..].starts_with(':') =>
-            {
-                out.push_str(glyph);
-                rest = &rest[code.len() + 2..];
-                colons += 2;
-                codes.next();
+        let after = &rest[at + 1..];
+        let len = after
+            .find(|ch: char| !shortcode_char(ch))
+            .unwrap_or(after.len());
+        let found = after[len..]
+            .starts_with(':')
+            .then(|| emojis::get_by_shortcode(&after[..len]))
+            .flatten();
+        match found {
+            Some(found) => {
+                out.push_str(found.as_str());
+                rest = &after[len + 1..];
             }
-            _ => {
+            None => {
                 out.push(':');
-                rest = &rest[1..];
-                colons += 1;
-                while codes.next_if(|(ordinal, _, _)| *ordinal < colons).is_some() {}
+                rest = after;
             }
         }
     }
     out.push_str(rest);
-    out
-}
-
-/// Plain shortcodes in `source`, with colons counted before each.
-fn literal_codes(source: &str) -> Vec<(usize, &str, &'static str)> {
-    let (mut out, mut colons, mut at) = (Vec::new(), 0, 0);
-    while let Some(ch) = source[at..].chars().next() {
-        let (rest, after) = (&source[at..], &source[at + ch.len_utf8()..]);
-        if ch == '\\'
-            && let Some(next) = after.chars().next().filter(char::is_ascii_punctuation)
-        {
-            colons += usize::from(next == ':');
-            at += 1 + next.len_utf8();
-            continue;
-        }
-        if ch == '&'
-            && let Some((text, len)) = reference(rest)
-        {
-            colons += text.matches(':').count();
-            at += len;
-            continue;
-        }
-        if ch == ':' {
-            let len = after
-                .find(|ch: char| !shortcode_char(ch))
-                .unwrap_or(after.len());
-            let found = Some(&after[..len])
-                .filter(|code| !code.is_empty() && after[len..].starts_with(':'))
-                .and_then(|code| emojis::get_by_shortcode(code).map(|found| (code, found)));
-            if let Some((code, found)) = found {
-                out.push((colons, code, found.as_str()));
-                colons += 2;
-                at += code.len() + 2;
-                continue;
-            }
-            colons += 1;
-        }
-        at += ch.len_utf8();
-    }
     out
 }
 
@@ -359,26 +300,17 @@ mod tests {
         let (amps, colons) = ("&".repeat(1 << 18), ":zq".repeat(1 << 16));
         let started = web_time::Instant::now();
         assert_eq!(decoded(&amps).len(), amps.len());
-        assert_eq!(emoji(&amps, &amps).len(), amps.len());
-        assert_eq!(emoji(&colons, &colons).len(), colons.len());
+        assert_eq!(emoji(&colons).len(), colons.len());
         let spent = started.elapsed();
         assert!(spent.as_secs() < 2, "256 KiB took {spent:?}");
     }
 
     #[test]
-    fn shortcodes_written_plainly_become_emoji() {
-        let same = |text: &str| emoji(text, text);
-        assert_eq!(same("hi :smile: :+1:"), "hi 😄 👍");
-        assert_eq!(same(":nope: at 10:30 and ::"), ":nope: at 10:30 and ::");
-        assert_eq!(same("a:smile:b"), "a😄b");
-        assert_eq!(same("é :smile: 中\\é"), "é 😄 中\\é");
-    }
-
-    #[test]
-    fn escaped_or_referenced_colons_stay() {
-        assert_eq!(emoji("\\:smile: :smile:", ":smile: :smile:"), ":smile: 😄");
-        assert_eq!(emoji("&#58;smile: :tada:", ":smile: :tada:"), ":smile: 🎉");
-        assert_eq!(emoji(":sm&#105;le:", ":smile:"), ":smile:");
+    fn known_shortcodes_become_emoji() {
+        assert_eq!(emoji("hi :smile: :+1:"), "hi 😄 👍");
+        assert_eq!(emoji(":nope: at 10:30 and ::"), ":nope: at 10:30 and ::");
+        assert_eq!(emoji("a:smile:b :x:smile:"), "a😄b ❌smile:");
+        assert_eq!(emoji("é :smile: 中"), "é 😄 中");
     }
 
     #[test]

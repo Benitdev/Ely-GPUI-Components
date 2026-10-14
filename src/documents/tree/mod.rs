@@ -72,12 +72,12 @@ pub(crate) struct Reader<'a> {
     notes: HashMap<String, usize>,
 }
 
-/// An open style; `tag` names an HTML one.
+/// An open element, as HTML names it.
 struct Opened {
+    name: String,
     start: usize,
-    style: Style,
+    style: Option<Style>,
     url: Option<String>,
-    tag: Option<String>,
 }
 
 /// Inline text being built, and the containers open around it.
@@ -106,7 +106,7 @@ impl Run {
         self.open.iter().rev().find_map(|opened| opened.url.clone())
     }
 
-    /// Opens or closes a style for an inline HTML tag.
+    /// Opens or closes an element for an inline HTML tag.
     fn html(&mut self, written: &str) {
         let Some(tag) = html::tag(written) else {
             return;
@@ -117,41 +117,61 @@ impl Run {
         let Some(style) = html::inline_style(&tag.name) else {
             return;
         };
-        // A close meets its open anywhere, as a browser repairs.
         if tag.closing {
-            let found = self
-                .open
-                .iter()
-                .rposition(|opened| opened.tag.as_ref() == Some(&tag.name));
-            if let Some(at) = found {
-                let (opened, end) = (self.open.remove(at), self.text.text.len());
-                close(&mut self.text, &opened, end);
-            }
-            return;
+            return self.end(&tag.name);
         }
         let url = match style {
-            Style::Link => match tag.attribute("href") {
-                Some(href) => Some(href.to_string()),
-                None => return,
-            },
+            Style::Link => tag.attribute("href").map(str::to_string),
             _ => None,
         };
+        let style = (style != Style::Link || url.is_some()).then_some(style);
+        self.start(&tag.name, style, url);
+    }
+
+    /// Opens `name`; a new `a` ends the open one.
+    fn start(&mut self, name: &str, style: Option<Style>, url: Option<String>) {
+        if name == "a" {
+            self.end("a");
+        }
         self.open.push(Opened {
+            name: name.to_string(),
             start: self.text.text.len(),
             style,
             url,
-            tag: Some(tag.name),
         });
+    }
+
+    /// Ends the innermost `name`, as HTML5 repairs nesting.
+    fn end(&mut self, name: &str) {
+        let Some(at) = self.open.iter().rposition(|opened| opened.name == name) else {
+            return;
+        };
+        let end = self.text.text.len();
+        let above = self.open.split_off(at + 1);
+        let ended = self.open.pop().expect("found at `at`");
+        close(&mut self.text, &ended, end);
+        for opened in above {
+            close(&mut self.text, &opened, end);
+            if html::reopens(&opened.name) {
+                self.open.push(Opened {
+                    start: end,
+                    ..opened
+                });
+            }
+        }
     }
 }
 
 /// Records `opened` as styled up to `end`.
 fn close(text: &mut Inline, opened: &Opened, end: usize) {
-    if opened.start < end {
-        text.styles.push((opened.start..end, opened.style));
-        if let Some(url) = &opened.url {
-            text.links.push((opened.start..end, url.clone()));
-        }
+    if opened.start >= end {
+        return;
+    }
+    if let Some(style) = opened.style {
+        text.styles.push((opened.start..end, style));
+    }
+    if let Some(url) = &opened.url {
+        text.links.push((opened.start..end, url.clone()));
     }
 }
 
@@ -303,11 +323,12 @@ impl<'a> Reader<'a> {
 
     fn inline_into(&self, node: &mdast::Node, run: &mut Run, images: &mut Images) {
         let text = &mut run.text;
-        let (children, style, url) = match node {
+        let (children, (name, style), url) = match node {
             mdast::Node::Text(words) => {
-                let shown = match run.verbatim {
+                let code = run.open.iter().any(|opened| opened.name == "code");
+                let shown = match run.verbatim || code {
                     true => words.value.clone(),
-                    false => html::emoji(&self.source[span(node)], &words.value),
+                    false => html::emoji(&words.value),
                 };
                 let soft = shown.replace("\r\n", " ").replace(['\r', '\n'], " ");
                 return run.text.text.push_str(&soft);
@@ -338,23 +359,19 @@ impl<'a> Reader<'a> {
                 };
             }
             mdast::Node::Html(written) => return run.html(&written.value),
-            mdast::Node::Strong(strong) => (&strong.children, Style::Strong, None),
-            mdast::Node::Emphasis(emphasis) => (&emphasis.children, Style::Emphasis, None),
-            mdast::Node::Delete(delete) => (&delete.children, Style::Strike, None),
-            mdast::Node::Link(link) => (&link.children, Style::Link, Some(link.url.clone())),
+            mdast::Node::Strong(strong) => (&strong.children, ("strong", Style::Strong), None),
+            mdast::Node::Emphasis(emphasis) => (&emphasis.children, ("em", Style::Emphasis), None),
+            mdast::Node::Delete(delete) => (&delete.children, ("del", Style::Strike), None),
+            mdast::Node::Link(link) => (&link.children, ("a", Style::Link), Some(link.url.clone())),
             mdast::Node::LinkReference(link) => (
                 &link.children,
-                Style::Link,
+                ("a", Style::Link),
                 Some(self.url(&link.identifier)),
             ),
             other => unreachable!("{other:?} is no inline outside MDX"),
         };
-        run.open.push(Opened {
-            start: run.text.text.len(),
-            style,
-            url,
-            tag: None,
-        });
+        // A container is the element GitHub writes.
+        run.start(name, Some(style), url);
         let autolink =
             matches!(node, mdast::Node::Link(_)) && !self.source[span(node)].starts_with('[');
         let outer = run.verbatim;
@@ -363,14 +380,7 @@ impl<'a> Reader<'a> {
             self.inline_into(child, run, images);
         }
         run.verbatim = outer;
-        // Tags opened inside stay open past it.
-        let at = run
-            .open
-            .iter()
-            .rposition(|opened| opened.tag.is_none())
-            .expect("the container opened above");
-        let (opened, end) = (run.open.remove(at), run.text.text.len());
-        close(&mut run.text, &opened, end);
+        run.end(name);
     }
 }
 

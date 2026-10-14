@@ -225,19 +225,76 @@ fn inline_html_shows_as_typora_shows_it() {
     assert_eq!(text.links, [(13..14, "https://ely.dev".to_string())]);
 }
 
+/// Where `style` holds, touching stretches joined.
+fn marked(inline: &Inline, style: Style) -> Vec<(usize, usize)> {
+    let mut ranges: Vec<Range<usize>> = inline
+        .styles
+        .iter()
+        .filter(|(_, held)| *held == style)
+        .map(|(range, _)| range.clone())
+        .collect();
+    ranges.sort_by_key(|range| range.start);
+    let mut out: Vec<Range<usize>> = Vec::new();
+    for range in ranges {
+        match out.last_mut() {
+            Some(last) if last.end >= range.start => last.end = last.end.max(range.end),
+            _ => out.push(range),
+        }
+    }
+    out.into_iter()
+        .map(|range| (range.start, range.end))
+        .collect()
+}
+
 #[test]
 fn tags_and_emphasis_cross_as_a_browser_repairs_them() {
     let opened_inside = line("**a <u>b** c</u> d");
     assert_eq!(opened_inside.text, "a b c d");
-    let mut styles = opened_inside.styles.clone();
-    styles.sort_by_key(|(range, _)| (range.start, range.end));
-    assert_eq!(styles, [(0..3, Style::Strong), (2..5, Style::Underline)]);
+    assert_eq!(marked(&opened_inside, Style::Strong), [(0, 3)]);
+    assert_eq!(marked(&opened_inside, Style::Underline), [(2, 5)]);
     let closed_inside = line("a <u>*text</u> outside* end");
     assert_eq!(closed_inside.text, "a text outside end");
-    let mut styles = closed_inside.styles.clone();
-    styles.sort_by_key(|(range, _)| (range.start, range.end));
-    assert_eq!(styles, [(2..6, Style::Underline), (2..14, Style::Emphasis)]);
+    assert_eq!(marked(&closed_inside, Style::Underline), [(2, 6)]);
+    assert_eq!(marked(&closed_inside, Style::Emphasis), [(2, 14)]);
     assert!(line("a </u> b").styles.is_empty(), "a stray close");
+}
+
+#[test]
+fn a_raw_close_ends_the_markdown_element() {
+    let em = line("a *inside</em> outside* end");
+    assert_eq!(em.text, "a inside outside end");
+    assert_eq!(marked(&em, Style::Emphasis), [(2, 8)]);
+    let strong = line("a **inside</strong> outside** end");
+    assert_eq!(marked(&strong, Style::Strong), [(2, 8)]);
+}
+
+#[test]
+fn only_formatting_elements_reopen_past_a_close() {
+    for (tag, style) in [
+        ("mark", Style::Mark),
+        ("kbd", Style::Code),
+        ("del", Style::Strike),
+    ] {
+        let text = line(&format!("a **bold <{tag}>x** outside</{tag}> end"));
+        assert_eq!(text.text, "a bold x outside end", "{tag}");
+        assert_eq!(marked(&text, style), [(7, 8)], "{tag}");
+    }
+    let reopened = line("<b>1<i>2</b>3</i>4");
+    assert_eq!(marked(&reopened, Style::Strong), [(0, 2)]);
+    assert_eq!(marked(&reopened, Style::Emphasis), [(1, 3)]);
+}
+
+#[test]
+fn a_new_anchor_ends_the_open_one() {
+    let text = line("[one <a href='/inner'>two</a> three](/outer)");
+    assert_eq!(text.text, "one two three");
+    assert_eq!(
+        text.links,
+        [(0..4, "/outer".to_string()), (4..7, "/inner".to_string())]
+    );
+    assert_eq!(marked(&text, Style::Link), [(0, 7)]);
+    let named = line("[x <a name=n>y</a> z](/u)");
+    assert_eq!(named.links, [(0..2, "/u".to_string())]);
 }
 
 #[test]
@@ -279,9 +336,11 @@ fn one_tilde_still_strikes() {
 }
 
 #[test]
-fn escapes_references_and_autolinks_keep_their_shortcodes() {
-    assert_eq!(line(r"Show \:smile: now.").text, "Show :smile: now.");
-    assert_eq!(line("Show &#58;smile: now.").text, "Show :smile: now.");
+fn shortcodes_read_as_github_reads_them() {
+    let decoded = line(r"Show \:smile: and &#58;smile: and :sm&#105;le:.");
+    assert_eq!(decoded.text, "Show 😄 and 😄 and 😄.");
+    let tags = line("a <code>:smile:</code> <kbd>:smile:</kbd> <tt>:smile:</tt> :smile:");
+    assert_eq!(tags.text, "a :smile: 😄 😄 😄");
     assert_eq!(
         line("<https://x.test/:smile:>").text,
         "https://x.test/:smile:"
