@@ -1,6 +1,9 @@
+use std::rc::Rc;
+
 use gpui::{
     AnyElement, App, Div, ElementId, Entity, FontWeight, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Role, SharedString, Stateful, Styled, div, prelude::*,
+    MouseButton, ParentElement, Role, SharedString, Stateful, Styled, accesskit::Action, div,
+    prelude::*,
 };
 
 use super::{
@@ -86,9 +89,9 @@ fn row(item: &MenuItem, ix: usize, current: bool, cx: &App) -> Stateful<Div> {
 /// Button `column` of row `ix`, named by its label.
 pub(super) fn button(
     item: &MenuItem,
-    ix: usize,
-    column: usize,
+    (ix, column): (usize, usize),
     current: bool,
+    press: Run,
     cx: &App,
 ) -> Stateful<Div> {
     let theme = cx.theme();
@@ -113,10 +116,22 @@ pub(super) fn button(
         .rounded(theme.radius(Radius::Md))
         .border_1()
         .border_color(colors.border)
+        .aria_selected(current)
+        .when(current, |button| button.aria_active_descendant())
         .when(current && !item.disabled, |button| button.bg(colors.hover))
-        .when(!item.disabled, |button| button.cursor_pointer())
         .when(item.disabled, |button| {
             button.aria_description(i18n::text(cx, "state.unavailable", &[]))
+        })
+        .when(!item.disabled, |button| {
+            let read = press.clone();
+            button
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    window.prevent_default();
+                    cx.stop_propagation();
+                    press(window, cx);
+                })
+                .on_a11y_action(Action::Click, move |_, window, cx| read(window, cx))
         })
         .child(Icon::new(icon).size(IconSize::Sm).color(fg))
         .tooltip(Tooltip::rich(move |_, cx| {
@@ -174,20 +189,18 @@ pub(super) fn panel(
                     let (hover, click, close, menu) =
                         (state.clone(), state.clone(), close.clone(), menu.clone());
                     let hover_menu = menu.clone();
-                    button(item, ix, column, current, cx).when(!item.disabled, |button| {
-                        button
-                            .on_mouse_move(move |_, _, cx| {
-                                let open = hover.read(cx);
-                                let marked = open.levels.get(depth).map(|l| (l.at, l.column));
-                                if marked != Some((Some(ix), column)) {
-                                    mark(&hover, &hover_menu, depth, (ix, column), false, cx);
-                                }
-                            })
-                            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                                window.prevent_default();
-                                cx.stop_propagation();
-                                choose(&click, &menu, depth, (ix, column), &close, window, cx);
-                            })
+                    let press: Run = Rc::new(move |window, cx| {
+                        choose(&click, &menu, depth, (ix, column), &close, window, cx)
+                    });
+                    let drawn = button(item, (ix, column), current, press, cx);
+                    drawn.when(!item.disabled, |button| {
+                        button.on_mouse_move(move |_, _, cx| {
+                            let open = hover.read(cx);
+                            let marked = open.levels.get(depth).map(|l| (l.at, l.column));
+                            if marked != Some((Some(ix), column)) {
+                                mark(&hover, &hover_menu, depth, (ix, column), false, cx);
+                            }
+                        })
                     })
                 }))
                 .into_any_element(),
@@ -230,6 +243,7 @@ pub(super) fn panel(
             }
         });
     surface((id.clone(), format!("panel-{depth}")), cx)
+        .role(Role::Menu)
         .relative()
         // Presses here are the menu's, not its host's.
         .on_mouse_down(MouseButton::Left, |_, window, cx| {

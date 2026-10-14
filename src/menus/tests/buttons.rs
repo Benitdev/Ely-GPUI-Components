@@ -214,16 +214,34 @@ fn a_disabled_button_says_it_is_unavailable(cx: &mut TestAppContext) {
         Theme::init(cx);
         let off = MenuItem::new("Copy").icon(IconName::Copy).disabled(true);
         let on = MenuItem::new("Cut").icon(IconName::Scissors);
-        let read = |item: &MenuItem, cx: &mut App| {
-            let mut node = gpui::accesskit::Node::new(gpui::Role::Button);
-            gpui::Element::write_a11y_info(
-                &super::super::draw::button(item, 0, 0, false, cx),
-                &mut node,
-            );
-            node.description().map(str::to_owned)
-        };
+        let read =
+            |item: &MenuItem, cx: &mut App| node(item, false, cx).description().map(str::to_owned);
         let expected = crate::i18n::text(cx, "state.unavailable", &[]).to_string();
         assert_eq!(read(&off, cx), Some(expected));
         assert_eq!(read(&on, cx), None);
+    });
+}
+
+/// The accessibility node `item` draws as a menu button.
+fn node(item: &MenuItem, current: bool, cx: &mut App) -> gpui::accesskit::Node {
+    let mut node = gpui::accesskit::Node::new(gpui::Role::Button);
+    let press: crate::forms::Run = std::rc::Rc::new(|_, _| {});
+    let drawn = super::super::draw::button(item, (0, 0), current, press, cx);
+    gpui::Element::write_a11y_info(&drawn, &mut node);
+    node
+}
+
+#[gpui::test]
+fn a_button_offers_its_press_and_says_it_is_marked(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        Theme::init(cx);
+        let cut = MenuItem::new("Cut").icon(IconName::Scissors);
+        let off = MenuItem::new("Copy").icon(IconName::Copy).disabled(true);
+        let click = gpui::accesskit::Action::Click;
+        let marked = node(&cut, true, cx);
+        assert!(marked.supports_action(click), "a reader can press it");
+        assert_eq!(marked.is_selected(), Some(true));
+        assert_eq!(node(&cut, false, cx).is_selected(), Some(false));
+        assert!(!node(&off, false, cx).supports_action(click), "off");
     });
 }
