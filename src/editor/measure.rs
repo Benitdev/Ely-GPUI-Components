@@ -68,7 +68,7 @@ impl Measured {
         }
     }
 
-    /// The column whose start lies nearest `x`, line end included.
+    /// The column starting nearest `x`, line end included.
     pub fn column(&self, x: Pixels) -> usize {
         let starts = self.layout.runs.iter().flat_map(|run| {
             run.glyphs

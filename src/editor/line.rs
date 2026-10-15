@@ -172,7 +172,7 @@ impl CodeEditor {
             advance,
             window,
         );
-        // Text sits where laid out; rulers and guides on the grid.
+        // Text where laid out; rulers and guides on grid.
         let x = |column: usize| advance + measured.x(column);
         let grid = |column: usize| advance * (column + 1) as f32;
         let focused = self.focus.is_focused(window);
