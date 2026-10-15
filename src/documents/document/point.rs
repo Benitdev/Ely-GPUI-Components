@@ -1,13 +1,13 @@
 use std::rc::Rc;
 
-use gpui::{AppContext as _, Context, MouseButton, Window};
+use gpui::{AppContext as _, Context, MouseButton, Pixels, Point, Window};
 use markdown::mdast;
 
 use super::{DocumentEvent, MarkdownDocument, edit::Landing, edit::moved, parse::Block};
 use crate::documents::{
     markdown::{file_tree, span, walk},
     render::{OnPoint, Place, Pointed},
-    tree::{Node, alert, is_toc, lines_at},
+    tree::{Node, Reader, alert, is_toc, lines_at},
 };
 
 /// A top-level block's kind.
@@ -55,7 +55,7 @@ impl TargetBlock {
 /// What a secondary press landed on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentTarget {
-    /// The caret's source byte; an open block's as unwritten.
+    /// The pressed source byte; an open block's as unwritten.
     pub at: usize,
     /// None past the last block.
     pub block: Option<TargetBlock>,
@@ -162,16 +162,17 @@ impl MarkdownDocument {
         cx.notify();
     }
 
-    /// A right press in the open block; it stays open.
-    pub(super) fn point_open(&mut self, cx: &mut Context<Self>) {
-        if self.open.is_none() {
+    /// A right press at `position`; the open block stays open.
+    pub(super) fn point_open(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
             return log::warn!("markdown document: a press on a block closed since");
-        }
+        };
+        let pressed = open.input.read(cx).offset_for_point(position);
         let taken = self.snapshot(cx);
-        let (full, _, selection) = taken.clone();
+        let (full, offset, _) = taken.clone();
         cx.spawn(async move |document, cx| {
             let target = cx
-                .background_spawn(async move { target_at(&full, selection.start) })
+                .background_spawn(async move { target_at(&full, offset + pressed) })
                 .await;
             document
                 .update(cx, |document, cx| {
@@ -187,18 +188,24 @@ impl MarkdownDocument {
     }
 }
 
-/// What byte `at` of `text` holds.
+/// What byte `at` of `text` holds, read as drawn.
 fn target_at(text: &str, at: usize) -> DocumentTarget {
     let root = file_tree(text);
     let mut nodes = Vec::new();
     walk(&root, &mut nodes);
-    let block = (root
+    let top = (root
         .children()
         .map(Vec::as_slice)
         .unwrap_or_default()
         .iter())
-    .find(|node| span(node).start <= at && at <= span(node).end)
-    .map(|node| TargetBlock::of(node, text));
+    .find(|node| span(node).start <= at && at <= span(node).end);
+    let block = top.map(|node| TargetBlock::of(node, text));
+    let mut drawn = Vec::new();
+    if let Some(node) = top.filter(|node| !matches!(node, mdast::Node::Definition(_))) {
+        Reader::new(text, &root).top(node, &mut drawn);
+    }
+    let mut flat = Vec::new();
+    flatten(&drawn, &mut flat);
     let around: Vec<&mdast::Node> = (nodes.iter().copied())
         .filter(|node| span(node).contains(&at))
         .collect();
@@ -210,16 +217,37 @@ fn target_at(text: &str, at: usize) -> DocumentTarget {
             _ => None,
         })
     };
-    let link = around.iter().rev().find_map(|node| match node {
-        mdast::Node::Link(link) => Some(link.url.clone()),
-        mdast::Node::LinkReference(link) => defined(&link.identifier),
-        _ => None,
+    let written = || {
+        around.iter().rev().find_map(|node| match node {
+            mdast::Node::Link(link) => Some(link.url.clone()),
+            mdast::Node::LinkReference(link) => defined(&link.identifier),
+            _ => None,
+        })
+    };
+    let picture = around
+        .iter()
+        .rev()
+        .find(|node| matches!(node, mdast::Node::Image(_) | mdast::Node::ImageReference(_)));
+    let shown = picture.and_then(|node| {
+        flat.iter().find_map(|kid| match kid {
+            Node::Image { at, url, link, .. } if *at == span(node).start => {
+                Some((url.clone(), link.clone()))
+            }
+            _ => None,
+        })
     });
-    let image = around.iter().rev().find_map(|node| match node {
-        mdast::Node::Image(picture) => Some(picture.url.clone()),
-        mdast::Node::ImageReference(picture) => defined(&picture.identifier),
-        _ => None,
-    });
+    let image = match &shown {
+        Some((url, _)) => Some(url.clone()),
+        None => picture.and_then(|node| match node {
+            mdast::Node::Image(picture) => Some(picture.url.clone()),
+            mdast::Node::ImageReference(picture) => defined(&picture.identifier),
+            _ => None,
+        }),
+    };
+    let link = match shown {
+        Some((_, link)) => link,
+        None => drawn_link(&flat, text, at).unwrap_or_else(written),
+    };
     let code = around.iter().find_map(|node| match node {
         mdast::Node::Code(code) => Some(code.value.clone()),
         _ => None,
@@ -234,4 +262,43 @@ fn target_at(text: &str, at: usize) -> DocumentTarget {
             .any(|node| matches!(node, mdast::Node::Table(_))),
         code,
     }
+}
+
+/// `nodes` and all they hold, depth first.
+fn flatten<'a>(nodes: &'a [Node], out: &mut Vec<&'a Node>) {
+    for node in nodes {
+        out.push(node);
+        match node {
+            Node::Quote(body) | Node::Footnote { body, .. } | Node::Alert { body, .. } => {
+                flatten(body, out)
+            }
+            Node::List { items, .. } => items.iter().for_each(|(_, body)| flatten(body, out)),
+            Node::Table { head, rows, .. } => {
+                (head.iter().chain(rows.iter().flatten())).for_each(|cell| flatten(cell, out))
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The link drawn at source byte `at`; none if undrawn.
+fn drawn_link(nodes: &[&Node], text: &str, at: usize) -> Option<Option<String>> {
+    let inline = nodes.iter().find_map(|node| match node {
+        Node::Paragraph(inline) | Node::Heading(_, inline)
+            if (inline.sources.iter()).any(|(_, span, _)| span.contains(&at)) =>
+        {
+            Some(inline)
+        }
+        _ => None,
+    })?;
+    let drawn = (0..inline.text.len())
+        .filter(|ix| inline.text.is_char_boundary(*ix))
+        .rev()
+        .find(|ix| {
+            inline
+                .source_at(text, *ix)
+                .is_some_and(|source| source <= at)
+        })?;
+    let link = (inline.links.iter()).find(|(range, _)| range.contains(&drawn));
+    Some(link.map(|(_, url)| url.clone()))
 }

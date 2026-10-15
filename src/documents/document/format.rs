@@ -62,11 +62,10 @@ pub enum EditRefusal {
 pub(super) type Change = (Vec<(Range<usize>, String)>, Range<usize>);
 
 /// Removes the picture at the caret, as Typora's Delete Image.
-pub(super) fn drop_image(text: &str, selection: Range<usize>) -> Result<Change, EditRefusal> {
+pub(super) fn drop_image(text: &str, at: usize) -> Result<Change, EditRefusal> {
     let root = file_tree(text);
     let mut nodes = Vec::new();
     walk(&root, &mut nodes);
-    let at = selection.start;
     let picture = (nodes.iter())
         .filter(|node| matches!(node, Node::Image(_) | Node::ImageReference(_)))
         .map(|node| span(node))

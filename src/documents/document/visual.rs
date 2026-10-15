@@ -72,10 +72,10 @@ impl MarkdownDocument {
         // Focus fades all but the reader's block.
         let faded = self.look.focus && editing_mode(self.mode) && ix != self.current_block(cx);
         let open = self.open.as_ref();
-        let point = cx.listener(|document, _: &MouseDownEvent, window, cx| {
+        let point = cx.listener(|document, event: &MouseDownEvent, window, cx| {
             window.prevent_default();
             cx.stop_propagation();
-            document.point_open(cx);
+            document.point_open(event.position, cx);
         });
         let field = |open: &super::Open| {
             div()

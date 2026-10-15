@@ -29,9 +29,10 @@ impl MarkdownDocument {
         )
     }
 
-    /// Removes the picture at the caret, read apart.
-    pub fn delete_image(&mut self, cx: &mut Context<Self>) -> Result<(), EditRefusal> {
-        self.apart("delete image".to_string(), drop_image, cx)
+    /// Removes the picture at source byte `at`, read apart.
+    pub fn delete_image(&mut self, at: usize, cx: &mut Context<Self>) -> Result<(), EditRefusal> {
+        let drop = move |full: &str, _| drop_image(full, at);
+        self.apart("delete image".to_string(), drop, cx)
     }
 
     /// `command` at the caret, read apart; refusals by event.
