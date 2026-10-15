@@ -82,8 +82,8 @@ pub(crate) struct Open {
     takeover: Option<Entity<Takeover>>,
     /// The pointer's last place over a row.
     pub(super) pointer: Option<Point<Pixels>>,
-    /// The row under the pointer: depth and index.
-    pub(super) over: Option<(usize, usize)>,
+    /// The row under the pointer: depth, index and column.
+    pub(super) over: Option<(usize, (usize, usize))>,
     /// A delayed mark; dropping it cancels.
     pub(super) pending: Option<Task<()>>,
 }
@@ -105,19 +105,20 @@ impl Open {
 
     /// Opens at `spot`, with the first row marked when `marked`.
     pub(crate) fn show(state: &Entity<Open>, menu: &Menu, spot: Spot, marked: bool, cx: &mut App) {
-        let first = menu.step(None, 1).filter(|_| marked);
-        state.update(cx, |open, cx| {
-            open.spot = Some(spot);
-            open.levels = vec![first_of(menu, first)];
-            cx.notify();
-        });
+        state.update(cx, |open, _| open.spot = Some(spot));
+        Self::begin(state, menu, menu.step(None, 1).filter(|_| marked), cx);
     }
 
     /// Starts over on new rows with the first marked; the menu stays where it hangs.
     pub(crate) fn restart(state: &Entity<Open>, menu: &Menu, cx: &mut App) {
-        let first = menu.step(None, 1);
+        Self::begin(state, menu, menu.step(None, 1), cx);
+    }
+
+    /// Fresh levels marking `first`; the old hover is dropped.
+    fn begin(state: &Entity<Open>, menu: &Menu, first: Option<usize>, cx: &mut App) {
         state.update(cx, |open, cx| {
             open.levels = vec![first_of(menu, first)];
+            (open.pointer, open.over, open.pending) = (None, None, None);
             cx.notify();
         });
     }
@@ -461,7 +462,7 @@ pub(crate) fn hang(
             width if width > Pixels::ZERO => width,
             _ => cx.theme().menu_width().to_pixels(window.rem_size()),
         };
-        // No room on the right: open on the left, over nothing.
+        // No room on the right: open on the left.
         let left = row.right() + width > room && row.left() >= width;
         let (corner, from, slide) = match left {
             true => (Anchor::TopRight, row.origin, -1.0),

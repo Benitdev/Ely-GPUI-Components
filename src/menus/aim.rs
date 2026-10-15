@@ -1,4 +1,4 @@
-//! Hover intent: open after a pause, hold while aiming at a submenu.
+//! Hover intent: pause before opening, hold while aiming.
 
 use std::time::Duration;
 
@@ -14,30 +14,30 @@ pub(super) const OPEN: Duration = Duration::from_millis(150);
 /// A row crossed toward an open submenu waits this long.
 pub(super) const HOLD: Duration = Duration::from_millis(300);
 
-/// The pointer moved over row `ix` at `depth`, a submenu row when `sub`.
+/// Pointer over a row; `sub` when it opens a submenu.
 pub(super) fn hover(
     state: &Entity<Open>,
     menu: &Menu,
-    (depth, ix): (usize, usize),
+    (depth, cell): (usize, (usize, usize)),
     sub: bool,
     at: Point<Pixels>,
     cx: &mut App,
 ) {
     let seen = state.update(cx, |open, _| {
         let from = open.pointer.replace(at);
-        open.over = Some((depth, ix));
+        open.over = Some((depth, cell));
         let level = open.levels.get(depth)?;
         let shown = (open.levels.get(depth + 1)).map(|level| level.panel);
-        Some((from, level.at, shown))
+        Some((from, (level.at, level.column), shown))
     });
     let Some((from, marked, shown)) = seen else {
         return;
     };
-    if marked == Some(ix) {
+    if marked == (Some(cell.0), cell.1) {
         if !sub || shown.is_some() {
             state.update(cx, |open, _| open.pending = None);
         } else if state.read(cx).pending.is_none() {
-            later(state, menu, (depth, ix), OPEN, cx);
+            later(state, menu, (depth, cell), OPEN, cx);
         }
         return;
     }
@@ -45,21 +45,30 @@ pub(super) fn hover(
         .zip(shown.filter(|panel| *panel != Bounds::default()))
         .is_some_and(|(from, panel)| toward(from, at, panel));
     if aimed {
-        log::debug!("menu: row {ix} of level {depth} waits on the aim");
-        return later(state, menu, (depth, ix), HOLD, cx);
+        log::debug!("menu: row {} of level {depth} waits on the aim", cell.0);
+        return later(state, menu, (depth, cell), HOLD, cx);
     }
     state.update(cx, |open, _| open.pending = None);
-    mark(state, menu, depth, (ix, 0), false, cx);
+    mark(state, menu, depth, cell, false, cx);
     if sub {
-        later(state, menu, (depth, ix), OPEN, cx);
+        later(state, menu, (depth, cell), OPEN, cx);
     }
 }
 
-/// Marks row `ix` after `wait`, its submenu open, if still under the pointer.
+/// The pointer left a row: its delayed mark is dropped.
+pub(super) fn leave(state: &Entity<Open>, over: (usize, (usize, usize)), cx: &mut App) {
+    state.update(cx, |open, _| {
+        if open.over == Some(over) {
+            (open.over, open.pending) = (None, None);
+        }
+    });
+}
+
+/// Marks the row after `wait` if still under the pointer.
 fn later(
     state: &Entity<Open>,
     menu: &Menu,
-    (depth, ix): (usize, usize),
+    (depth, cell): (usize, (usize, usize)),
     wait: Duration,
     cx: &mut App,
 ) {
@@ -67,17 +76,17 @@ fn later(
     let task = cx.spawn(async move |cx| {
         cx.background_executor().timer(wait).await;
         cx.update(|cx| {
-            if state_.read(cx).over != Some((depth, ix)) {
-                return log::debug!("menu: the pointer left row {ix} before it opened");
+            if state_.read(cx).over != Some((depth, cell)) {
+                return log::debug!("menu: the pointer left row {} before it opened", cell.0);
             }
             state_.update(cx, |open, _| open.pending = None);
-            mark(&state_, &menu, depth, (ix, 0), true, cx);
+            mark(&state_, &menu, depth, cell, true, cx);
         });
     });
     state.update(cx, |open, _| open.pending = Some(task));
 }
 
-/// Whether `to` lies in the triangle from `from` to `panel`'s near edge.
+/// Whether `to` lies between `from` and `panel`'s near edge.
 pub(super) fn toward(from: Point<Pixels>, to: Point<Pixels>, panel: Bounds<Pixels>) -> bool {
     let near = if panel.left() >= from.x {
         panel.left()
