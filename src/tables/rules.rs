@@ -26,14 +26,15 @@ impl Test {
         Test::Empty,
     ];
 
-    pub fn label(self) -> &'static str {
+    /// Its catalog key, which also names it.
+    pub fn key(self) -> &'static str {
         match self {
-            Self::Contains => "contains",
-            Self::Equals => "is",
-            Self::NotEquals => "is not",
-            Self::Above => "is above",
-            Self::Below => "is below",
-            Self::Empty => "is empty",
+            Self::Contains => "builder.test.contains",
+            Self::Equals => "builder.test.equals",
+            Self::NotEquals => "builder.test.not_equals",
+            Self::Above => "builder.test.above",
+            Self::Below => "builder.test.below",
+            Self::Empty => "builder.test.empty",
         }
     }
 

@@ -199,11 +199,15 @@ impl RenderOnce for PasswordInput {
                     },
                 )
                 .size(ControlSize::Sm)
-                .tooltip(if masked {
-                    "Show password"
-                } else {
-                    "Hide password"
-                })
+                .tooltip(i18n::text(
+                    cx,
+                    if masked {
+                        "input.show_password"
+                    } else {
+                        "input.hide_password"
+                    },
+                    &[],
+                ))
                 .on_click(move |_, _, cx| {
                     toggle.update(cx, |input, cx| {
                         let masked = input.is_masked();

@@ -9,6 +9,7 @@ use gpui::{
     Styled, TestAppContext, VisualTestContext, Window, div, point, px,
 };
 
+mod chinese;
 mod clipboard;
 mod columns;
 mod stale;

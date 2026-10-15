@@ -10,6 +10,7 @@ const SHIPPED: &[(&str, &str)] = &[
         "tables/builders.rs",
         include_str!("../../tables/builders.rs"),
     ),
+    ("tables/rules.rs", include_str!("../../tables/rules.rs")),
     (
         "navigation/editor_tabs.rs",
         include_str!("../../navigation/editor_tabs.rs"),
@@ -22,17 +23,46 @@ const SHIPPED: &[(&str, &str)] = &[
 
 #[test]
 fn shipped_components_show_no_fixed_english() {
-    let shown = [".tooltip(\"", ".child(\"", "SharedString::from(\""];
+    let shown = [".tooltip(\"", ".child(\"", "SharedString::from(\"", "=> \""];
+    // After an id: words, not a lowercase id.
+    let labels = ["), \"", "\", \"", "(\""];
     let mut found = Vec::new();
     for (path, source) in SHIPPED {
         let code = source.split("#[cfg(test)]").next().unwrap_or(source);
         for (no, line) in code.lines().enumerate() {
-            for call in shown {
-                let Some(at) = line.find(call) else { continue };
-                let rest = &line[at + call.len()..];
-                if rest.starts_with(|ch: char| ch.is_ascii_alphabetic()) {
-                    found.push(format!("{path}:{}: {}", no + 1, line.trim()));
-                }
+            let checks = ["assert", "panic!", "log::", ".expect("];
+            if checks.iter().any(|check| line.contains(check)) {
+                continue;
+            }
+            let literals = |calls: &[&str]| -> Vec<&str> {
+                (calls.iter())
+                    .flat_map(|call| {
+                        line.match_indices(call)
+                            .map(|(at, _)| &line[at + call.len()..])
+                    })
+                    .map(|rest| rest.split('"').next().unwrap_or(rest))
+                    .filter(|literal| literal.starts_with(|ch: char| ch.is_ascii_alphabetic()))
+                    .collect()
+            };
+            let key = |literal: &str| literal.contains('.') && !literal.contains(' ');
+            let words =
+                |literal: &str| literal.contains(' ') || literal.starts_with(char::is_uppercase);
+            let english = (literals(&shown).into_iter().filter(|literal| !key(literal)))
+                .chain(
+                    literals(&labels)
+                        .into_iter()
+                        .filter(|literal| words(literal)),
+                )
+                .chain(
+                    line.trim()
+                        .strip_prefix('"')
+                        .and_then(|rest| rest.split('"').next()),
+                )
+                .filter(|literal| {
+                    literal.starts_with(char::is_uppercase) || !line.trim().starts_with('"')
+                });
+            if english.count() > 0 {
+                found.push(format!("{path}:{}: {}", no + 1, line.trim()));
             }
         }
     }

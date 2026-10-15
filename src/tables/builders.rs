@@ -152,7 +152,7 @@ impl RenderOnce for FilterBuilder {
         let emit = Rc::new(emit);
         let tests: Vec<Choice> = Test::ALL
             .iter()
-            .map(|test| Choice::new(test.label(), test.label()))
+            .map(|test| Choice::new(test.key(), i18n::text(cx, test.key(), &[])))
             .collect();
         let theme = cx.theme();
         let (rules, any, id) = (self.rules.clone(), self.any, self.id.clone());
@@ -187,13 +187,13 @@ impl RenderOnce for FilterBuilder {
                     .child(
                         div().w(theme.label_width() * 0.75).child(
                             Select::new((id.clone(), format!("test-{ix}")), tests.clone())
-                                .selected(rule.test.label())
+                                .selected(rule.test.key())
                                 .size(ControlSize::Sm)
                                 .on_change(move |label, window, cx| {
                                     let mut next = for_test.clone();
                                     next[ix].test = *Test::ALL
                                         .iter()
-                                        .find(|test| test.label() == label.as_ref())
+                                        .find(|test| test.key() == label.as_ref())
                                         .expect("a listed test");
                                     test(next, any, window, cx)
                                 }),
@@ -224,18 +224,21 @@ impl RenderOnce for FilterBuilder {
                 .items_center()
                 .justify_between()
                 .child(
-                    Button::new((self.id.clone(), "add"), "Add rule")
-                        .icon(IconName::Plus)
-                        .variant(ButtonVariant::Ghost)
-                        .size(ControlSize::Sm)
-                        .on_click(move |_, window, cx| {
-                            let mut next = to_add.clone();
-                            next.push(FilterRule {
-                                column: first.clone(),
-                                ..FilterRule::default()
-                            });
-                            add(next, any, window, cx)
-                        }),
+                    Button::new(
+                        (self.id.clone(), "add"),
+                        i18n::text(cx, "builder.add_rule", &[]),
+                    )
+                    .icon(IconName::Plus)
+                    .variant(ButtonVariant::Ghost)
+                    .size(ControlSize::Sm)
+                    .on_click(move |_, window, cx| {
+                        let mut next = to_add.clone();
+                        next.push(FilterRule {
+                            column: first.clone(),
+                            ..FilterRule::default()
+                        });
+                        add(next, any, window, cx)
+                    }),
                 )
                 .when(self.rules.len() > 1, |footer| {
                     footer.child(
@@ -243,8 +246,8 @@ impl RenderOnce for FilterBuilder {
                             (self.id.clone(), "join"),
                             if any { "any" } else { "all" },
                         )
-                        .segment("all", "Match all", None)
-                        .segment("any", "Match any", None)
+                        .segment("all", i18n::text(cx, "builder.all", &[]), None)
+                        .segment("any", i18n::text(cx, "builder.any", &[]), None)
                         .size(ControlSize::Sm)
                         .on_change(move |value, window, cx| {
                             join(to_join.clone(), value.as_ref() == "any", window, cx)
@@ -365,8 +368,16 @@ impl RenderOnce for SortBuilder {
                                 (id.clone(), format!("sort-way-{ix}")),
                                 if sort.rising { "up" } else { "down" },
                             )
-                            .segment("up", "Ascending", Some(IconName::ArrowUp))
-                            .segment("down", "Descending", Some(IconName::ArrowDown))
+                            .segment(
+                                "up",
+                                i18n::text(cx, "builder.up", &[]),
+                                Some(IconName::ArrowUp),
+                            )
+                            .segment(
+                                "down",
+                                i18n::text(cx, "builder.down", &[]),
+                                Some(IconName::ArrowDown),
+                            )
                             .size(ControlSize::Sm)
                             .on_change(move |way, window, cx| {
                                 let mut next = for_flip.clone();
@@ -395,18 +406,21 @@ impl RenderOnce for SortBuilder {
             .gap_1()
             .child(list)
             .children(unused.map(|column| {
-                Button::new((self.id.clone(), "add"), "Add sort")
-                    .icon(IconName::Plus)
-                    .variant(ButtonVariant::Ghost)
-                    .size(ControlSize::Sm)
-                    .on_click(move |_, window, cx| {
-                        let mut next = add.1.clone();
-                        next.push(SortKey {
-                            column: column.clone(),
-                            rising: true,
-                        });
-                        (add.0)(&next, window, cx)
-                    })
+                Button::new(
+                    (self.id.clone(), "add"),
+                    i18n::text(cx, "builder.add_sort", &[]),
+                )
+                .icon(IconName::Plus)
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .on_click(move |_, window, cx| {
+                    let mut next = add.1.clone();
+                    next.push(SortKey {
+                        column: column.clone(),
+                        rising: true,
+                    });
+                    (add.0)(&next, window, cx)
+                })
             }))
     }
 }

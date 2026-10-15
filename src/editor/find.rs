@@ -149,6 +149,26 @@ impl FindWidget {
     }
 }
 
+/// The count shown, and whether it reads as a miss.
+pub(crate) fn count(
+    matches: &Result<(Option<usize>, usize), SharedString>,
+    cx: &App,
+) -> (SharedString, bool) {
+    match matches {
+        Ok((_, 0)) => (i18n::text(cx, "find.none", &[]), true),
+        Ok((Some(current), total)) => {
+            let (at, total) = ((current + 1).to_string(), total.to_string());
+            let args = [("at", at.as_str()), ("total", total.as_str())];
+            (i18n::text(cx, "find.at", &args), false)
+        }
+        Ok((None, total)) => {
+            let total = total.to_string();
+            (i18n::text(cx, "find.found", &[("total", &total)]), false)
+        }
+        Err(message) => (message.clone(), true),
+    }
+}
+
 impl RenderOnce for FindWidget {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
@@ -156,7 +176,7 @@ impl RenderOnce for FindWidget {
         let options = self.options;
         let toggle = |key: &'static str,
                       icon: IconName,
-                      words: &'static str,
+                      words: SharedString,
                       on: bool,
                       set: fn(&mut FindOptions, bool)| {
             let on_options = self.on_options.clone();
@@ -175,16 +195,11 @@ impl RenderOnce for FindWidget {
                 }
             })
         };
-        let (count, missing) = match &self.matches {
-            Ok((_, 0)) => ("No results".to_string(), true),
-            Ok((Some(current), total)) => (format!("{} of {total}", current + 1), false),
-            Ok((None, total)) => (format!("{total} found"), false),
-            Err(message) => (message.to_string(), true),
-        };
+        let (count, missing) = count(&self.matches, cx);
         let found = matches!(self.matches, Ok((_, total)) if total > 0);
         let icon_button = |key: &'static str,
                            icon: IconName,
-                           words: &'static str,
+                           words: SharedString,
                            enabled: bool,
                            action: Option<OnBool>,
                            value: bool| {
@@ -230,7 +245,7 @@ impl RenderOnce for FindWidget {
                             } else {
                                 IconName::ChevronRight
                             },
-                            "Toggle replace",
+                            i18n::text(cx, "find.fold", &[]),
                             true,
                             Some(fold),
                             !showing,
@@ -246,21 +261,21 @@ impl RenderOnce for FindWidget {
                         row.child(toggle(
                             "case",
                             IconName::CaseSensitive,
-                            "Match case",
+                            i18n::text(cx, "find.case", &[]),
                             options.case,
                             |next, on| next.case = on,
                         ))
                         .child(toggle(
                             "word",
                             IconName::WholeWord,
-                            "Whole word",
+                            i18n::text(cx, "find.word", &[]),
                             options.word,
                             |next, on| next.word = on,
                         ))
                         .child(toggle(
                             "regex",
                             IconName::Regex,
-                            "Regular expression",
+                            i18n::text(cx, "find.regex", &[]),
                             options.regex,
                             |next, on| next.regex = on,
                         ))
@@ -279,7 +294,7 @@ impl RenderOnce for FindWidget {
                     .child(icon_button(
                         "previous",
                         IconName::ArrowUp,
-                        "Previous match",
+                        i18n::text(cx, "find.previous", &[]),
                         found,
                         self.on_step.clone(),
                         false,
@@ -287,7 +302,7 @@ impl RenderOnce for FindWidget {
                     .child(icon_button(
                         "next",
                         IconName::ArrowDown,
-                        "Next match",
+                        i18n::text(cx, "find.next", &[]),
                         found,
                         self.on_step.clone(),
                         true,
@@ -313,22 +328,28 @@ impl RenderOnce for FindWidget {
                             .child(Input::new(field).size(ControlSize::Sm)),
                     )
                     .child(
-                        Button::new((self.id.clone(), "replace"), "Replace")
-                            .variant(ButtonVariant::Ghost)
-                            .size(ControlSize::Sm)
-                            .disabled(!found)
-                            .when_some(one, |button, one| {
-                                button.on_click(move |_, window, cx| one(false, window, cx))
-                            }),
+                        Button::new(
+                            (self.id.clone(), "replace"),
+                            i18n::text(cx, "find.replace", &[]),
+                        )
+                        .variant(ButtonVariant::Ghost)
+                        .size(ControlSize::Sm)
+                        .disabled(!found)
+                        .when_some(one, |button, one| {
+                            button.on_click(move |_, window, cx| one(false, window, cx))
+                        }),
                     )
                     .child(
-                        Button::new((self.id.clone(), "all"), "Replace all")
-                            .variant(ButtonVariant::Ghost)
-                            .size(ControlSize::Sm)
-                            .disabled(!found)
-                            .when_some(all, |button, all| {
-                                button.on_click(move |_, window, cx| all(true, window, cx))
-                            }),
+                        Button::new(
+                            (self.id.clone(), "all"),
+                            i18n::text(cx, "find.replace_all", &[]),
+                        )
+                        .variant(ButtonVariant::Ghost)
+                        .size(ControlSize::Sm)
+                        .disabled(!found)
+                        .when_some(all, |button, all| {
+                            button.on_click(move |_, window, cx| all(true, window, cx))
+                        }),
                     )
             }))
     }

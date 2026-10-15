@@ -1,3 +1,4 @@
+mod chinese;
 mod history;
 mod stale;
 
