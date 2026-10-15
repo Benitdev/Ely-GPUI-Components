@@ -194,7 +194,7 @@ mod tests {
         let bold = 2..3;
         assert_eq!(
             (line.text.as_str(), &line.styles[..]),
-            ("a b c", &[(bold, Style::Strong)][..])
+            ("a b\nc", &[(bold, Style::Strong)][..])
         );
     }
 

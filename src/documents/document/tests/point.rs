@@ -197,8 +197,9 @@ fn a_secondary_press_in_a_quote_lands_past_its_mark(cx: &mut TestAppContext) {
     let events = heard(&document, cx);
     let bounds = cx.debug_bounds("markdown-block-0").expect("drawn");
     let (body, _) = sizes(cx);
-    let x = bounds.left() + px(31.0) + body * 0.6 * 7.25;
-    press_at(x, bounds.top() + px(10.0), MouseButton::Right, cx);
+    // "beta" draws on its own line.
+    let x = bounds.left() + px(31.0) + body * 0.6 * 1.25;
+    press_at(x, bounds.top() + px(10.0) + body * 1.6, MouseButton::Right, cx);
     let at = source.find("eta").unwrap();
     assert_eq!(*events.borrow(), [target(at, TargetBlock::Quote)]);
 }

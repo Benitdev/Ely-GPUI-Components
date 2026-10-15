@@ -197,7 +197,7 @@ mod tests {
                 other => panic!("a paragraph, not {other:?}"),
             })
             .collect();
-        assert_eq!(lines, ["<script> first", "second </script>"]);
+        assert_eq!(lines, ["<script> first", "second\n</script>"]);
         let inline = html("a <script>b</script> c").expect("text");
         assert_eq!(inline.text, "a <script>b</script> c");
         assert_eq!(html("<div>\na < b <i").expect("text").text, "a < b");

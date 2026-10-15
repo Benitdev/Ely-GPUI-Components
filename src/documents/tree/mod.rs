@@ -101,6 +101,8 @@ pub struct Reader<'a> {
     notes: HashMap<String, usize>,
     /// Every heading, as `[toc]` lists them.
     pub headings: Vec<DocumentHeading>,
+    /// Soft breaks as lines, as the screen draws them.
+    lines: bool,
 }
 
 /// An open element, as HTML names it.
@@ -122,6 +124,8 @@ struct Run {
     verbatim: bool,
     /// In a table cell, whose code reads `\|` as `|`.
     table: bool,
+    /// Soft breaks as lines, not spaces.
+    lines: bool,
     /// The current DOM text node's shortcodes.
     shortcodes: emoji::Shortcodes,
     /// White space owed, and the open elements before it.
@@ -159,8 +163,9 @@ impl Run {
     }
 
     fn push_plain(&mut self, shown: &str) {
-        let soft = shown.replace("\r\n", " ").replace(['\r', '\n'], " ");
-        self.text.text.push_str(&soft);
+        let soft = if self.lines { "\n" } else { " " };
+        let shown = shown.replace("\r\n", soft).replace(['\r', '\n'], soft);
+        self.text.text.push_str(&shown);
     }
 }
 
@@ -175,8 +180,17 @@ pub fn parse(markdown: &str) -> Vec<Node> {
 }
 
 impl<'a> Reader<'a> {
-    /// A reader of `root`, parsed from `source`.
+    /// A reader of `root`, parsed from `source`, as the screen draws it.
     pub fn new(source: &'a str, root: &mdast::Node) -> Self {
+        Self::reading(source, root, true)
+    }
+
+    /// The same, soft breaks joined as GFM output joins them.
+    pub fn joined(source: &'a str, root: &mdast::Node) -> Self {
+        Self::reading(source, root, false)
+    }
+
+    fn reading(source: &'a str, root: &mdast::Node, lines: bool) -> Self {
         let mut nodes = Vec::new();
         walk(root, &mut nodes);
         let (mut urls, mut notes, mut headings) = (HashMap::new(), HashMap::new(), Vec::new());
@@ -199,6 +213,7 @@ impl<'a> Reader<'a> {
             urls,
             notes,
             headings: Vec::new(),
+            lines: false,
         };
         reader.headings = headings
             .into_iter()
@@ -208,6 +223,8 @@ impl<'a> Reader<'a> {
                 at,
             })
             .collect();
+        // Titles read on one line; the body as asked.
+        reader.lines = lines;
         reader
     }
 
@@ -236,7 +253,7 @@ impl<'a> Reader<'a> {
         match node {
             mdast::Node::Paragraph(paragraph) => self.paragraph(node, &paragraph.children, out),
             mdast::Node::Heading(heading) => {
-                let (mut run, mut after) = (Run::default(), Vec::new());
+                let (mut run, mut after) = (self.run(), Vec::new());
                 for child in &heading.children {
                     self.inline_into(child, &mut run, &mut Images::After(&mut after));
                 }
@@ -310,12 +327,19 @@ impl<'a> Reader<'a> {
         }
         let mut run = Run {
             table: matches!(node, mdast::Node::TableCell(_)),
-            ..Run::default()
+            ..self.run()
         };
         for child in children {
             self.inline_into(child, &mut run, &mut Images::Split(out));
         }
         text_block(run.cut(), out);
+    }
+
+    fn run(&self) -> Run {
+        Run {
+            lines: self.lines,
+            ..Run::default()
+        }
     }
 
     /// A footnote's number, by its first reference.
@@ -336,7 +360,7 @@ impl<'a> Reader<'a> {
 
     /// Inline text where images draw as their alt text.
     pub fn inline(&self, nodes: &[mdast::Node]) -> Inline {
-        let mut run = Run::default();
+        let mut run = self.run();
         for node in nodes {
             self.inline_into(node, &mut run, &mut Images::Alt);
         }

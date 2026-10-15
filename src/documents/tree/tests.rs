@@ -68,18 +68,25 @@ fn an_image_splits_its_paragraph_and_references_resolve() {
 }
 
 #[test]
-fn a_soft_break_reads_as_a_space_and_a_hard_one_as_a_line() {
-    for (source, shown) in [
-        ("one\ntwo  \nthree", "one two\nthree"),
-        ("one\r\ntwo  \r\nthree", "one two\nthree"),
-        ("one\rtwo  \rthree", "one two\nthree"),
-    ] {
+fn a_soft_break_draws_as_a_line_and_joins_for_output() {
+    for source in ["one\ntwo  \nthree", "one\r\ntwo  \r\nthree", "one\rtwo  \rthree"] {
         let nodes = parse(source);
         assert!(
-            matches!(&nodes[0], Node::Paragraph(text) if text.text == shown),
-            "{source:?} reads {nodes:?}"
+            matches!(&nodes[0], Node::Paragraph(text) if text.text == "one\ntwo\nthree"),
+            "{source:?} draws {nodes:?}"
         );
+        let root = super::super::markdown::tree(source);
+        let paragraph = &root.children().expect("blocks")[0];
+        let joined = Reader::joined(source, &root).inline(paragraph.children().expect("inlines"));
+        assert_eq!(joined.text, "one two\nthree", "{source:?} joins");
     }
+}
+
+#[test]
+fn a_heading_title_reads_on_one_line() {
+    let source = "one\ntwo\n===\n";
+    let root = super::super::markdown::tree(source);
+    assert_eq!(Reader::new(source, &root).headings[0].title, "one two");
 }
 
 #[test]
@@ -385,9 +392,9 @@ fn the_first_shortcode_decides_its_text_node() {
         ("a.:x.y: :smile:", "a.:x.y: 😄"),
         ("x\t:smile: y:smile:", "x\t:smile: y:smile:"),
         ("x\u{a0}:smile: y:smile:", "x\u{a0}:smile: y:smile:"),
-        ("x\n:smile: y:smile:", "x :smile: y:smile:"),
+        ("x\n:smile: y:smile:", "x\n:smile: y:smile:"),
         ("*x*:smile: :smile:", "x😄 😄"),
-        ("*x*\n:smile: y:smile:", "x 😄 y😄"),
+        ("*x*\n:smile: y:smile:", "x\n😄 y😄"),
         ("x:smile: `c` :smile:", "x:smile: c 😄"),
         ("x:smile:<!-- c --> :smile:", "x:smile: 😄"),
         ("x:smile:<span>s</span> :smile:", "x:smile:s 😄"),
