@@ -1,3 +1,4 @@
+mod aim;
 mod bar;
 mod draw;
 mod hosts;

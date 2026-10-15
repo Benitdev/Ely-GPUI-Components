@@ -1,13 +1,14 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Div, ElementId, Entity, FontWeight, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Role, SharedString, Stateful, Styled, accesskit::Action, div,
-    prelude::*,
+    AnyElement, App, Bounds, Div, ElementId, Entity, FontWeight, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, Pixels, Role, SharedString, Stateful, Styled, accesskit::Action,
+    canvas, div, prelude::*,
 };
 
 use super::{
-    menu::{Open, at_depth, choose, mark, measure},
+    aim,
+    menu::{Open, at_depth, choose, mark},
     model::{Entry, Kind, Menu, MenuItem},
 };
 use crate::{
@@ -195,6 +196,9 @@ pub(super) fn panel(
                     let drawn = button(item, (ix, column), current, press, cx);
                     drawn.when(!item.disabled, |button| {
                         button.on_mouse_move(move |_, _, cx| {
+                            hover.update(cx, |open, _| {
+                                (open.over, open.pending) = (Some((depth, ix)), None);
+                            });
                             let open = hover.read(cx);
                             let marked = open.levels.get(depth).map(|l| (l.at, l.column));
                             if marked != Some((Some(ix), column)) {
@@ -210,17 +214,12 @@ pub(super) fn panel(
                 let (hover, click, close, menu) =
                     (state.clone(), state.clone(), close.clone(), menu.clone());
                 let hover_menu = menu.clone();
+                let label = item.label.clone();
                 row(item, ix, marked, cx)
+                    .debug_selector(move || format!("menu-row-{label}"))
                     .when(!item.disabled, |row| {
-                        row.on_mouse_move(move |_, _, cx| {
-                            let open = hover.read(cx);
-                            let Some(level) = open.levels.get(depth) else {
-                                return;
-                            };
-                            let shown = open.levels.len() > depth + 1;
-                            if level.at != Some(ix) || (sub && !shown) {
-                                mark(&hover, &hover_menu, depth, (ix, 0), true, cx);
-                            }
+                        row.on_mouse_move(move |event, _, cx| {
+                            aim::hover(&hover, &hover_menu, (depth, ix), sub, event.position, cx)
                         })
                         .on_mouse_down(
                             MouseButton::Left,
@@ -242,9 +241,20 @@ pub(super) fn panel(
                     .into_any_element()
             }
         });
+    let left = state.clone();
     surface((id.clone(), format!("panel-{depth}")), cx)
         .role(Role::Menu)
+        .debug_selector(move || format!("menu-panel-{depth}"))
         .relative()
+        // Rows under this panel take no hover.
+        .occlude()
+        .on_mouse_move(move |_, _, cx| {
+            left.update(cx, |open, _| {
+                if open.over.is_some_and(|(over, _)| over != depth) {
+                    open.over = None;
+                }
+            })
+        })
         // Presses here are the menu's, not its host's.
         .on_mouse_down(MouseButton::Left, |_, window, cx| {
             window.prevent_default();
@@ -262,4 +272,24 @@ pub(super) fn panel(
             level.panel = bounds;
             changed
         }))
+}
+
+/// Records a box into the host's state: the host's own, a marked row's or a panel's.
+pub(super) fn measure(
+    state: Entity<Open>,
+    write: impl Fn(&mut Open, Bounds<Pixels>) -> bool + 'static,
+) -> impl IntoElement {
+    canvas(
+        move |bounds, window, cx| {
+            if state.update(cx, |open, _| write(open, bounds)) {
+                state.update(cx, |_, cx| cx.notify());
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
 }

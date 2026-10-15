@@ -4,6 +4,7 @@ use gpui::{
     Window, div, point, prelude::*, px,
 };
 
+mod aim;
 mod buttons;
 mod more;
 

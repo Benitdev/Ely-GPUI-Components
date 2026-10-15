@@ -1,13 +1,13 @@
 use std::rc::Rc;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, Bounds, ElementId, Entity, InteractiveElement,
-    IntoElement, ParentElement, Pixels, Point, SharedString, Styled, Window, anchored, canvas, div,
-    prelude::*,
+    Anchor, Animation, AnimationExt, AnyElement, App, Bounds, ElementId, Entity,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Point, SharedString, Styled, Task,
+    Window, anchored, div, prelude::*,
 };
 
 use super::{
-    draw,
+    draw::{self, measure},
     model::{Kind, Menu},
 };
 use crate::{
@@ -80,6 +80,12 @@ pub(crate) struct Open {
     host: Bounds<Pixels>,
     anchor: Bounds<Pixels>,
     takeover: Option<Entity<Takeover>>,
+    /// The pointer's last place over a row.
+    pub(super) pointer: Option<Point<Pixels>>,
+    /// The row under the pointer: depth and index.
+    pub(super) over: Option<(usize, usize)>,
+    /// A delayed mark; dropping it cancels.
+    pub(super) pending: Option<Task<()>>,
 }
 
 impl Open {
@@ -121,6 +127,7 @@ impl Open {
         let takeover = state.update(cx, |open, cx| {
             open.spot = None;
             open.levels.clear();
+            (open.pointer, open.over, open.pending) = (None, None, None);
             cx.notify();
             open.takeover.take()
         });
@@ -204,6 +211,7 @@ pub(super) fn choose(
     if item.disabled {
         return;
     }
+    state.update(cx, |open, _| open.pending = None);
     if let Kind::Sub(sub) = &item.kind {
         let first = first_of(sub, sub.step(None, 1));
         mark(state, menu, depth, (at, column), false, cx);
@@ -236,6 +244,7 @@ fn keys(
     let Some(here) = at_depth(menu, &levels, depth) else {
         return false;
     };
+    state.update(cx, |open, _| open.pending = None);
     let (at, column) = (levels[depth].at, levels[depth].column);
     let sub = at
         .and_then(|at| here.item_at(at, column))
@@ -276,26 +285,6 @@ fn on_buttons(menu: &Menu, state: &Entity<Open>, cx: &App) -> bool {
     let here = at_depth(menu, levels, depth);
     here.zip(levels[depth].at)
         .is_some_and(|(here, ix)| here.is_buttons(ix))
-}
-
-/// Records a box into the host's state: the host's own, a marked row's or a panel's.
-pub(super) fn measure(
-    state: Entity<Open>,
-    write: impl Fn(&mut Open, Bounds<Pixels>) -> bool + 'static,
-) -> impl IntoElement {
-    canvas(
-        move |bounds, window, cx| {
-            if state.update(cx, |open, _| write(open, bounds)) {
-                state.update(cx, |_, cx| cx.notify());
-                window.request_animation_frame();
-            }
-        },
-        |_, _, _, _| {},
-    )
-    .absolute()
-    .top_0()
-    .left_0()
-    .size_full()
 }
 
 /// Measures the host's box: presses on it are the host's, and when `hangs_under` the menu hangs under it.
@@ -464,20 +453,38 @@ pub(crate) fn hang(
         .with_priority(1)
         .into_any_element(),
     };
+    let room = window.viewport_size().width;
     let subs = (1..depth).filter_map(|level| {
-        let row = state.read(cx).levels[level - 1].row;
+        let open = state.read(cx);
+        let row = open.levels[level - 1].row;
+        let width = match open.levels[level].panel.size.width {
+            width if width > Pixels::ZERO => width,
+            _ => cx.theme().menu_width().to_pixels(window.rem_size()),
+        };
+        // No room on the right: open on the left, over nothing.
+        let left = row.right() + width > room && row.left() >= width;
+        let (corner, from, slide) = match left {
+            true => (Anchor::TopRight, row.origin, -1.0),
+            false => (Anchor::TopLeft, row.top_right(), 1.0),
+        };
         (row != Bounds::default()).then(|| {
             raise(
                 (id.clone(), format!("level-{level}")),
-                anchored().position(row.top_right()).snap_to_window().child(
-                    draw::panel(id, menu, state, level, &close, None, cx)
-                        .mt_neg_1()
-                        .with_animation(
-                            (id.clone(), format!("sub-{level}")),
-                            enter.clone(),
-                            |panel, t| panel.opacity(t).ml(motion::NUDGE * (t - 1.0)),
-                        ),
-                ),
+                anchored()
+                    .anchor(corner)
+                    .position(from)
+                    .snap_to_window()
+                    .child(
+                        draw::panel(id, menu, state, level, &close, None, cx)
+                            .mt_neg_1()
+                            .with_animation(
+                                (id.clone(), format!("sub-{level}")),
+                                enter.clone(),
+                                move |panel, t| {
+                                    panel.opacity(t).left(motion::NUDGE * (t - 1.0) * slide)
+                                },
+                            ),
+                    ),
             )
             .with_priority(2)
             .into_any_element()
