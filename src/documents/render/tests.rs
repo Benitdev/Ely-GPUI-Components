@@ -51,3 +51,30 @@ fn alerts_lists_of_headings_and_front_matter_draw(cx: &mut TestAppContext) {
     );
     assert!(two.top() > one.top(), "{one:?} {two:?}");
 }
+
+#[gpui::test]
+fn each_heading_level_stands_above_the_next(cx: &mut TestAppContext) {
+    cx.update(Theme::init);
+    let source = "# a
+
+## a
+
+### a
+
+#### a
+
+##### a
+";
+    let (_, cx) = cx.add_window_view(|_, _| Page(source));
+    cx.run_until_parked();
+    let high = |ordinal: usize| {
+        let selector = Box::leak(format!("markdown-heading-{ordinal}").into_boxed_str());
+        cx.debug_bounds(selector).expect("drawn").size.height
+    };
+    let heights: Vec<_> = (0..5).map(high).collect();
+    // Level 5 is the body's size; each above it is taller.
+    assert!(
+        heights.windows(2).all(|pair| pair[0] > pair[1]),
+        "{heights:?}"
+    );
+}

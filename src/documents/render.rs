@@ -109,6 +109,8 @@ struct Draw<'a> {
     sections: &'a Option<Entity<Sections>>,
     headings: std::cell::Cell<usize>,
     code: &'a Option<DrawCode>,
+    /// The body's size; headings step up from it.
+    body: TextSize,
     /// Text size against the theme's.
     scale: f32,
     /// Lists open around the node drawn.
@@ -227,24 +229,29 @@ impl Draw<'_> {
                 .child(self.inline(inline, cx))
                 .into_any_element(),
             Node::Heading(level, inline) => {
-                let size = match level {
-                    1 => TextSize::Xxl,
-                    2 => TextSize::Xl,
-                    3 => TextSize::Lg,
-                    _ => TextSize::Md,
+                // Typora's steps over the body; every level bold.
+                let step = match level {
+                    1 => 2.25,
+                    2 => 1.75,
+                    3 => 1.5,
+                    4 => 1.25,
+                    _ => 1.0,
                 };
-                let heading = div()
-                    .pt_2()
-                    .text_size(theme.text_size(size) * self.scale)
-                    .font_weight(if *level <= 2 {
-                        FontWeight::SEMIBOLD
-                    } else {
-                        FontWeight::MEDIUM
-                    })
-                    .text_color(colors.fg)
-                    .child(self.inline(inline, cx));
+                let size = theme.text_size(self.body) * step * self.scale;
                 let ordinal = self.headings.get();
                 self.headings.set(ordinal + 1);
+                let heading = div()
+                    .debug_selector(move || format!("markdown-heading-{ordinal}"))
+                    .pt_2()
+                    .text_size(size)
+                    .line_height(size * 1.3)
+                    .font_weight(FontWeight::BOLD)
+                    .text_color(if *level == 6 {
+                        colors.fg_muted
+                    } else {
+                        colors.fg
+                    })
+                    .child(self.inline(inline, cx));
                 match self.sections {
                     Some(sections) => Anchor::new(sections, anchor(ordinal))
                         .child(heading)
@@ -392,6 +399,7 @@ pub(crate) fn draw_nodes(
         sections: &None,
         headings: std::cell::Cell::new(0),
         code: &None,
+        body: TextSize::Base,
         scale,
         lists: std::cell::Cell::new(0),
         table: std::cell::Cell::new(false),
@@ -417,6 +425,7 @@ impl RenderOnce for MarkdownRenderer {
             sections: &self.sections,
             headings: std::cell::Cell::new(0),
             code: &self.code,
+            body: self.size,
             scale: 1.0,
             lists: std::cell::Cell::new(0),
             table: std::cell::Cell::new(false),
