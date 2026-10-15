@@ -69,7 +69,11 @@ fn an_image_splits_its_paragraph_and_references_resolve() {
 
 #[test]
 fn a_soft_break_draws_as_a_line_and_joins_for_output() {
-    for source in ["one\ntwo  \nthree", "one\r\ntwo  \r\nthree", "one\rtwo  \rthree"] {
+    for source in [
+        "one\ntwo  \nthree",
+        "one\r\ntwo  \r\nthree",
+        "one\rtwo  \rthree",
+    ] {
         let nodes = parse(source);
         assert!(
             matches!(&nodes[0], Node::Paragraph(text) if text.text == "one\ntwo\nthree"),

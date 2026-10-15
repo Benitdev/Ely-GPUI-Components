@@ -102,6 +102,8 @@ pub(crate) struct Metrics {
     pub top: Pixels,
     pub advance: Pixels,
     pub line: Pixels,
+    /// The code font's size.
+    pub size: Pixels,
     /// The view's height.
     pub height: Pixels,
 }

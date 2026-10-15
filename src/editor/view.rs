@@ -271,6 +271,7 @@ impl Render for CodeEditor {
         };
         self.metrics.advance = advance;
         self.metrics.line = line;
+        self.metrics.size = pixels;
         // Typewriter: the caret's row centers as it moves.
         let centered = (self.primary_row(), self.metrics.height, line);
         if self.options.typewriter && self.centered != Some(centered) {

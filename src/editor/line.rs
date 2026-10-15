@@ -10,6 +10,7 @@ use super::{
     cursor::Selection,
     gutter::Cell,
     layout::{Shown, stack},
+    measure::Measured,
     state::{CodeEditor, CursorShape},
 };
 use crate::{
@@ -19,7 +20,11 @@ use crate::{
 
 impl CodeEditor {
     /// A line's own styles: syntax colors, rainbow brackets, problems, washes, matches and the matched pair.
-    fn styles(&self, line: usize, cx: &Context<Self>) -> Vec<(Range<usize>, HighlightStyle)> {
+    pub(super) fn styles(
+        &self,
+        line: usize,
+        cx: &Context<Self>,
+    ) -> Vec<(Range<usize>, HighlightStyle)> {
         let colors = &cx.theme().colors;
         let range = self.row_range(line);
         let local = |span: &Range<usize>| {
@@ -109,24 +114,34 @@ impl CodeEditor {
         (0..indent).step_by(self.options.tab).collect()
     }
 
-    /// Dots where the line has spaces and arrows for tabs, spaces elsewhere, so they fall on the text's columns.
-    fn whitespace(&self, line: usize, shown: &Shown, cx: &Context<Self>) -> String {
+    /// Dots for spaces, arrows for tabs; the rest hidden, so marks fall where drawn.
+    fn whitespace(&self, line: usize, cx: &Context<Self>) -> StyledText {
         let text = self.row_text(line);
         let notes = self.notes(line, cx);
-        let mut out = String::new();
+        let hidden = HighlightStyle {
+            color: Some(gpui::transparent_black()),
+            ..HighlightStyle::default()
+        };
+        let (mut out, mut hide) = (String::new(), Vec::new());
         let mut note = notes.iter().peekable();
         for (at, ch) in text.char_indices() {
+            let start = out.len();
             while let Some((_, words, _)) = note.next_if(|(place, ..)| *place <= at) {
-                out.extend(std::iter::repeat_n(' ', words.chars().count()));
+                out.push_str(words);
             }
-            out.push(match ch {
-                ' ' => '·',
-                '\t' => '→',
-                _ => ' ',
-            });
+            match ch {
+                ' ' | '\t' => {
+                    hide.push((start..out.len(), hidden));
+                    out.push(if ch == ' ' { '·' } else { '→' });
+                }
+                _ => {
+                    out.push(ch);
+                    hide.push((start..out.len(), hidden));
+                }
+            }
         }
-        debug_assert!(out.chars().count() <= shown.text.chars().count());
-        out
+        hide.retain(|(range, _)| !range.is_empty());
+        StyledText::new(out).with_highlights(hide)
     }
 
     pub(crate) fn line_row(
@@ -143,7 +158,16 @@ impl CodeEditor {
         let text = self.row_text(line);
         let range = self.row_range(line);
         let shown = Shown::new(text, self.notes(line, cx), self.styles(line, cx));
-        let x = |column: usize| advance * (column + 1) as f32;
+        let measured = Measured::new(
+            &shown,
+            theme.mono_family.clone(),
+            self.metrics.size,
+            advance,
+            window,
+        );
+        // Text columns at their laid-out place; rulers and guides on the grid.
+        let x = |column: usize| advance + measured.x(column);
+        let grid = |column: usize| advance * (column + 1) as f32;
         let focused = self.focus.is_focused(window);
         let primary = self.primary();
         let current = primary.is_empty() && self.buffer.line_of(primary.head) == line;
@@ -170,7 +194,7 @@ impl CodeEditor {
                     .absolute()
                     .top_0()
                     .left(x(start))
-                    .w(advance * (end - start) as f32)
+                    .w(x(end) - x(start))
                     .h(height)
                     .bg(if focused {
                         colors.selection
@@ -198,7 +222,7 @@ impl CodeEditor {
             div()
                 .absolute()
                 .top_0()
-                .left(x(*column))
+                .left(grid(*column))
                 .h(height)
                 .w_0()
                 .border_l_1()
@@ -209,7 +233,7 @@ impl CodeEditor {
             div()
                 .absolute()
                 .top_0()
-                .left(x(column))
+                .left(grid(column))
                 .h(height)
                 .w_0()
                 .border_l_1()
@@ -225,19 +249,20 @@ impl CodeEditor {
             .filter(|selection| self.buffer.line_of(selection.head) == line)
             .filter(|_| focused && self.caret_on)
             .map(|selection| {
-                let left = x(column_of(selection.head));
+                let column = column_of(selection.head);
+                let (left, wide) = (x(column), x(column + 1) - x(column));
                 let caret = theme.caret_width().to_pixels(window.rem_size());
                 let mark = div().absolute().left(left);
                 match self.options.cursor {
                     CursorShape::Line => mark.top_0().w(caret).h(height).bg(colors.focus),
                     CursorShape::Block => mark
                         .top_0()
-                        .w(advance)
+                        .w(wide)
                         .h(height)
                         .bg(colors.focus.opacity(0.35)),
                     CursorShape::Underline => mark
                         .top(height - caret * 1.5)
-                        .w(advance)
+                        .w(wide)
                         .h(caret * 1.5)
                         .bg(colors.focus),
                 }
@@ -251,7 +276,7 @@ impl CodeEditor {
                 .line_height(height)
                 .whitespace_nowrap()
                 .text_color(colors.fg_subtle.opacity(0.6))
-                .child(self.whitespace(line, &shown, cx))
+                .child(self.whitespace(line, cx))
         });
         let folded = self.folded.contains(&line).then(|| {
             let entity = cx.entity();
@@ -341,9 +366,11 @@ impl CodeEditor {
                     editor.secondary_press(line, event, window, cx)
                 }),
             )
-            .on_mouse_move(cx.listener(move |editor, event: &MouseMoveEvent, _, cx| {
-                editor.drag(line, event, cx)
-            }));
+            .on_mouse_move(
+                cx.listener(move |editor, event: &MouseMoveEvent, window, cx| {
+                    editor.drag(line, event, window, cx)
+                }),
+            );
         base.child(self.gutter(Cell::Line(line), row, cx))
             .child(code)
             .into_any_element()
@@ -358,7 +385,7 @@ impl CodeEditor {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
-        let Some(at) = self.offset_in(line, event.position.x, cx) else {
+        let Some(at) = self.offset_in(line, event.position.x, window, cx) else {
             return;
         };
         let chosen = match event.click_count {
@@ -407,7 +434,7 @@ impl CodeEditor {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
-        let Some(at) = self.offset_in(line, event.position.x, cx) else {
+        let Some(at) = self.offset_in(line, event.position.x, window, cx) else {
             return;
         };
         let held = (self.selections.iter()).any(|selection| {
@@ -420,11 +447,17 @@ impl CodeEditor {
     }
 
     /// A drag over a line stretches the primary selection to where the pointer is.
-    pub(crate) fn drag(&mut self, line: usize, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+    pub(crate) fn drag(
+        &mut self,
+        line: usize,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if !self.dragging || !event.dragging() {
             return;
         }
-        let Some(at) = self.offset_in(line, event.position.x, cx) else {
+        let Some(at) = self.offset_in(line, event.position.x, window, cx) else {
             return;
         };
         let mut all = self.selections.clone();

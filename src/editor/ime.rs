@@ -8,6 +8,7 @@ use gpui::{
 use super::{
     cursor::Selection,
     layout::{Row, Shown},
+    measure::Measured,
     state::CodeEditor,
 };
 use crate::{
@@ -72,7 +73,12 @@ impl CodeEditor {
     }
 
     /// The offset under a window point, when a row of code is there.
-    pub(crate) fn offset_at(&self, position: Point<Pixels>, cx: &App) -> Option<usize> {
+    pub(crate) fn offset_at(
+        &self,
+        position: Point<Pixels>,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<usize> {
         let metrics = self.metrics;
         if metrics.line <= Pixels::ZERO || metrics.advance <= Pixels::ZERO {
             return None;
@@ -83,20 +89,41 @@ impl CodeEditor {
         let Row::Line(line) = *row else {
             return None;
         };
-        self.offset_in(line, position.x, cx)
+        self.offset_in(line, position.x, window, cx)
     }
 
     /// The offset nearest window x on a line; none for a line the text has since lost.
-    pub(crate) fn offset_in(&self, line: usize, x: Pixels, cx: &App) -> Option<usize> {
+    pub(crate) fn offset_in(
+        &self,
+        line: usize,
+        x: Pixels,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> Option<usize> {
         if line >= self.buffer.lines() {
             return None;
         }
+        let (shown, measured) = self.measured(line, window, cx);
+        let column = measured.column(x - self.metrics.left);
+        Some(
+            self.buffer
+                .offset(line, shown.back(self.row_text(line), column)),
+        )
+    }
+
+    /// A line as drawn and laid out.
+    fn measured(&self, line: usize, window: &Window, cx: &Context<Self>) -> (Shown, Measured) {
         let text = self.row_text(line);
-        let shown = Shown::new(text, self.notes(line, cx), Vec::new());
-        let column = ((x - self.metrics.left) / self.metrics.advance)
-            .round()
-            .max(0.0) as usize;
-        Some(self.buffer.offset(line, shown.back(text, column)))
+        let shown = Shown::new(text, self.notes(line, cx), self.styles(line, cx));
+        let family = cx.theme().mono_family.clone();
+        let measured = Measured::new(
+            &shown,
+            family,
+            self.metrics.size,
+            self.metrics.advance,
+            window,
+        );
+        (shown, measured)
     }
 
     fn utf16_range(&self, range: &Range<usize>) -> Range<usize> {
@@ -206,7 +233,7 @@ impl EntityInputHandler for CodeEditor {
         &mut self,
         range_utf16: Range<usize>,
         _: Bounds<Pixels>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let range = self.byte_range(&range_utf16);
@@ -217,27 +244,25 @@ impl EntityInputHandler for CodeEditor {
             .iter()
             .position(|row| *row == Row::Line(line))?;
         let text = self.row_text(line);
-        let shown = Shown::new(text, self.notes(line, cx), Vec::new());
+        let (shown, measured) = self.measured(line, window, cx);
         let column = shown.column(text, self.buffer.point(range.start).1.min(text.len()));
         let metrics = self.metrics;
         let scrolled = -self.scroll.0.borrow().base_handle.offset().y;
         let origin = point(
-            metrics.left + metrics.advance * column as f32,
+            metrics.left + measured.x(column),
             metrics.top + metrics.line * row as f32 - scrolled,
         );
-        Some(Bounds::new(
-            origin,
-            gpui::size(metrics.advance, metrics.line),
-        ))
+        let wide = measured.x(column + 1) - measured.x(column);
+        Some(Bounds::new(origin, gpui::size(wide, metrics.line)))
     }
 
     fn character_index_for_point(
         &mut self,
         position: Point<Pixels>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<usize> {
-        let offset = self.offset_at(position, cx)?;
+        let offset = self.offset_at(position, window, cx)?;
         Some(to_utf16(self.buffer.text(), offset))
     }
 }

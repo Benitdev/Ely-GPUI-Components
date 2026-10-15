@@ -16,6 +16,7 @@ mod keybindings;
 mod keys;
 mod layout;
 mod line;
+mod measure;
 mod moves;
 mod preview;
 mod problems;
