@@ -319,10 +319,16 @@ fn aligned(drawn: &str, written: &str, escapes: Escapes) -> Vec<(usize, usize)> 
             let Some(s) = source[..j].last() else {
                 return out;
             };
-            // A line's end, drawn or joined; CRLF is one end.
             if d == s.ch || (d.is_whitespace() && s.ends_line()) {
                 j -= 1;
-                if s.ch == '\n' && j > 0 && source[j - 1].ch == '\r' && source[j - 1].raw == s.raw {
+                // A CRLF drawn as one char is one end.
+                let collapsed = !drawn[..byte].ends_with('\r');
+                if collapsed
+                    && s.ch == '\n'
+                    && j > 0
+                    && source[j - 1].ch == '\r'
+                    && source[j - 1].raw == s.raw
+                {
                     j -= 1;
                 }
                 break source[j].at;
@@ -395,6 +401,13 @@ mod tests {
         let inline = first(source);
         let end = inline.text.find('\n').expect("a drawn line end");
         assert_eq!(inline.source_at(source, end), Some(3));
+        assert_eq!(under(source, "two"), source.find("two").unwrap());
+    }
+
+    #[test]
+    fn a_kept_crlf_reads_back_char_for_char() {
+        let source = "`one\r\ntwo`\n";
+        assert_eq!(under(source, "ne"), source.find("ne").unwrap());
         assert_eq!(under(source, "two"), source.find("two").unwrap());
     }
 

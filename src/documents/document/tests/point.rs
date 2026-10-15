@@ -101,6 +101,14 @@ fn a_press_past_a_crlf_line_types_before_its_end(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_press_in_code_keeping_a_crlf_lands_on_its_character(cx: &mut TestAppContext) {
+    let source = "`one\r\ntwo`\n";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    press_on(0, 2, MouseButton::Left, cx);
+    assert_eq!(opened_caret(&document, cx), "`on".len());
+}
+
+#[gpui::test]
 fn a_secondary_press_moves_the_caret_and_opens_nothing(cx: &mut TestAppContext) {
     let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
     let heard = heard(&document, cx);
