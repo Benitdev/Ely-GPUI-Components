@@ -37,11 +37,18 @@ fn cursor(edge: ResizeEdge) -> CursorStyle {
 #[derive(IntoElement, Default)]
 pub struct ResizeBorder {
     children: SmallVec<[AnyElement; 2]>,
+    glass: bool,
 }
 
 impl ResizeBorder {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Leaves a see-through window's pane to its content: no ground, nor the shadow gpui draws under it.
+    pub fn glass(mut self) -> Self {
+        self.glass = true;
+        self
     }
 }
 
@@ -61,6 +68,7 @@ impl RenderOnce for ResizeBorder {
         window.set_client_inset(inset);
         let radius = theme.radius(Radius::Lg);
         let floating = !tiling.is_tiled();
+        let glass = self.glass;
         div()
             .id("resize-border")
             .size_full()
@@ -100,12 +108,14 @@ impl RenderOnce for ResizeBorder {
                     .size_full()
                     .overflow_hidden()
                     .cursor(CursorStyle::Arrow)
-                    .bg(theme.colors.bg)
+                    .when(!glass, |pane| pane.bg(theme.colors.bg))
                     .when(floating, |pane| {
                         pane.rounded(radius)
                             .border_1()
                             .border_color(theme.colors.border_strong)
-                            .shadow(theme.elevation(Elevation::Modal))
+                    })
+                    .when(floating && !glass, |pane| {
+                        pane.shadow(theme.elevation(Elevation::Modal))
                     })
                     .on_mouse_move(|_, _, cx| cx.stop_propagation())
                     .children(self.children),
