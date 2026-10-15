@@ -5,7 +5,6 @@ use gpui::{
     IntoElement, ParentElement, RenderOnce, SharedString, StrikethroughStyle, Styled, StyledText,
     UnderlineStyle, Window, div, prelude::*,
 };
-use markdown::mdast::AlignKind;
 
 use super::{
     contents::anchor,
@@ -23,8 +22,10 @@ use crate::{
 
 mod blocks;
 mod point;
+mod table;
 
 pub(crate) use point::{OnPoint, Place, Pointed, point_lines};
+pub(crate) use table::{CellAt, OpenCell};
 
 pub(crate) type OnLink = Rc<dyn Fn(&str, &mut Window, &mut App)>;
 /// Reveals the heading whose source starts at a byte.
@@ -96,6 +97,8 @@ pub(crate) struct Hooks<'a> {
     pub on_link: &'a Option<OnLink>,
     pub on_heading: &'a Option<OnHeading>,
     pub on_point: &'a Option<OnPoint>,
+    /// The cell typed in, drawn in its place.
+    pub cell: Option<&'a OpenCell>,
 }
 
 /// Draws nodes under one owner's ids and hooks.
@@ -112,6 +115,8 @@ struct Draw<'a> {
     lists: std::cell::Cell<usize>,
     /// Drawing a table's cells.
     table: std::cell::Cell<bool>,
+    /// Tables drawn so far.
+    tables: std::cell::Cell<usize>,
 }
 
 impl Draw<'_> {
@@ -302,60 +307,7 @@ impl Draw<'_> {
                 self.point_code(block, Some(layout), text, *from)
             }
             Node::List { start, items } => self.list(start, items, cx),
-            Node::Table { aligns, head, rows } => {
-                let cell = |blocks: &[Node], column: usize, header: bool, cx: &App| {
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .px_3()
-                        .py_1p5()
-                        .when(aligns.get(column) == Some(&AlignKind::Right), |cell| {
-                            cell.justify_end()
-                        })
-                        .when(aligns.get(column) == Some(&AlignKind::Center), |cell| {
-                            cell.justify_center()
-                        })
-                        .when(header, |cell| {
-                            cell.font_weight(FontWeight::MEDIUM)
-                                .text_color(colors.fg_muted)
-                        })
-                        .child(
-                            div()
-                                .max_w_full()
-                                .flex()
-                                .flex_col()
-                                .gap_1()
-                                .children(self.nodes(blocks, cx)),
-                        )
-                };
-                div()
-                    .flex()
-                    .flex_col()
-                    .rounded(theme.radius(Radius::Md))
-                    .border_1()
-                    .border_color(colors.border)
-                    .overflow_hidden()
-                    .child(
-                        div().flex().bg(colors.hover).children(
-                            head.iter()
-                                .enumerate()
-                                .map(|(column, blocks)| cell(blocks, column, true, cx)),
-                        ),
-                    )
-                    .children(rows.iter().map(|row| {
-                        div()
-                            .flex()
-                            .border_t_1()
-                            .border_color(colors.border)
-                            .children(
-                                row.iter()
-                                    .enumerate()
-                                    .map(|(column, blocks)| cell(blocks, column, false, cx)),
-                            )
-                    }))
-                    .into_any_element()
-            }
+            Node::Table { aligns, head, rows } => self.table(aligns, head, rows, cx),
             Node::Rule => div()
                 .debug_selector(|| "markdown-rule".into())
                 .my_2()
@@ -443,6 +395,7 @@ pub(crate) fn draw_nodes(
         scale,
         lists: std::cell::Cell::new(0),
         table: std::cell::Cell::new(false),
+        tables: std::cell::Cell::new(0),
     };
     draw.nodes(nodes, cx)
 }
@@ -458,6 +411,7 @@ impl RenderOnce for MarkdownRenderer {
                 on_link: &self.on_link,
                 on_heading: &None,
                 on_point: &None,
+                cell: None,
             },
             next: std::cell::Cell::new(0),
             sections: &self.sections,
@@ -466,6 +420,7 @@ impl RenderOnce for MarkdownRenderer {
             scale: 1.0,
             lists: std::cell::Cell::new(0),
             table: std::cell::Cell::new(false),
+            tables: std::cell::Cell::new(0),
         };
         div()
             .flex()

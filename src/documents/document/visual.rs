@@ -9,7 +9,7 @@ use super::{MarkdownDocument, edit::Landing};
 use crate::{
     documents::{
         MarkdownMode,
-        render::{Hooks, Pointed, draw_nodes, point_lines},
+        render::{Hooks, OpenCell, Pointed, draw_nodes, point_lines},
     },
     forms::{self, Down, Up},
     primitives::FocusRing as _,
@@ -72,11 +72,7 @@ impl MarkdownDocument {
         // Focus fades all but the reader's block.
         let faded = self.look.focus && editing_mode(self.mode) && ix != self.current_block(cx);
         let open = self.open.as_ref();
-        let point = cx.listener(|document, event: &MouseDownEvent, window, cx| {
-            window.prevent_default();
-            cx.stop_propagation();
-            document.point_open(event.position, cx);
-        });
+        let point = Self::point_in_open(cx);
         let field = |open: &super::Open| {
             div()
                 .debug_selector(|| "markdown-open".to_string())
@@ -98,9 +94,25 @@ impl MarkdownDocument {
                 (_, false) => div().into_any_element(),
             };
         };
-        if let Some(open) = open.filter(|open| open.range == block.range) {
+        if let Some(open) = open.filter(|open| open.cell.is_none() && open.range == block.range) {
             return field(open);
         }
+        // A cell open in this block, typed in place.
+        let cell = open.and_then(|open| {
+            let inside = block.range.start <= open.range.start && open.range.end <= block.range.end;
+            Some(OpenCell {
+                at: open.cell.filter(|_| inside)?,
+                field: std::cell::RefCell::new(Some(
+                    div()
+                        .debug_selector(|| "markdown-open-cell".to_string())
+                        .on_mouse_down(MouseButton::Right, Self::point_in_open(cx))
+                        .rounded(radius)
+                        .bg(colors.sunken)
+                        .child(open.input.clone())
+                        .into_any_element(),
+                )),
+            })
+        });
         let shown = match &block.nodes {
             Some(nodes) => div()
                 .flex()
@@ -117,6 +129,7 @@ impl MarkdownDocument {
                         on_link: &self.on_link,
                         on_heading: &self.on_heading,
                         on_point: &on_point,
+                        cell: cell.as_ref(),
                     },
                     self.look.scale,
                     cx,
@@ -153,6 +166,17 @@ impl MarkdownDocument {
             true => self.pressable(block, Some(ix), cx).into_any_element(),
             false => block.into_any_element(),
         }
+    }
+
+    /// A right press in the open field points there.
+    fn point_in_open(
+        cx: &mut Context<Self>,
+    ) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+        cx.listener(|document, event: &MouseDownEvent, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+            document.point_open(event.position, cx);
+        })
     }
 
     /// `element` opens block `ix`; a right press points.

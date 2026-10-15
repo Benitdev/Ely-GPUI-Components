@@ -5,7 +5,11 @@ use std::ops::Range;
 use gpui::{Context, Window};
 use markdown::mdast;
 
-use super::MarkdownDocument;
+use super::{
+    MarkdownDocument,
+    cells::{Aim, Move, beside},
+    edit::Landing,
+};
 use crate::documents::markdown::{span, tree, walk};
 
 /// Spaces one indent step adds.
@@ -196,7 +200,7 @@ impl MarkdownDocument {
 
     /// Enter on a block list line; false leaves it.
     pub(super) fn block_newline(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(open) = &self.open else {
+        let Some(open) = self.open.as_ref().filter(|open| open.cell.is_none()) else {
             return false;
         };
         let input = open.input.clone();
@@ -218,11 +222,27 @@ impl MarkdownDocument {
         true
     }
 
-    /// Tab or Shift-Tab in the open block.
-    pub(super) fn block_shift(&mut self, deeper: bool, _: &mut Window, cx: &mut Context<Self>) {
+    /// Tab or Shift-Tab in the open block; in a cell, the next or previous.
+    pub(super) fn block_shift(
+        &mut self,
+        deeper: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(open) = &self.open else {
             return;
         };
+        if let Some(at) = open.cell {
+            let here = self.block_at(open.range.start);
+            let block = self.parsed.blocks[here].range.clone();
+            let by = if deeper { Move::Next } else { Move::Previous };
+            let text = self.editor.read(cx).text();
+            match beside(text, block, at, by) {
+                Some(to) => self.open(Some(here), Landing::Cell(Aim::At(to)), window, cx),
+                None => log::info!("markdown document: no cell {by:?} of {at:?}"),
+            }
+            return;
+        }
         let input = open.input.clone();
         let (text, selection) = {
             let input = input.read(cx);

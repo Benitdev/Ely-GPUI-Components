@@ -1,11 +1,11 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, InteractiveElement as _, IntoElement as _, MouseButton, MouseDownEvent,
+    AnyElement, App, Div, InteractiveElement, IntoElement as _, MouseButton, MouseDownEvent,
     ParentElement as _, TextLayout, Window, div,
 };
 
-use super::Draw;
+use super::{Draw, table::CellAt};
 use crate::documents::tree::Inline;
 
 /// Where a press fell, as the drawing knows it.
@@ -20,6 +20,8 @@ pub(crate) enum Place {
         from: usize,
         at: usize,
     },
+    /// A table cell, pressed past its text.
+    Cell(CellAt),
     /// Somewhere the block holds no byte for.
     Block,
 }
@@ -61,6 +63,19 @@ fn pointable(
     table: bool,
     point: impl Fn(&MouseDownEvent) -> Pointed + 'static,
 ) -> AnyElement {
+    match on_point {
+        Some(_) => pressed(div().child(element), on_point, table, point).into_any_element(),
+        None => element,
+    }
+}
+
+/// `element` itself takes the presses `pointable` hands on.
+fn pressed<E: InteractiveElement>(
+    element: E,
+    on_point: &Option<OnPoint>,
+    table: bool,
+    point: impl Fn(&MouseDownEvent) -> Pointed + 'static,
+) -> E {
     let Some(on_point) = on_point.clone() else {
         return element;
     };
@@ -79,11 +94,9 @@ fn pointable(
             on_point(pointed, button, window, cx);
         }
     };
-    div()
+    element
         .on_mouse_down(MouseButton::Left, press(MouseButton::Left))
         .on_mouse_down(MouseButton::Right, press(MouseButton::Right))
-        .child(element)
-        .into_any_element()
 }
 
 /// Drawn `text`, its lines written from source byte `from`.
@@ -118,6 +131,13 @@ impl Draw<'_> {
         point: impl Fn(&MouseDownEvent) -> Pointed + 'static,
     ) -> AnyElement {
         pointable(element, self.hooks.on_point, self.table.get(), point)
+    }
+
+    /// A table cell taking its presses, past its text too.
+    pub(super) fn pressed_cell(&self, cell: Div, at: CellAt) -> Div {
+        pressed(cell, self.hooks.on_point, true, move |_| {
+            Pointed::at(Place::Cell(at))
+        })
     }
 
     /// Drawn `inline`; a press finds its byte through `layout`.

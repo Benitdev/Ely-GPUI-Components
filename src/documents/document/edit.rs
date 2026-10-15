@@ -2,7 +2,10 @@ use std::ops::Range;
 
 use gpui::{AppContext as _, Context, Focusable as _, Window};
 
-use super::{DocumentEvent, MarkdownDocument, Open};
+use super::{
+    DocumentEvent, MarkdownDocument, Open, TargetBlock,
+    cells::{self, Aim, Move},
+};
 use crate::{
     documents::{
         MarkdownMode,
@@ -20,6 +23,8 @@ pub(super) enum Landing {
     End,
     /// A source byte of the drawn read.
     At(usize),
+    /// A table cell, by byte or place.
+    Cell(Aim),
 }
 
 /// Where byte `at` lies after `edit`, if it survives.
@@ -76,8 +81,8 @@ impl MarkdownDocument {
             return log::warn!("markdown document: pressed while the text is read again");
         }
         let text = self.editor.read(cx).text();
-        let (range, append) = match pressed {
-            None => (text.len()..text.len(), true),
+        let (range, append, cell) = match pressed {
+            None => (text.len()..text.len(), true, None),
             Some(start) => {
                 let found = moved(start, &written).and_then(|start| {
                     self.parsed
@@ -88,12 +93,36 @@ impl MarkdownDocument {
                 let Some(block) = found else {
                     return log::warn!("markdown document: the pressed block changed as one wrote");
                 };
-                (block.range.clone(), false)
+                let table = block.kind == TargetBlock::Table;
+                let aim = match landing {
+                    Landing::Cell(Aim::Byte(at)) => match moved(at, &written) {
+                        Some(at) => Some(Aim::Byte(at)),
+                        None => {
+                            return log::warn!(
+                                "markdown document: the pressed cell was written over"
+                            );
+                        }
+                    },
+                    Landing::Cell(aim) => Some(aim),
+                    Landing::Start if table => Some(Aim::First),
+                    Landing::End if table => Some(Aim::Last),
+                    _ => None,
+                };
+                match aim {
+                    None => (block.range.clone(), false, None),
+                    Some(aim) => match cells::find(text, block.range.clone(), aim) {
+                        Some(cell) => (cell.range, false, Some((cell.at, cell.caret))),
+                        None => {
+                            return log::warn!("markdown document: no cell {aim:?} in the block");
+                        }
+                    },
+                }
             }
         };
         let caret = match landing {
+            _ if cell.is_some() => cell.map(|(_, caret)| caret),
             Landing::Start => Some(0),
-            Landing::End => None,
+            Landing::End | Landing::Cell(_) => None,
             Landing::At(at) => match moved(at, &written) {
                 Some(at) if range.contains(&at) || at == range.end => Some(at - range.start),
                 _ => {
@@ -104,9 +133,11 @@ impl MarkdownDocument {
         };
         let source = text[range.clone()].to_string();
         let input = cx.new(|cx| {
-            TextInput::new(window, cx)
-                .multi_line(1, usize::MAX)
-                .highlighter(markdown_highlights)
+            let input = TextInput::new(window, cx).highlighter(markdown_highlights);
+            match cell {
+                Some(_) => input,
+                None => input.multi_line(1, usize::MAX),
+            }
         });
         input.update(cx, |input, cx| {
             input.set_text(source, cx);
@@ -118,23 +149,39 @@ impl MarkdownDocument {
         let subscriptions = vec![cx.subscribe_in(
             &input,
             window,
-            |document, _, event: &InputEvent, window, cx| match event {
-                InputEvent::Blur if lent(window, cx) => document.lend(window, cx),
-                InputEvent::Blur => {
-                    document.commit(cx);
+            |document, _, event: &InputEvent, window, cx| {
+                match event {
+                    InputEvent::Blur if lent(window, cx) => document.lend(window, cx),
+                    InputEvent::Blur => {
+                        document.commit(cx);
+                    }
+                    InputEvent::Changed => {
+                        document.typed += 1;
+                        cx.emit(DocumentEvent::Changed)
+                    }
+                    // Enter in a cell writes it back.
+                    InputEvent::Submit
+                        if document
+                            .open
+                            .as_ref()
+                            .is_some_and(|open| open.cell.is_some()) =>
+                    {
+                        document.commit(cx);
+                        window.focus(&document.focus, cx);
+                    }
+                    _ => {}
                 }
-                InputEvent::Changed => {
-                    document.typed += 1;
-                    cx.emit(DocumentEvent::Changed)
-                }
-                _ => {}
             },
         )];
-        log::info!("markdown document: block {range:?} opens");
+        match cell {
+            Some((at, _)) => log::info!("markdown document: cell {at:?} at {range:?} opens"),
+            None => log::info!("markdown document: block {range:?} opens"),
+        }
         self.open = Some(Open {
             range,
             input,
             append,
+            cell: cell.map(|(at, _)| at),
             lent: None,
             _subscriptions: subscriptions,
         });
@@ -187,7 +234,12 @@ impl MarkdownDocument {
         let (lead, written) = match open.append {
             true if typed.is_empty() => return None,
             true => (joint(text).len(), format!("{}{typed}", joint(text))),
-            false => (0, typed),
+            false if open.cell.is_some() => (0, cells::guarded(&typed)),
+            false => (0, typed.clone()),
+        };
+        let caret = match open.cell {
+            Some(_) => cells::guarded(&typed[..caret]).len(),
+            None => caret,
         };
         let at = open.range.start + lead + caret;
         let edit = (text[open.range.clone()] != written).then(|| {
@@ -222,6 +274,15 @@ impl MarkdownDocument {
             return false;
         }
         let here = self.block_at(open.range.start);
+        if let Some(at) = open.cell {
+            let block = self.parsed.blocks[here].range.clone();
+            let by = if down { Move::Down } else { Move::Up };
+            let text = self.editor.read(cx).text();
+            if let Some(to) = cells::beside(text, block, at, by) {
+                self.open(Some(here), Landing::Cell(Aim::At(to)), window, cx);
+                return true;
+            }
+        }
         let next = match down {
             true => Some(here + 1).filter(|next| *next < self.parsed.blocks.len()),
             false => here.checked_sub(1),

@@ -3,7 +3,9 @@ use std::rc::Rc;
 use gpui::{AppContext as _, Context, MouseButton, Pixels, Point, Window};
 use markdown::mdast;
 
-use super::{DocumentEvent, MarkdownDocument, edit::Landing, edit::moved, parse::Block};
+use super::{
+    DocumentEvent, MarkdownDocument, cells::Aim, edit::Landing, edit::moved, parse::Block,
+};
 use crate::documents::{
     markdown::{file_tree, span, walk},
     render::{OnPoint, Place, Pointed},
@@ -80,15 +82,20 @@ impl MarkdownDocument {
                     Some(lines_at(&parsed.text[start..], *from, text, *at).unwrap_or(*from))
                 }
                 Place::At(at) => Some(*at),
-                Place::Block => None,
+                Place::Cell(_) | Place::Block => None,
             }
             .map(|at| start + at);
+            // A press in a table opens only its cell.
+            let landing = match (&pointed.place, at) {
+                (Place::Cell(cell), _) => Landing::Cell(Aim::At(*cell)),
+                (_, Some(at)) if pointed.table => Landing::Cell(Aim::Byte(at)),
+                (_, Some(at)) => Landing::At(at),
+                (_, None) => Landing::End,
+            };
             let ix = Some(ix);
             document
                 .update(cx, |document, cx| match button {
-                    MouseButton::Left => {
-                        document.open(ix, at.map_or(Landing::End, Landing::At), window, cx)
-                    }
+                    MouseButton::Left => document.open(ix, landing, window, cx),
                     MouseButton::Right => document.point(ix, at, pointed, window, cx),
                     _ => {}
                 })

@@ -7,6 +7,7 @@ use gpui::{AppContext as _, Context};
 use super::{
     DocumentEvent, LARGEST_READ, MarkdownDocument,
     block::{self, BlockCommand, settled},
+    cells,
     format::{Change, EditRefusal, InlineFormat, drop_image, toggle},
     tables::{self, TableEdit},
 };
@@ -127,9 +128,18 @@ impl MarkdownDocument {
                 &text[open.range.end..],
             ),
         };
-        let picked = input.selection();
+        let (typed, mut picked) = (input.text(), input.selection());
+        // A cell reads as it writes back.
+        let typed = match open.cell {
+            Some(_) => {
+                let shift = |at: usize| cells::guarded(&typed[..at]).len();
+                picked = shift(picked.start)..shift(picked.end);
+                cells::guarded(typed)
+            }
+            None => typed.to_string(),
+        };
         let offset = before.len();
-        let full = format!("{before}{}{after}", input.text());
+        let full = format!("{before}{typed}{after}");
         settle((full, offset, offset + picked.start..offset + picked.end))
     }
 
@@ -144,12 +154,16 @@ impl MarkdownDocument {
     ) -> Result<(), EditRefusal> {
         log::info!("markdown document: {name}");
         if let Some(open) = &self.open {
-            let end = offset + open.input.read(cx).text().len();
+            let typed = open.input.read(cx).text();
+            // Offsets read the escaped cell; its field holds it raw.
+            let raw = open.cell.is_some() && cells::guarded(typed) != typed;
+            let end = offset + typed.len();
             let grown = (edits.iter().map(|(_, with)| with.len()).sum::<usize>() + end)
                 .checked_sub(edits.iter().map(|(range, _)| range.len()).sum::<usize>());
-            let inside = edits
-                .iter()
-                .all(|(range, _)| offset <= range.start && range.end <= end)
+            let inside = !raw
+                && edits
+                    .iter()
+                    .all(|(range, _)| offset <= range.start && range.end <= end)
                 && grown.is_some_and(|grown| offset <= selected.start && selected.end <= grown);
             if inside {
                 let (Some(from), Some(to)) = (

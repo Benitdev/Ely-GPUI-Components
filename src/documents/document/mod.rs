@@ -1,6 +1,7 @@
 mod apart;
 mod attach;
 mod block;
+mod cells;
 mod edit;
 mod finding;
 mod format;
@@ -36,7 +37,7 @@ use super::{
     MarkdownMode,
     markdown::markdown_highlights,
     modes::joint,
-    render::{OnHeading, OnLink},
+    render::{CellAt, OnHeading, OnLink},
 };
 use crate::{
     editor::{CodeEditor, EditorEvent, LineNumbers},
@@ -80,6 +81,8 @@ struct Open {
     input: Entity<TextInput>,
     /// Opened past the end, to add a block.
     append: bool,
+    /// A table cell alone; its bare pipes escape.
+    cell: Option<CellAt>,
     /// Watches an overlay that borrowed focus.
     lent: Option<Subscription>,
     _subscriptions: Vec<Subscription>,
@@ -243,6 +246,7 @@ impl MarkdownDocument {
         let written = match open.append {
             true if typed.is_empty() => String::new(),
             true => format!("{}{typed}", joint(text)),
+            false if open.cell.is_some() => cells::guarded(typed),
             false => typed.to_string(),
         };
         [&text[..open.range.start], &written, &text[open.range.end..]].concat()

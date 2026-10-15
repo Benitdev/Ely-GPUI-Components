@@ -341,9 +341,10 @@ fn a_new_table_takes_the_texts_line_ending(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn tidy_in_an_open_table_keeps_it_open(cx: &mut TestAppContext) {
+fn tidy_in_an_open_cell_writes_it_and_tidies(cx: &mut TestAppContext) {
     let (document, cx) = open(SMALL, MarkdownMode::Visual, cx);
     press(0, Modifiers::none(), cx);
+    assert_eq!(opened(&document, cx), "2");
     document.update(cx, |document, cx| {
         document
             .edit_table(crate::documents::TableEdit::Tidy, cx)
@@ -351,8 +352,8 @@ fn tidy_in_an_open_table_keeps_it_open(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert_eq!(
-        opened(&document, cx),
-        "| A    | B    |\n| ---- | ---- |\n| 1    | 2    |"
+        text(&document, cx),
+        "| A    | B    |\n| ---- | ---- |\n| 1    | 2    |\n"
     );
 }
 
