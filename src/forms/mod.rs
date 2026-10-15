@@ -116,10 +116,10 @@ pub use switch::Switch;
 pub(crate) use syntax::{Syntax, syntax_fenced, syntax_of};
 pub use tags::TagInput;
 pub(crate) use text::{
-    Backspace, Copy, Cut, Delete, DeleteWordLeft, Down, Enter, Left, Paste, Redo, Right, Submit,
-    Undo, Up, bind_keys, from_utf16, to_utf16,
+    Backspace, Delete, DeleteWordLeft, Down, Enter, Left, Redo, Right, Submit, Undo, Up, bind_keys,
+    from_utf16, to_utf16,
 };
-pub use text::{Highlight, History, InputEvent, TextInput};
+pub use text::{Copy, Cut, Highlight, History, InputEvent, Paste, SelectAll, TextInput};
 pub use transfer::TransferList;
 pub use unit::UnitInput;
 pub use upload::{Upload, UploadList, UploadState};

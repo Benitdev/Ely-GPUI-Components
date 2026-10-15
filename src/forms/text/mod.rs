@@ -13,9 +13,9 @@ use gpui::{
 };
 
 pub(crate) use actions::{
-    Backspace, Copy, Cut, Delete, DeleteWordLeft, Down, Enter, Left, Paste, Redo, Right, Submit,
-    Undo, Up, bind_keys,
+    Backspace, Delete, DeleteWordLeft, Down, Enter, Left, Redo, Right, Submit, Undo, Up, bind_keys,
 };
+pub use actions::{Copy, Cut, Paste, SelectAll};
 pub use edit::History;
 use edit::Snapshot;
 pub(crate) use edit::{from_utf16, to_utf16};
