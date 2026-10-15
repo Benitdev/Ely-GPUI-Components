@@ -378,7 +378,7 @@ mod tests {
     fn a_long_paragraph_reads_back_in_one_pass() {
         let source = "x".repeat(40_000);
         let inline = first(&source);
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         assert_eq!(inline.drawn_at(&source, 5), Some(5));
         let took = started.elapsed();
         assert!(took.as_millis() < 500, "took {took:?}");
