@@ -73,6 +73,7 @@ pub struct ColumnShell {
     platform: Option<Platform>,
     on_close: Option<OnClose>,
     columns: Vec<ShellColumn>,
+    glass: bool,
 }
 
 impl ColumnShell {
@@ -83,6 +84,7 @@ impl ColumnShell {
             platform: None,
             on_close: None,
             columns: Vec::new(),
+            glass: false,
         }
     }
 
@@ -100,6 +102,12 @@ impl ColumnShell {
     /// Runs instead of closing; without a forced platform, system closes run it too.
     pub fn on_close(mut self, handler: impl Fn(&mut Window, &mut App) + 'static) -> Self {
         self.on_close = Some(Rc::new(handler));
+        self
+    }
+
+    /// Grounds the columns in the palette's glass, so a blurred window shows through them.
+    pub fn glass(mut self) -> Self {
+        self.glass = true;
         self
     }
 }
@@ -175,11 +183,16 @@ impl RenderOnce for ColumnShell {
             );
         }
         let theme = cx.theme();
+        let ground = if self.glass {
+            theme.colors.glass
+        } else {
+            theme.colors.bg
+        };
         div()
             .flex()
             .h_full()
             .debug_selector(|| "column-shell".into())
-            .bg(theme.colors.bg)
+            .bg(ground)
             .text_color(theme.colors.fg)
             .children(columns)
     }
