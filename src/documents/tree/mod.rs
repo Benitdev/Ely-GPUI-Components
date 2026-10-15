@@ -180,7 +180,7 @@ pub fn parse(markdown: &str) -> Vec<Node> {
 }
 
 impl<'a> Reader<'a> {
-    /// A reader of `root`, parsed from `source`, as the screen draws it.
+    /// Reads `root`, parsed from `source`, as drawn on screen.
     pub fn new(source: &'a str, root: &mdast::Node) -> Self {
         Self::reading(source, root, true)
     }

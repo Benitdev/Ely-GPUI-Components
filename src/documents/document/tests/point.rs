@@ -90,6 +90,17 @@ fn a_press_opens_the_block_at_the_pressed_character(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_press_past_a_crlf_line_types_before_its_end(cx: &mut TestAppContext) {
+    let source = "one\r\ntwo\r\n";
+    let (document, cx) = open(source, MarkdownMode::Visual, cx);
+    press_on(0, 3, MouseButton::Left, cx);
+    assert_eq!(opened_caret(&document, cx), "one".len());
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(super::text(&document, cx), "oneX\r\ntwo\r\n");
+}
+
+#[gpui::test]
 fn a_secondary_press_moves_the_caret_and_opens_nothing(cx: &mut TestAppContext) {
     let (document, cx) = open(TEXT, MarkdownMode::Visual, cx);
     let heard = heard(&document, cx);
