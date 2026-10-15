@@ -25,6 +25,8 @@ pub(crate) struct Frame {
     pub line: Pixels,
     pub matched: Option<(usize, usize)>,
     pub occurrences: Vec<Range<usize>>,
+    /// The buffer stamp these offsets were found in.
+    pub stamp: u64,
     /// The minimap's box, from its last paint.
     pub minimap: Bounds<Pixels>,
 }
@@ -267,6 +269,7 @@ impl Render for CodeEditor {
             line,
             matched,
             occurrences,
+            stamp: self.buffer.stamp(),
             minimap,
         };
         self.metrics.advance = advance;

@@ -1,10 +1,28 @@
-use std::ops::Range;
+use std::{
+    ops::Range,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 /// Source text and where each line starts, in bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Buffer {
     text: String,
     starts: Vec<usize>,
+    stamp: u64,
+}
+
+impl PartialEq for Buffer {
+    fn eq(&self, other: &Self) -> bool {
+        self.text == other.text
+    }
+}
+
+impl Eq for Buffer {}
+
+/// A fresh stamp: no two texts share one.
+fn stamp() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 fn starts(text: &str) -> Vec<usize> {
@@ -17,7 +35,16 @@ impl Buffer {
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         let starts = starts(&text);
-        Self { text, starts }
+        Self {
+            text,
+            starts,
+            stamp: stamp(),
+        }
+    }
+
+    /// Names this text; every edit gives a new one.
+    pub(crate) fn stamp(&self) -> u64 {
+        self.stamp
     }
 
     pub fn text(&self) -> &str {
@@ -107,6 +134,7 @@ impl Buffer {
         );
         self.text.replace_range(range, text);
         self.starts = starts(&self.text);
+        self.stamp = stamp();
     }
 }
 

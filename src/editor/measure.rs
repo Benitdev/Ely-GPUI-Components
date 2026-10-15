@@ -1,4 +1,4 @@
-//! Where a drawn line's columns fall, as gpui lays it out.
+//! Where drawn columns fall, as gpui lays them out.
 
 use std::sync::Arc;
 
@@ -6,7 +6,7 @@ use gpui::{Hsla, LineLayout, Pixels, SharedString, TextRun, Window, font};
 
 use super::layout::Shown;
 
-/// A drawn line laid out: wide characters take their own width.
+/// A laid-out line: wide characters keep their own width.
 pub(crate) struct Measured {
     text: SharedString,
     layout: Arc<LineLayout>,
@@ -57,7 +57,7 @@ impl Measured {
         }
     }
 
-    /// Where drawn column `column` starts; past the end in whole advances.
+    /// Where `column` starts; past the end in whole advances.
     pub fn x(&self, column: usize) -> Pixels {
         match self.text.char_indices().nth(column) {
             Some((at, _)) => self.layout.x_for_index(at),
@@ -68,9 +68,19 @@ impl Measured {
         }
     }
 
-    /// The drawn column whose start is nearest `x`.
+    /// The column whose start lies nearest `x`, line end included.
     pub fn column(&self, x: Pixels) -> usize {
-        let at = self.layout.closest_index_for_x(x).min(self.text.len());
+        let starts = self.layout.runs.iter().flat_map(|run| {
+            run.glyphs
+                .iter()
+                .map(|glyph| (glyph.index, glyph.position.x))
+        });
+        let off = |edge: Pixels| f32::from((edge - x).abs());
+        let at = starts
+            .chain([(self.text.len(), self.layout.width)])
+            .min_by(|a, b| off(a.1).total_cmp(&off(b.1)))
+            .map(|(at, _)| at.min(self.text.len()))
+            .expect("the line end is always a stop");
         self.text[..at].chars().count()
     }
 }

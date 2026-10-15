@@ -34,11 +34,13 @@ impl CodeEditor {
             span.start < range.end.max(range.start + 1) && range.start < span.end
         };
         let mut spans = self.line_colors(self.row_text(line), cx);
+        // Offsets found in an older text are left out.
+        let fresh = self.frame.stamp == self.buffer.stamp();
         let brackets = self
             .frame
             .brackets
             .iter()
-            .filter(|bracket| range.contains(&bracket.offset));
+            .filter(|bracket| fresh && range.contains(&bracket.offset));
         for bracket in brackets {
             let at = bracket.offset - range.start;
             let color = if self.options.rainbow {
@@ -49,7 +51,12 @@ impl CodeEditor {
             spans.retain(|(span, _)| *span != (at..at + 1));
             spans.push((at..at + 1, color.into()));
         }
-        for span in self.frame.occurrences.iter().filter(|span| touches(span)) {
+        for span in self
+            .frame
+            .occurrences
+            .iter()
+            .filter(|span| fresh && touches(span))
+        {
             spans.push((
                 local(span),
                 HighlightStyle {
@@ -90,7 +97,7 @@ impl CodeEditor {
                 },
             ));
         }
-        if let Some((open, close)) = self.frame.matched {
+        if let Some((open, close)) = self.frame.matched.filter(|_| fresh) {
             for at in [open, close].into_iter().filter(|at| range.contains(at)) {
                 let at = at - range.start;
                 spans.push((
@@ -114,7 +121,7 @@ impl CodeEditor {
         (0..indent).step_by(self.options.tab).collect()
     }
 
-    /// Dots for spaces, arrows for tabs; the rest hidden, so marks fall where drawn.
+    /// Dots for spaces, arrows for tabs; other characters hidden.
     fn whitespace(&self, line: usize, cx: &Context<Self>) -> StyledText {
         let text = self.row_text(line);
         let notes = self.notes(line, cx);
@@ -165,7 +172,7 @@ impl CodeEditor {
             advance,
             window,
         );
-        // Text columns at their laid-out place; rulers and guides on the grid.
+        // Text sits where laid out; rulers and guides on the grid.
         let x = |column: usize| advance + measured.x(column);
         let grid = |column: usize| advance * (column + 1) as f32;
         let focused = self.focus.is_focused(window);
