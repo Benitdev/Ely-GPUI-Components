@@ -222,7 +222,7 @@ impl MarkdownDocument {
         true
     }
 
-    /// Tab or Shift-Tab in the open block; in a cell, the next or previous.
+    /// Tab or Shift-Tab; in a cell, moves between cells.
     pub(super) fn block_shift(
         &mut self,
         deeper: bool,

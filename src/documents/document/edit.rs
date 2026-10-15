@@ -234,11 +234,11 @@ impl MarkdownDocument {
         let (lead, written) = match open.append {
             true if typed.is_empty() => return None,
             true => (joint(text).len(), format!("{}{typed}", joint(text))),
-            false if open.cell.is_some() => (0, cells::guarded(&typed)),
+            false if open.cell.is_some() => (0, cells::kept(&typed)),
             false => (0, typed.clone()),
         };
         let caret = match open.cell {
-            Some(_) => cells::guarded(&typed[..caret]).len(),
+            Some(_) => cells::kept_at(&typed, caret),
             None => caret,
         };
         let at = open.range.start + lead + caret;

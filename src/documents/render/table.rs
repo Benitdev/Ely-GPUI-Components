@@ -1,6 +1,8 @@
 use std::cell::RefCell;
 
-use gpui::{AnyElement, App, FontWeight, IntoElement, ParentElement, Styled, div, prelude::*};
+use gpui::{
+    AnyElement, App, FontWeight, IntoElement, MouseButton, ParentElement, Styled, div, prelude::*,
+};
 use markdown::mdast::AlignKind;
 
 use super::Draw;
@@ -9,7 +11,7 @@ use crate::{
     theme::{ActiveTheme, Radius},
 };
 
-/// A cell: its table in drawing order, row from the head, column.
+/// A cell: table in drawing order, row, column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CellAt {
     pub table: usize,
@@ -56,17 +58,25 @@ impl Draw<'_> {
                 .when(row == 0, |cell| {
                     cell.font_weight(FontWeight::MEDIUM)
                         .text_color(colors.fg_muted)
-                })
-                .child(match open {
-                    Some(field) => div().w_full().child(field),
-                    None => div()
-                        .max_w_full()
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .children(self.nodes(blocks, cx)),
                 });
-            self.pressed_cell(drawn, at)
+            match open {
+                // Presses in the open cell stay with its field.
+                Some(field) => drawn
+                    .child(div().w_full().child(field))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation()),
+                None => self.pressed_cell(
+                    drawn.child(
+                        div()
+                            .max_w_full()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .children(self.nodes(blocks, cx)),
+                    ),
+                    at,
+                ),
+            }
         };
         div()
             .flex()

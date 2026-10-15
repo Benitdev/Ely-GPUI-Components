@@ -9,7 +9,7 @@ use crate::documents::{
     render::CellAt,
 };
 
-/// A cell of the text: which, its source, the caret in it.
+/// A cell: which, its source, its caret.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct Cell {
     pub at: CellAt,
@@ -101,7 +101,7 @@ pub(super) fn find(text: &str, block: Range<usize>, aim: Aim) -> Option<Cell> {
     })
 }
 
-/// The cell `by` reaches from `at`; none past the table's edge.
+/// The cell `by` reaches from `at`; none past the edge.
 pub(super) fn beside(text: &str, block: Range<usize>, at: CellAt, by: Move) -> Option<CellAt> {
     let root = file_tree(&text[block]);
     let tables = tables(&root);
@@ -126,7 +126,7 @@ pub(super) fn beside(text: &str, block: Range<usize>, at: CellAt, by: Move) -> O
     })
 }
 
-/// A cell's source between its pipes; empty, a place after the opening one.
+/// A cell's source; empty, just past its opening pipe.
 fn written(text: &str, cell: &Node) -> Range<usize> {
     let inside = cell.children().expect("a cell holds inlines");
     if let (Some(first), Some(last)) = (inside.first(), inside.last()) {
@@ -143,8 +143,8 @@ fn written(text: &str, cell: &Node) -> Range<usize> {
     at..at
 }
 
-/// `typed` with each bare `|` escaped, as a cell keeps it.
-pub(super) fn guarded(typed: &str) -> String {
+/// `typed` with each bare `|` escaped.
+fn guarded(typed: &str) -> String {
     let mut out = String::with_capacity(typed.len());
     let mut slashes = 0;
     for ch in typed.chars() {
@@ -157,9 +157,27 @@ pub(super) fn guarded(typed: &str) -> String {
     out
 }
 
+/// `typed` as a cell keeps it, its closing pipe intact.
+pub(super) fn kept(typed: &str) -> String {
+    let mut out = guarded(typed);
+    let slashes = out.len() - out.trim_end_matches('\\').len();
+    if slashes % 2 == 1 {
+        out.push('\\');
+    }
+    out
+}
+
+/// Byte `at` of `typed` within `kept(typed)`.
+pub(super) fn kept_at(typed: &str, at: usize) -> usize {
+    match at == typed.len() {
+        true => kept(typed).len(),
+        false => guarded(&typed[..at]).len(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Aim, CellAt, Move, beside, find, guarded};
+    use super::{Aim, CellAt, Move, beside, find, guarded, kept, kept_at};
 
     const TABLE: &str = "intro\n\n| a | **b** |\n| --- | --- |\n| c |  |\n| d | e |\n";
 
@@ -217,5 +235,28 @@ mod tests {
         assert_eq!(guarded("a|b"), "a\\|b");
         assert_eq!(guarded("a\\|b"), "a\\|b");
         assert_eq!(guarded("a\\\\|b"), "a\\\\\\|b");
+    }
+
+    #[test]
+    fn a_closing_backslash_keeps_the_next_pipe() {
+        assert_eq!(kept("a\\"), "a\\\\");
+        assert_eq!(kept("a\\\\"), "a\\\\");
+        assert_eq!(kept_at("a\\", 2), 3);
+        assert_eq!(kept_at("a\\b", 2), 2);
+        let text = "|a|b|\n|---|---|\n|c|d|\n";
+        let cell = find(text, 0..text.len() - 1, Aim::First).expect("a cell");
+        let written = [
+            &text[..cell.range.start],
+            &kept("a\\"),
+            &text[cell.range.end..],
+        ]
+        .concat();
+        let b = find(&written, 0..written.len() - 1, Aim::At(at(0, 1))).expect("still a table");
+        assert_eq!(&written[b.range], "b");
+    }
+
+    #[test]
+    fn typed_pipes_shift_later_bytes() {
+        assert_eq!(kept_at("||x", 2), 4);
     }
 }

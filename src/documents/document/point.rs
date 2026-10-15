@@ -4,7 +4,11 @@ use gpui::{AppContext as _, Context, MouseButton, Pixels, Point, Window};
 use markdown::mdast;
 
 use super::{
-    DocumentEvent, MarkdownDocument, cells::Aim, edit::Landing, edit::moved, parse::Block,
+    DocumentEvent, MarkdownDocument,
+    cells::{self, Aim},
+    edit::Landing,
+    edit::moved,
+    parse::Block,
 };
 use crate::documents::{
     markdown::{file_tree, span, walk},
@@ -72,7 +76,8 @@ impl MarkdownDocument {
     /// Presses on block `ix`'s drawing, read as it was drawn.
     pub(super) fn on_point(&self, ix: usize, cx: &mut Context<Self>) -> OnPoint {
         let (document, parsed) = (cx.entity().downgrade(), self.parsed.clone());
-        let start = parsed.blocks[ix].range.start;
+        let block = parsed.blocks[ix].range.clone();
+        let start = block.start;
         Rc::new(move |pointed, button, window, cx| {
             // The drawing counts from its block's start.
             let at = match &pointed.place {
@@ -82,7 +87,10 @@ impl MarkdownDocument {
                     Some(lines_at(&parsed.text[start..], *from, text, *at).unwrap_or(*from))
                 }
                 Place::At(at) => Some(*at),
-                Place::Cell(_) | Place::Block => None,
+                // A cell's padding lands at its end.
+                Place::Cell(cell) => cells::find(&parsed.text, block.clone(), Aim::At(*cell))
+                    .map(|found| found.range.end - start),
+                Place::Block => None,
             }
             .map(|at| start + at);
             // A press in a table opens only its cell.
@@ -175,7 +183,13 @@ impl MarkdownDocument {
         let Some(open) = &self.open else {
             return log::warn!("markdown document: a press on a block closed since");
         };
-        let pressed = open.input.read(cx).offset_for_point(position);
+        let input = open.input.read(cx);
+        let pressed = input.offset_for_point(position);
+        // A cell's typed pipes shift its bytes.
+        let pressed = match open.cell {
+            Some(_) => cells::kept_at(input.text(), pressed),
+            None => pressed,
+        };
         let taken = self.snapshot(cx);
         let (full, offset, _) = taken.clone();
         self.pressed += 1;

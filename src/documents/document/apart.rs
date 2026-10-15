@@ -132,9 +132,9 @@ impl MarkdownDocument {
         // A cell reads as it writes back.
         let typed = match open.cell {
             Some(_) => {
-                let shift = |at: usize| cells::guarded(&typed[..at]).len();
+                let shift = |at: usize| cells::kept_at(typed, at);
                 picked = shift(picked.start)..shift(picked.end);
-                cells::guarded(typed)
+                cells::kept(typed)
             }
             None => typed.to_string(),
         };
@@ -156,7 +156,7 @@ impl MarkdownDocument {
         if let Some(open) = &self.open {
             let typed = open.input.read(cx).text();
             // Offsets read the escaped cell; its field holds it raw.
-            let raw = open.cell.is_some() && cells::guarded(typed) != typed;
+            let raw = open.cell.is_some() && cells::kept(typed) != typed;
             let end = offset + typed.len();
             let grown = (edits.iter().map(|(_, with)| with.len()).sum::<usize>() + end)
                 .checked_sub(edits.iter().map(|(range, _)| range.len()).sum::<usize>());

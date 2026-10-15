@@ -4,7 +4,11 @@ use std::ops::Range;
 
 use gpui::{Context, Window};
 
-use super::{MarkdownDocument, edit::Landing};
+use super::{
+    MarkdownDocument,
+    cells::{self, Aim},
+    edit::Landing,
+};
 use crate::documents::MarkdownMode;
 
 impl MarkdownDocument {
@@ -41,12 +45,22 @@ impl MarkdownDocument {
                     // Outside one block: its line.
                     return self.reveal(line(self, cx), window, cx);
                 };
-                let start = block.start;
-                self.open(Some(ix), Landing::End, window, cx);
+                // A match in a table opens its cell.
+                let text = self.editor.read(cx).text();
+                let landing = match cells::find(text, block.clone(), Aim::Byte(range.start)) {
+                    Some(cell)
+                        if cell.range.start <= range.start && range.end <= cell.range.end =>
+                    {
+                        Landing::Cell(Aim::At(cell.at))
+                    }
+                    Some(_) => return self.reveal(line(self, cx), window, cx),
+                    None => Landing::End,
+                };
+                self.open(Some(ix), landing, window, cx);
                 self.list.scroll_to_reveal_item(ix);
                 if let Some(open) = &self.open {
                     let input = open.input.clone();
-                    let inside = range.start - start..range.end - start;
+                    let inside = range.start - open.range.start..range.end - open.range.start;
                     input.update(cx, |input, cx| input.select(inside, cx));
                 }
             }
