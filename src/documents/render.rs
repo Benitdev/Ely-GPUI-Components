@@ -2,8 +2,8 @@ use std::{path::Path, rc::Rc, sync::Arc};
 
 use gpui::{
     AnyElement, App, ElementId, Entity, FontStyle, FontWeight, HighlightStyle, InteractiveText,
-    IntoElement, ParentElement, RenderOnce, SharedString, StrikethroughStyle, Styled, StyledText,
-    UnderlineStyle, Window, div, prelude::*,
+    IntoElement, ParentElement, Pixels, RenderOnce, SharedString, StrikethroughStyle, Styled,
+    StyledText, UnderlineStyle, Window, div, prelude::*, relative,
 };
 
 use super::{
@@ -16,7 +16,7 @@ use crate::{
     editor::{code_colors, code_colors_with},
     navigation::{Anchor, Sections},
     primitives::FocusRing as _,
-    theme::{ActiveTheme, Radius, TextSize},
+    theme::{ActiveTheme, Palette, Radius, TextSize},
     typography::{Latex, failed},
 };
 
@@ -101,6 +101,64 @@ pub(crate) struct Hooks<'a> {
     pub cell: Option<&'a OpenCell>,
 }
 
+/// Headings and strong text share one weight.
+const HEAVY: FontWeight = FontWeight::BOLD;
+
+/// How one inline style draws.
+fn highlight(style: &Style, colors: &Palette, rule: Pixels) -> HighlightStyle {
+    match style {
+        Style::Strong => HighlightStyle {
+            font_weight: Some(HEAVY),
+            ..HighlightStyle::default()
+        },
+        Style::Emphasis => HighlightStyle {
+            font_style: Some(FontStyle::Italic),
+            ..HighlightStyle::default()
+        },
+        Style::Strike => HighlightStyle {
+            strikethrough: Some(StrikethroughStyle {
+                thickness: rule,
+                color: Some(colors.fg_muted),
+            }),
+            ..HighlightStyle::default()
+        },
+        Style::Code | Style::Math => HighlightStyle {
+            background_color: Some(colors.sunken),
+            color: Some(if *style == Style::Math {
+                colors.syntax.function
+            } else {
+                colors.fg
+            }),
+            ..HighlightStyle::default()
+        },
+        Style::Link => HighlightStyle {
+            color: Some(colors.link),
+            underline: Some(UnderlineStyle {
+                thickness: rule,
+                color: Some(colors.link.opacity(0.4)),
+                wavy: false,
+            }),
+            ..HighlightStyle::default()
+        },
+        Style::Footnote => HighlightStyle {
+            color: Some(colors.fg_subtle),
+            ..HighlightStyle::default()
+        },
+        Style::Underline => HighlightStyle {
+            underline: Some(UnderlineStyle {
+                thickness: rule,
+                color: None,
+                wavy: false,
+            }),
+            ..HighlightStyle::default()
+        },
+        Style::Mark => HighlightStyle {
+            background_color: Some(colors.warning_subtle),
+            ..HighlightStyle::default()
+        },
+    }
+}
+
 /// Draws nodes under one owner's ids and hooks.
 struct Draw<'a> {
     id: &'a ElementId,
@@ -135,60 +193,7 @@ impl Draw<'_> {
         let styles: Vec<_> = inline
             .styles
             .iter()
-            .map(|(range, style)| {
-                let highlight = match style {
-                    Style::Strong => HighlightStyle {
-                        font_weight: Some(FontWeight::SEMIBOLD),
-                        ..HighlightStyle::default()
-                    },
-                    Style::Emphasis => HighlightStyle {
-                        font_style: Some(FontStyle::Italic),
-                        ..HighlightStyle::default()
-                    },
-                    Style::Strike => HighlightStyle {
-                        strikethrough: Some(StrikethroughStyle {
-                            thickness: rule,
-                            color: Some(colors.fg_muted),
-                        }),
-                        ..HighlightStyle::default()
-                    },
-                    Style::Code | Style::Math => HighlightStyle {
-                        background_color: Some(colors.sunken),
-                        color: Some(if *style == Style::Math {
-                            colors.syntax.function
-                        } else {
-                            colors.fg
-                        }),
-                        ..HighlightStyle::default()
-                    },
-                    Style::Link => HighlightStyle {
-                        color: Some(colors.link),
-                        underline: Some(UnderlineStyle {
-                            thickness: rule,
-                            color: Some(colors.link.opacity(0.4)),
-                            wavy: false,
-                        }),
-                        ..HighlightStyle::default()
-                    },
-                    Style::Footnote => HighlightStyle {
-                        color: Some(colors.fg_subtle),
-                        ..HighlightStyle::default()
-                    },
-                    Style::Underline => HighlightStyle {
-                        underline: Some(UnderlineStyle {
-                            thickness: rule,
-                            color: None,
-                            wavy: false,
-                        }),
-                        ..HighlightStyle::default()
-                    },
-                    Style::Mark => HighlightStyle {
-                        background_color: Some(colors.warning_subtle),
-                        ..HighlightStyle::default()
-                    },
-                };
-                (range.clone(), highlight)
-            })
+            .map(|(range, style)| (range.clone(), highlight(style, colors, rule)))
             .collect();
         let styled =
             StyledText::new(inline.text.clone()).with_highlights(crate::editor::stack(styles));
@@ -244,8 +249,8 @@ impl Draw<'_> {
                     .debug_selector(move || format!("markdown-heading-{ordinal}"))
                     .pt_2()
                     .text_size(size)
-                    .line_height(size * 1.3)
-                    .font_weight(FontWeight::BOLD)
+                    .line_height(relative(1.3))
+                    .font_weight(HEAVY)
                     .text_color(if *level == 6 {
                         colors.fg_muted
                     } else {
