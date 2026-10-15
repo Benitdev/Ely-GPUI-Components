@@ -187,7 +187,9 @@ impl MarkdownDocument {
         let now = (self.parsed.blocks.iter())
             .find(|block| block.range.start <= at && at <= block.range.end)
             .map(|block| self.drawn(block));
-        if written.is_some() && pressed.is_some() && now != pressed {
+        // A cell beside the written one keeps its place.
+        let beside = pointed.table && now.as_ref().is_some_and(|now| now.0 == TargetBlock::Table);
+        if written.is_some() && pressed.is_some() && now != pressed && !beside {
             return log::warn!("markdown document: the write-back changed the pressed block");
         }
         self.editor
@@ -220,8 +222,8 @@ impl MarkdownDocument {
         // A cell's typed pipes shift its bytes.
         let pressed = match open.cell {
             Some(_) => {
-                let closed = cells::closed(self.editor.read(cx).text(), open.range.end);
-                cells::kept_at(input.text(), pressed, closed)
+                let edges = cells::edges(self.editor.read(cx).text(), open.range.clone());
+                cells::kept_at(input.text(), pressed, edges)
             }
             None => pressed,
         };

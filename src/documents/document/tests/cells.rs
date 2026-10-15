@@ -241,3 +241,62 @@ fn a_right_press_on_the_open_cells_padding_points_at_its_end(cx: &mut TestAppCon
     );
     assert_eq!(opened(&document, cx), "alpha||", "the cell stays open");
 }
+
+#[gpui::test]
+fn the_caret_after_a_typed_pipe_reads_the_escaped_cell(cx: &mut TestAppContext) {
+    for (typed, column) in [("|中", 5), ("|x", 5)] {
+        let (document, cx) = open(WORDS, MarkdownMode::Visual, cx);
+        press_cell(0, 0, cx);
+        cx.simulate_keystrokes("backspace backspace backspace backspace backspace");
+        cx.simulate_input(typed);
+        let caret = document.read_with(cx, |document, cx| document.caret(cx));
+        assert_eq!(caret, (0, column), "{typed}");
+    }
+}
+
+#[gpui::test]
+fn emptied_bare_edge_cells_keep_the_table(cx: &mut TestAppContext) {
+    let cases = [
+        (0, 0, 5, "| | beta\n--- | ---\nc | d\n"),
+        (0, 1, 4, "alpha | |\n--- | ---\nc | d\n"),
+        (1, 0, 1, "alpha | beta\n--- | ---\n| | d\n"),
+    ];
+    for (row, column, chars, written) in cases {
+        let (document, cx) = open(BARE, MarkdownMode::Visual, cx);
+        press_cell(row, column, cx);
+        for _ in 0..chars {
+            cx.simulate_keystrokes("backspace");
+        }
+        cx.simulate_keystrokes("escape");
+        assert_eq!(text(&document, cx), written);
+        press_cell(1, 1, cx);
+        assert_eq!(opened(&document, cx), "d", "{written:?} is still a table");
+    }
+}
+
+#[gpui::test]
+fn a_right_press_beside_an_edited_cell_points(cx: &mut TestAppContext) {
+    let (document, cx) = open(WORDS, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    press_cell(0, 0, cx);
+    cx.simulate_input("X");
+    press_cell_with(0, 1, MouseButton::Right, cx);
+    let at = heard.borrow().last().expect("heard").at;
+    let written = "| alphaX | beta |\n| --- | --- |\n| c | d |\n";
+    assert_eq!(text(&document, cx), written);
+    assert_eq!(at, written.find("beta").expect("the cell") + 4);
+}
+
+#[gpui::test]
+fn tab_in_a_long_document_opens_the_next_cell_once_read(cx: &mut TestAppContext) {
+    let long = format!("{WORDS}\n```\n{}\n```\n", "x".repeat(super::super::AT_ONCE));
+    let (document, cx) = open(&long, MarkdownMode::Visual, cx);
+    document.update_in(cx, |document, window, cx| document.reveal(0, window, cx));
+    super::frames(cx);
+    press_cell(0, 0, cx);
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("tab");
+    cx.run_until_parked();
+    assert_eq!(opened(&document, cx), "beta");
+    assert!(text(&document, cx).starts_with("| alphaX | beta |"));
+}

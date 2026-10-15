@@ -109,6 +109,8 @@ pub struct MarkdownDocument {
     writes: usize,
     /// A match asked before its text was read; its version.
     showing: Option<(Range<usize>, u64)>,
+    /// A block asked open before its text was read.
+    waiting: Option<(Option<usize>, edit::Landing, u64)>,
     look: DocumentLook,
     /// Typing in the open block, counted.
     typed: u64,
@@ -181,6 +183,7 @@ impl MarkdownDocument {
             asks: 0,
             writes: 0,
             showing: None,
+            waiting: None,
             look: DocumentLook::default(),
             typed: 0,
             centered: None,
@@ -246,7 +249,9 @@ impl MarkdownDocument {
         let written = match open.append {
             true if typed.is_empty() => String::new(),
             true => format!("{}{typed}", joint(text)),
-            false if open.cell.is_some() => cells::kept(typed, cells::closed(text, open.range.end)),
+            false if open.cell.is_some() => {
+                cells::kept(typed, cells::edges(text, open.range.clone()))
+            }
             false => typed.to_string(),
         };
         [&text[..open.range.start], &written, &text[open.range.end..]].concat()

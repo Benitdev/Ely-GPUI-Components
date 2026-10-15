@@ -157,32 +157,55 @@ fn guarded(typed: &str) -> String {
     out
 }
 
-/// Whether a pipe follows the cell source ending at `end`.
-pub(super) fn closed(text: &str, end: usize) -> bool {
-    text[end..].starts_with('|')
+/// What borders a cell's source in its row.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Edges {
+    /// A pipe follows at once.
+    closed: bool,
+    /// No pipe before it on its line.
+    first: bool,
+    /// No pipe after it on its line.
+    last: bool,
 }
 
-/// `typed` as a cell keeps it, a `closed` pipe intact.
-pub(super) fn kept(typed: &str, closed: bool) -> String {
+/// The borders of the cell source at `range` of `text`.
+pub(super) fn edges(text: &str, range: Range<usize>) -> Edges {
+    let line = text[..range.start].rfind('\n').map_or(0, |at| at + 1);
+    let end = (text[range.end..].find('\n')).map_or(text.len(), |at| range.end + at);
+    let (before, after) = (&text[line..range.start], &text[range.end..end]);
+    Edges {
+        closed: after.starts_with('|'),
+        first: !before.contains('|'),
+        last: !after.contains('|'),
+    }
+}
+
+/// `typed` as a cell keeps it, its row's pipes intact.
+pub(super) fn kept(typed: &str, edges: Edges) -> String {
     let mut out = guarded(typed);
     let slashes = out.len() - out.trim_end_matches('\\').len();
-    if closed && slashes % 2 == 1 {
+    if edges.closed && slashes % 2 == 1 {
         out.push('\\');
+    }
+    // An emptied bare edge cell keeps its column.
+    if out.is_empty() && (edges.first || edges.last) {
+        out.push('|');
     }
     out
 }
 
-/// Byte `at` of `typed` within `kept(typed, closed)`.
-pub(super) fn kept_at(typed: &str, at: usize, closed: bool) -> usize {
+/// Byte `at` of `typed` within `kept(typed, edges)`.
+pub(super) fn kept_at(typed: &str, at: usize, edges: Edges) -> usize {
     match at == typed.len() {
-        true => kept(typed, closed).len(),
+        true if typed.is_empty() && !edges.first => 0,
+        true => kept(typed, edges).len(),
         false => guarded(&typed[..at]).len(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Aim, CellAt, Move, beside, closed, find, guarded, kept, kept_at};
+    use super::{Aim, CellAt, Edges, Move, beside, edges, find, guarded, kept, kept_at};
 
     const TABLE: &str = "intro\n\n| a | **b** |\n| --- | --- |\n| c |  |\n| d | e |\n";
 
@@ -242,36 +265,74 @@ mod tests {
         assert_eq!(guarded("a\\\\|b"), "a\\\\\\|b");
     }
 
+    /// Cell `(row, column)` of `text`'s one table, written as `typed`.
+    fn write(text: &str, row: usize, column: usize, typed: &str) -> String {
+        let block = 0..text.len() - 1;
+        let cell = find(text, block, Aim::At(at(row, column))).expect("a cell");
+        let kept = kept(typed, edges(text, cell.range.clone()));
+        [&text[..cell.range.start], &kept, &text[cell.range.end..]].concat()
+    }
+
+    /// The source of each cell of `text`'s one table.
+    fn grid(text: &str) -> Vec<Vec<String>> {
+        let block = 0..text.len() - 1;
+        (0..)
+            .map_while(|row| {
+                let cells: Vec<String> = (0..)
+                    .map_while(|column| {
+                        let cell = find(text, block.clone(), Aim::At(at(row, column)))?;
+                        Some(text[cell.range].to_string())
+                    })
+                    .collect();
+                (!cells.is_empty()).then_some(cells)
+            })
+            .collect()
+    }
+
     #[test]
     fn a_closing_backslash_keeps_the_next_pipe() {
-        assert_eq!(kept("a\\", true), "a\\\\");
-        assert_eq!(kept("a\\\\", true), "a\\\\");
-        assert_eq!(kept_at("a\\", 2, true), 3);
-        assert_eq!(kept_at("a\\b", 2, true), 2);
-        let text = "|a|b|\n|---|---|\n|c|d|\n";
-        let cell = find(text, 0..text.len() - 1, Aim::First).expect("a cell");
-        let shut = closed(text, cell.range.end);
-        let written = [
-            &text[..cell.range.start],
-            &kept("a\\", shut),
-            &text[cell.range.end..],
-        ]
-        .concat();
-        let b = find(&written, 0..written.len() - 1, Aim::At(at(0, 1))).expect("still a table");
-        assert_eq!(&written[b.range], "b");
+        let shut = Edges {
+            closed: true,
+            first: false,
+            last: false,
+        };
+        assert_eq!(kept("a\\", shut), "a\\\\");
+        assert_eq!(kept("a\\\\", shut), "a\\\\");
+        assert_eq!(kept_at("a\\", 2, shut), 3);
+        assert_eq!(kept_at("a\\b", 2, shut), 2);
+        let written = write("|a|b|\n|---|---|\n|c|d|\n", 0, 0, "a\\");
+        assert_eq!(grid(&written)[0], ["a\\\\", "b"]);
     }
 
     #[test]
     fn a_backslash_before_padding_stays_single() {
         let text = "| a\\ | b |\n| --- | --- |\n";
-        let cell = find(text, 0..text.len() - 1, Aim::First).expect("a cell");
-        assert_eq!(&text[cell.range.clone()], "a\\");
-        assert!(!closed(text, cell.range.end));
-        assert_eq!(kept("a\\", false), "a\\");
+        assert_eq!(write(text, 0, 0, "a\\"), text);
+    }
+
+    #[test]
+    fn an_emptied_bare_edge_cell_keeps_its_column() {
+        let text = "alpha | beta\n--- | ---\nc | d\n";
+        let rows = |written: &str| grid(written).iter().map(Vec::len).collect::<Vec<_>>();
+        for (row, column) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            let written = write(text, row, column, "");
+            assert_eq!(rows(&written), [2, 2], "{written:?}");
+            assert_eq!(grid(&written)[row][column], "", "{written:?}");
+        }
+        assert_eq!(grid(&write(text, 1, 0, ""))[1], ["", "d"]);
+        let empty = edges(text, 0..5);
+        assert_eq!(kept_at("", 0, empty), 1, "past its new pipe");
+        let last = edges(text, 8..12);
+        assert_eq!(kept_at("", 0, last), 0, "before its new pipe");
     }
 
     #[test]
     fn typed_pipes_shift_later_bytes() {
-        assert_eq!(kept_at("||x", 2, false), 4);
+        let open = Edges {
+            closed: false,
+            first: false,
+            last: false,
+        };
+        assert_eq!(kept_at("||x", 2, open), 4);
     }
 }

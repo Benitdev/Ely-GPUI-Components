@@ -27,6 +27,17 @@ pub(super) enum Landing {
     Cell(Aim),
 }
 
+impl Landing {
+    /// The same landing after `edit`, if it survives.
+    fn moved(self, edit: &Option<(Range<usize>, usize)>) -> Option<Self> {
+        Some(match self {
+            Self::At(at) => Self::At(moved(at, edit)?),
+            Self::Cell(Aim::Byte(at)) => Self::Cell(Aim::Byte(moved(at, edit)?)),
+            other => other,
+        })
+    }
+}
+
 /// Where byte `at` lies after `edit`, if it survives.
 pub(super) fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<usize> {
     match edit {
@@ -69,6 +80,7 @@ impl MarkdownDocument {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.waiting = None;
         let pressed = match ix.map(|ix| self.parsed.blocks.get(ix)) {
             Some(None) => return log::warn!("markdown document: a press on a block read away"),
             pressed => pressed.flatten().map(|block| block.range.start),
@@ -76,6 +88,19 @@ impl MarkdownDocument {
         let written = self.commit(cx);
         if written.is_some() {
             self.reparse(true, cx);
+        }
+        if !self.read_now(cx) && written.is_some() {
+            // A long write-back reads first; it opens after.
+            let start = match pressed {
+                None => Some(None),
+                Some(start) => moved(start, &written).map(Some),
+            };
+            let (Some(start), Some(landing)) = (start, landing.moved(&written)) else {
+                return log::warn!("markdown document: the pressed block was written over");
+            };
+            log::info!("markdown document: a block opens once its text is read");
+            self.waiting = Some((start, landing, self.edits + self.writes as u64));
+            return;
         }
         if !self.read_now(cx) {
             return log::warn!("markdown document: pressed while the text is read again");
@@ -188,6 +213,25 @@ impl MarkdownDocument {
         cx.notify();
     }
 
+    /// A block asked open before its text was read, now opened.
+    pub(super) fn open_waiting(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.waiting.is_none() || !self.read_now(cx) {
+            return;
+        }
+        let (start, landing, expected) = self.waiting.take().expect("checked above");
+        if self.edits != expected {
+            return log::info!("markdown document: a waiting block lapsed with its text");
+        }
+        let ix = match start {
+            None => None,
+            Some(start) => match (self.parsed.blocks.iter()).position(|b| b.range.start == start) {
+                Some(ix) => Some(ix),
+                None => return log::warn!("markdown document: the waiting block was read away"),
+            },
+        };
+        self.open(ix, landing, window, cx);
+    }
+
     /// Takes the focus a dropped block still holds.
     pub(super) fn take_orphan(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(orphan) = self.orphan.take() else {
@@ -231,15 +275,15 @@ impl MarkdownDocument {
         let typed = open.input.read(cx).text().to_string();
         let caret = open.input.read(cx).cursor();
         let text = self.editor.read(cx).text();
-        let closed = cells::closed(text, open.range.end);
+        let edges = cells::edges(text, open.range.clone());
         let (lead, written) = match open.append {
             true if typed.is_empty() => return None,
             true => (joint(text).len(), format!("{}{typed}", joint(text))),
-            false if open.cell.is_some() => (0, cells::kept(&typed, closed)),
+            false if open.cell.is_some() => (0, cells::kept(&typed, edges)),
             false => (0, typed.clone()),
         };
         let caret = match open.cell {
-            Some(_) => cells::kept_at(&typed, caret, closed),
+            Some(_) => cells::kept_at(&typed, caret, edges),
             None => caret,
         };
         let at = open.range.start + lead + caret;

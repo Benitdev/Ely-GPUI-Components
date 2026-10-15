@@ -1,6 +1,6 @@
 use gpui::{App, Context, Focusable as _, ListOffset, ScrollStrategy, Window, px};
 
-use super::{MarkdownDocument, Placement};
+use super::{MarkdownDocument, Placement, cells};
 use crate::documents::{MarkdownMode, modes::joint};
 
 /// Line and column, from zero, of byte `at` in `text`.
@@ -25,7 +25,15 @@ impl MarkdownDocument {
             true => joint(editor.text()).len(),
             false => 0,
         };
-        point(&self.text(cx), open.range.start + joined + input.cursor())
+        // A cell's caret reads its escaped write-back.
+        let cursor = match open.cell {
+            Some(_) => {
+                let edges = cells::edges(editor.text(), open.range.clone());
+                cells::kept_at(input.text(), input.cursor(), edges)
+            }
+            None => input.cursor(),
+        };
+        point(&self.text(cx), open.range.start + joined + cursor)
     }
 
     /// The selected Markdown: the source's, or the open block's.
