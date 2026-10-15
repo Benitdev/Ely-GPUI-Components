@@ -72,7 +72,7 @@ fn each_heading_level_stands_above_the_next(cx: &mut TestAppContext) {
         cx.debug_bounds(selector).expect("drawn").size.height
     };
     let heights: Vec<_> = (0..5).map(high).collect();
-    // Level 5 is the body's size; each above it is taller.
+    // Level 5 is body size; each above is taller.
     assert!(
         heights.windows(2).all(|pair| pair[0] > pair[1]),
         "{heights:?}"
