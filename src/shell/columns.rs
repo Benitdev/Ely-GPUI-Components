@@ -149,7 +149,7 @@ impl RenderOnce for ColumnShell {
                     items(
                         column.id.clone(),
                         column.leading,
-                        title(column.title, cx),
+                        title(column.id.clone(), column.title, window, cx),
                         column.actions,
                     )
                     .min_w(cx.theme().control_height(ControlSize::Lg))
@@ -212,7 +212,7 @@ fn header(id: ElementId, window: &mut Window, cx: &mut App) -> gpui::Stateful<gp
 fn items(
     id: ElementId,
     leading: SmallVec<[AnyElement; 2]>,
-    title: gpui::Div,
+    title: gpui::Stateful<gpui::Div>,
     actions: SmallVec<[AnyElement; 2]>,
 ) -> gpui::Div {
     let group = || div().flex_none().flex().items_center().gap_2();
@@ -224,16 +224,24 @@ fn items(
             .items_center()
             .gap_2()
             .overflow_x_scroll()
+            // Windows takes a drag region under controls as caption.
+            .occlude()
             .child(group().children(leading))
             .child(title)
             .child(group().children(actions)),
     )
 }
 
-/// The title, adding nothing to the least width; a spacer without one.
-fn title(title: Option<SharedString>, cx: &App) -> gpui::Div {
+/// Title or spacer: drags the window, adds no width.
+fn title(
+    id: ElementId,
+    title: Option<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) -> gpui::Stateful<gpui::Div> {
+    let region = drag_region((id, "title"), window, cx);
     let theme = cx.theme();
-    div().flex_1().min_w_0().h_full().relative().child(
+    region.flex_1().min_w_0().h_full().relative().child(
         div()
             .absolute()
             .inset_0()

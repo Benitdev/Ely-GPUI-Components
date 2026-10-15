@@ -102,11 +102,13 @@ impl WindowControls {
 
 impl RenderOnce for WindowControls {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        match self.platform.unwrap_or(cx.theme().platform) {
+        let controls = match self.platform.unwrap_or(cx.theme().platform) {
             Platform::Mac => traffic_lights(self.id, self.on_close, window, cx),
             Platform::Windows => caption_buttons(self.id, self.on_close, window, cx),
             Platform::Linux => round_buttons(self.id, self.on_close, window, cx),
-        }
+        };
+        // Windows takes a drag region under controls as caption.
+        controls.occlude()
     }
 }
 
@@ -115,7 +117,7 @@ fn traffic_lights(
     on_close: Option<OnClose>,
     window: &mut Window,
     cx: &mut App,
-) -> AnyElement {
+) -> Stateful<Div> {
     let theme = cx.theme();
     let colors = &theme.colors;
     let active = window.is_window_active();
@@ -154,7 +156,6 @@ fn traffic_lights(
                 .on_click(move |_, window, cx| run(control, on_close.as_ref(), window, cx))
                 .child(glyph)
         }))
-        .into_any_element()
 }
 
 fn caption_buttons(
@@ -162,7 +163,7 @@ fn caption_buttons(
     on_close: Option<OnClose>,
     window: &mut Window,
     cx: &mut App,
-) -> AnyElement {
+) -> Stateful<Div> {
     let theme = cx.theme();
     let colors = &theme.colors;
     let maximize = if window.is_maximized() {
@@ -207,7 +208,6 @@ fn caption_buttons(
                         .group_hover_color(group, glyph),
                 )
         }))
-        .into_any_element()
 }
 
 fn round_buttons(
@@ -215,7 +215,7 @@ fn round_buttons(
     on_close: Option<OnClose>,
     window: &mut Window,
     cx: &mut App,
-) -> AnyElement {
+) -> Stateful<Div> {
     let theme = cx.theme();
     let colors = &theme.colors;
     let offered = window.window_controls();
@@ -224,32 +224,38 @@ fn round_buttons(
         (Control::Maximize, IconName::Square, offered.maximize),
         (Control::Close, IconName::X, true),
     ];
-    div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap_2()
-        .children(
-            buttons
-                .into_iter()
-                .filter(|(_, _, shown)| *shown)
-                .map(|(control, icon, _)| {
-                    let on_close = on_close.clone();
-                    div()
-                        .id(SharedString::from(format!("{control:?}")))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .size(theme.control_height(ControlSize::Sm))
-                        .rounded_full()
-                        .bg(colors.hover)
-                        .hover(|style| style.bg(colors.active))
-                        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-                        .on_click(move |_, window, cx| run(control, on_close.as_ref(), window, cx))
-                        .child(Icon::new(icon).size(IconSize::Xs).color(colors.fg))
-                }),
-        )
-        .into_any_element()
+    div().id(id).flex().items_center().gap_2().children(
+        buttons
+            .into_iter()
+            .filter(|(_, _, shown)| *shown)
+            .map(|(control, icon, _)| {
+                let on_close = on_close.clone();
+                div()
+                    .id(SharedString::from(format!("{control:?}")))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(theme.control_height(ControlSize::Sm))
+                    .rounded_full()
+                    .bg(colors.hover)
+                    .hover(|style| style.bg(colors.active))
+                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .on_click(move |_, window, cx| run(control, on_close.as_ref(), window, cx))
+                    .child(Icon::new(icon).size(IconSize::Xs).color(colors.fg))
+            }),
+    )
+}
+
+/// A slot's controls, occluding the drag region beneath.
+fn slot(items: SmallVec<[AnyElement; 2]>) -> Option<Div> {
+    (!items.is_empty()).then(|| {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .occlude()
+            .children(items)
+    })
 }
 
 /// Whether the system draws the window controls, and whose manner they take.
@@ -404,7 +410,7 @@ impl RenderOnce for TitleBar {
                     false => start.pl_3(),
                 })
                 .children(leading)
-                .children(self.leading),
+                .children(slot(self.leading)),
         );
         let end = div().flex().justify_end().child(
             div()
@@ -412,7 +418,7 @@ impl RenderOnce for TitleBar {
                 .items_center()
                 .gap_2()
                 .when(centered, |end| end.pr_2())
-                .children(self.actions)
+                .children(slot(self.actions))
                 .children(trailing.map(|controls| {
                     div()
                         .flex_none()

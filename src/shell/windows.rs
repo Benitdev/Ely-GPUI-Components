@@ -212,7 +212,7 @@ impl MiniWindow {
 
 impl Render for MiniWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let bar = drag_region("mini-bar", window, cx);
+        let drag = drag_region("mini-bar", window, cx);
         let theme = cx.theme();
         let back = self.back;
         div()
@@ -225,7 +225,8 @@ impl Render for MiniWindow {
             .font_family(theme.font_family.clone())
             .child(self.view.clone())
             .child(
-                bar.absolute()
+                div()
+                    .absolute()
                     .top_0()
                     .left_0()
                     .right_0()
@@ -241,7 +242,14 @@ impl Render for MiniWindow {
                     .text_color(theme.colors.fg_muted)
                     .invisible()
                     .group_hover("mini-window", |style| style.visible())
-                    .child(div().flex_1().child(self.title.clone()))
+                    // Only the title drags: Windows takes the region as caption.
+                    .child(
+                        drag.flex_1()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .child(self.title.clone()),
+                    )
                     .when_some(back, |bar, back| {
                         bar.child(
                             IconButton::new("mini-expand", IconName::Maximize2)
