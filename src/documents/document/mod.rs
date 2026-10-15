@@ -116,6 +116,8 @@ pub struct MarkdownDocument {
     focus: FocusHandle,
     /// A secondary press took focus.
     pointing: bool,
+    /// The latest press; older lookups lapse.
+    pressed: u64,
     on_link: Option<OnLink>,
     on_heading: Option<OnHeading>,
     _subscriptions: Vec<Subscription>,
@@ -182,6 +184,7 @@ impl MarkdownDocument {
             room: Pixels::ZERO,
             focus,
             pointing: false,
+            pressed: 0,
             on_link: None,
             on_heading: Some(on_heading),
             _subscriptions: subscriptions,

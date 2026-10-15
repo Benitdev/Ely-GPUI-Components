@@ -111,6 +111,7 @@ impl MarkdownDocument {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.pressed += 1;
         let block = match ix.map(|ix| self.parsed.blocks.get(ix)) {
             Some(None) => return log::warn!("markdown document: a press on a block read away"),
             block => block.flatten(),
@@ -170,12 +171,17 @@ impl MarkdownDocument {
         let pressed = open.input.read(cx).offset_for_point(position);
         let taken = self.snapshot(cx);
         let (full, offset, _) = taken.clone();
+        self.pressed += 1;
+        let press = self.pressed;
         cx.spawn(async move |document, cx| {
             let target = cx
                 .background_spawn(async move { target_at(&full, offset + pressed) })
                 .await;
             document
                 .update(cx, |document, cx| {
+                    if document.pressed != press {
+                        return log::info!("markdown document: a newer press came first");
+                    }
                     if document.open.is_none() || document.snapshot(cx) != taken {
                         return log::info!("markdown document: the pressed block changed first");
                     }
@@ -291,14 +297,7 @@ fn drawn_link(nodes: &[&Node], text: &str, at: usize) -> Option<Option<String>> 
         }
         _ => None,
     })?;
-    let drawn = (0..inline.text.len())
-        .filter(|ix| inline.text.is_char_boundary(*ix))
-        .rev()
-        .find(|ix| {
-            inline
-                .source_at(text, *ix)
-                .is_some_and(|source| source <= at)
-        })?;
+    let drawn = inline.drawn_at(text, at)?;
     let link = (inline.links.iter()).find(|(range, _)| range.contains(&drawn));
     Some(link.map(|(_, url)| url.clone()))
 }

@@ -162,6 +162,30 @@ fn a_press_in_a_selection_reads_the_pressed_link(cx: &mut TestAppContext) {
     assert_eq!(link.as_deref(), Some("https://b.test"));
 }
 
+#[gpui::test]
+fn only_the_latest_press_in_an_open_block_is_heard(cx: &mut TestAppContext) {
+    let (document, cx) = open(TWO, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    press_on(0, 1, MouseButton::Left, cx);
+    select_open(&document, 0..43, cx);
+    let spots = document.read_with(cx, |document, cx| {
+        let input = document.open.as_ref().expect("open").input.read(cx);
+        ["one", "two"].map(|word| {
+            let at = TWO.find(word).expect("word") + 1;
+            input.bounds_for_range(at..at + 1)[0].center()
+        })
+    });
+    document.update(cx, |document, cx| {
+        document.point_open(spots[0], cx);
+        document.point_open(spots[1], cx);
+    });
+    cx.run_until_parked();
+    let links: Vec<_> = (heard.borrow().iter())
+        .map(|target| target.link.clone())
+        .collect();
+    assert_eq!(links, [Some("https://b.test".to_string())]);
+}
+
 const PICTURES: &str = "x ![a](a.png) ![b](b.png)\n";
 
 #[gpui::test]

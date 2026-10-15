@@ -196,6 +196,25 @@ impl Inline {
         // Unreadable text lands at its start.
         Some(span.start + align(drawn, written, *escapes, at - start).unwrap_or(0))
     }
+
+    /// The last drawn byte written by source byte `at`.
+    pub(crate) fn drawn_at(&self, source: &str, at: usize) -> Option<usize> {
+        (0..self.sources.len()).rev().find_map(|piece| {
+            let (start, span, escapes) = &self.sources[piece];
+            if span.start > at {
+                return None;
+            }
+            let end = (self.sources.get(piece + 1)).map_or(self.text.len(), |(next, ..)| *next);
+            let drawn = self.text.get(*start..end.max(*start))?;
+            let written = source.get(span.clone())?;
+            // Unreadable text lands at its start.
+            let mut places = aligned(drawn, written, *escapes).into_iter();
+            (drawn.char_indices().rev())
+                .map(|(byte, _)| (byte, places.next().map_or(0, |(_, place)| place)))
+                .find(|(_, place)| span.start + place <= at)
+                .map(|(byte, _)| start + byte)
+        })
+    }
 }
 
 /// A source char as read, and where it was written.
@@ -285,11 +304,21 @@ fn align(drawn: &str, written: &str, escapes: Escapes, at: usize) -> Option<usiz
     if at >= drawn.len() {
         return Some(written.len());
     }
+    (aligned(drawn, written, escapes).into_iter())
+        .find(|(byte, _)| *byte == at)
+        .map(|(_, place)| place)
+}
+
+/// Drawn chars from the end and where each was written.
+fn aligned(drawn: &str, written: &str, escapes: Escapes) -> Vec<(usize, usize)> {
     let source = read(written, escapes);
     let mut j = source.len();
+    let mut out = Vec::new();
     for (byte, d) in drawn.char_indices().rev() {
         let found = loop {
-            let s = source[..j].last()?;
+            let Some(s) = source[..j].last() else {
+                return out;
+            };
             if d == s.ch {
                 j -= 1;
                 break s.at;
@@ -307,27 +336,52 @@ fn align(drawn: &str, written: &str, escapes: Escapes, at: usize) -> Option<usiz
                 j -= 1;
                 continue;
             }
-            return None;
+            return out;
         };
-        if byte == at {
-            return Some(found);
-        }
+        out.push((byte, found));
     }
-    None
+    out
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::{Reader, tree};
+    use super::super::{Inline, Reader, tree};
 
-    /// The source byte under drawn text in the first paragraph.
-    fn under(source: &str, drawn: &str) -> usize {
+    /// The first paragraph, as drawn.
+    fn first(source: &str) -> Inline {
         let root = tree(source);
         let reader = Reader::new(source, &root);
         let paragraph = &root.children().expect("blocks")[0];
-        let inline = reader.inline(paragraph.children().expect("inlines"));
+        reader.inline(paragraph.children().expect("inlines"))
+    }
+
+    /// The source byte under drawn text in the first paragraph.
+    fn under(source: &str, drawn: &str) -> usize {
+        let inline = first(source);
         let at = inline.text.find(drawn).expect("drawn");
         inline.source_at(source, at).expect("a piece")
+    }
+
+    #[test]
+    fn a_source_byte_reads_back_to_its_drawn_byte() {
+        let source = "Say **bold** and \\*x";
+        let inline = first(source);
+        let bold = source.find("bold").unwrap();
+        assert_eq!(inline.drawn_at(source, bold), inline.text.find("bold"));
+        let mark = source.find("**").unwrap();
+        assert_eq!(inline.drawn_at(source, mark), inline.text.find(' '));
+        let star = source.find("*x").unwrap();
+        assert_eq!(inline.drawn_at(source, star), inline.text.find('*'));
+    }
+
+    #[test]
+    fn a_long_paragraph_reads_back_in_one_pass() {
+        let source = "x".repeat(40_000);
+        let inline = first(&source);
+        let started = std::time::Instant::now();
+        assert_eq!(inline.drawn_at(&source, 5), Some(5));
+        let took = started.elapsed();
+        assert!(took.as_millis() < 500, "took {took:?}");
     }
 
     #[test]
