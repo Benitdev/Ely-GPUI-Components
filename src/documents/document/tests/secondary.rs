@@ -176,8 +176,8 @@ fn only_the_latest_press_in_an_open_block_is_heard(cx: &mut TestAppContext) {
         })
     });
     document.update(cx, |document, cx| {
-        document.point_open(spots[0], cx);
-        document.point_open(spots[1], cx);
+        document.point_open(Some(spots[0]), cx);
+        document.point_open(Some(spots[1]), cx);
     });
     cx.run_until_parked();
     let links: Vec<_> = (heard.borrow().iter())

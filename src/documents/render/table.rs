@@ -59,24 +59,21 @@ impl Draw<'_> {
                     cell.font_weight(FontWeight::MEDIUM)
                         .text_color(colors.fg_muted)
                 });
-            match open {
-                // Presses in the open cell stay with its field.
-                Some(field) => drawn
-                    .child(div().w_full().child(field))
+            let inside = match open {
+                // Presses on the open field stay with it.
+                Some(field) => div()
+                    .w_full()
+                    .child(field)
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation()),
-                None => self.pressed_cell(
-                    drawn.child(
-                        div()
-                            .max_w_full()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .children(self.nodes(blocks, cx)),
-                    ),
-                    at,
-                ),
-            }
+                None => div()
+                    .max_w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .children(self.nodes(blocks, cx)),
+            };
+            self.pressed_cell(drawn.child(inside), at)
         };
         div()
             .flex()

@@ -31,7 +31,7 @@ pub(super) enum Landing {
 pub(super) fn moved(at: usize, edit: &Option<(Range<usize>, usize)>) -> Option<usize> {
     match edit {
         None => Some(at),
-        Some((replaced, _)) if at < replaced.start => Some(at),
+        Some((replaced, _)) if at <= replaced.start => Some(at),
         Some((replaced, written)) if at >= replaced.end => Some(at - replaced.len() + written),
         Some(_) => None,
     }
@@ -231,14 +231,15 @@ impl MarkdownDocument {
         let typed = open.input.read(cx).text().to_string();
         let caret = open.input.read(cx).cursor();
         let text = self.editor.read(cx).text();
+        let closed = cells::closed(text, open.range.end);
         let (lead, written) = match open.append {
             true if typed.is_empty() => return None,
             true => (joint(text).len(), format!("{}{typed}", joint(text))),
-            false if open.cell.is_some() => (0, cells::kept(&typed)),
+            false if open.cell.is_some() => (0, cells::kept(&typed, closed)),
             false => (0, typed.clone()),
         };
         let caret = match open.cell {
-            Some(_) => cells::kept_at(&typed, caret),
+            Some(_) => cells::kept_at(&typed, caret, closed),
             None => caret,
         };
         let at = open.range.start + lead + caret;
@@ -303,6 +304,7 @@ mod tests {
         let edit = Some((2..6, 9));
         assert_eq!(super::moved(10, &edit), Some(15));
         assert_eq!(super::moved(1, &edit), Some(1), "before stays");
+        assert_eq!(super::moved(2, &edit), Some(2), "its start stays");
         assert_eq!(super::moved(3, &edit), None, "inside is gone");
         assert_eq!(super::moved(7, &None), Some(7));
     }

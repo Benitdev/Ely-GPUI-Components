@@ -1,6 +1,6 @@
-use std::rc::Rc;
+use std::{ops::Range, rc::Rc};
 
-use gpui::{AppContext as _, Context, MouseButton, Pixels, Point, Window};
+use gpui::{AppContext as _, Context, Focusable as _, MouseButton, Pixels, Point, Window};
 use markdown::mdast;
 
 use super::{
@@ -12,7 +12,7 @@ use super::{
 };
 use crate::documents::{
     markdown::{file_tree, span, walk},
-    render::{OnPoint, Place, Pointed},
+    render::{CellAt, OnPoint, Place, Pointed},
     tree::{Node, Reader, alert, is_toc, lines_at},
 };
 
@@ -102,13 +102,42 @@ impl MarkdownDocument {
             };
             let ix = Some(ix);
             document
-                .update(cx, |document, cx| match button {
-                    MouseButton::Left => document.open(ix, landing, window, cx),
-                    MouseButton::Right => document.point(ix, at, pointed, window, cx),
-                    _ => {}
+                .update(cx, |document, cx| {
+                    // The open cell's padding keeps its typing.
+                    let open = match pointed.place {
+                        Place::Cell(cell) => document.open_cell(&block) == Some(cell),
+                        _ => false,
+                    };
+                    match (button, open) {
+                        (MouseButton::Left, true) => document.cell_end(window, cx),
+                        (MouseButton::Right, true) => document.point_open(None, cx),
+                        (MouseButton::Left, false) => document.open(ix, landing, window, cx),
+                        (MouseButton::Right, false) => document.point(ix, at, pointed, window, cx),
+                        _ => {}
+                    }
                 })
                 .expect("a block's drawing lives in its document");
         })
+    }
+
+    /// The cell open in `block`, if any.
+    fn open_cell(&self, block: &Range<usize>) -> Option<CellAt> {
+        let open = self.open.as_ref()?;
+        let inside = block.start <= open.range.start && open.range.end <= block.end;
+        open.cell.filter(|_| inside)
+    }
+
+    /// Caret to the open cell's end.
+    fn cell_end(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(open) = &self.open else {
+            return;
+        };
+        let input = open.input.clone();
+        input.update(cx, |input, cx| {
+            let end = input.text().len();
+            input.select(end..end, cx);
+        });
+        window.focus(&input.focus_handle(cx), cx);
     }
 
     /// A block's kind, text and what it draws.
@@ -178,16 +207,22 @@ impl MarkdownDocument {
         cx.notify();
     }
 
-    /// A right press at `position`; the open block stays open.
-    pub(super) fn point_open(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) {
+    /// A right press at `position`, else at the field's end.
+    pub(super) fn point_open(&mut self, position: Option<Point<Pixels>>, cx: &mut Context<Self>) {
         let Some(open) = &self.open else {
             return log::warn!("markdown document: a press on a block closed since");
         };
         let input = open.input.read(cx);
-        let pressed = input.offset_for_point(position);
+        let pressed = match position {
+            Some(position) => input.offset_for_point(position),
+            None => input.text().len(),
+        };
         // A cell's typed pipes shift its bytes.
         let pressed = match open.cell {
-            Some(_) => cells::kept_at(input.text(), pressed),
+            Some(_) => {
+                let closed = cells::closed(self.editor.read(cx).text(), open.range.end);
+                cells::kept_at(input.text(), pressed, closed)
+            }
             None => pressed,
         };
         let taken = self.snapshot(cx);

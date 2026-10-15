@@ -246,7 +246,7 @@ impl MarkdownDocument {
         let written = match open.append {
             true if typed.is_empty() => String::new(),
             true => format!("{}{typed}", joint(text)),
-            false if open.cell.is_some() => cells::kept(typed),
+            false if open.cell.is_some() => cells::kept(typed, cells::closed(text, open.range.end)),
             false => typed.to_string(),
         };
         [&text[..open.range.start], &written, &text[open.range.end..]].concat()

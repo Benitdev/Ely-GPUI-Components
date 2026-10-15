@@ -171,3 +171,73 @@ fn a_right_press_on_a_cell_points_at_it(cx: &mut TestAppContext) {
     let at = heard.borrow().last().expect("heard").at;
     assert_eq!(at, WORDS.rfind(" d").expect("the cell") + 2);
 }
+
+#[gpui::test]
+fn an_untouched_backslash_cell_keeps_its_bytes(cx: &mut TestAppContext) {
+    let table = "| a\\ | b |\n| --- | --- |\n| c | d |\n";
+    let (document, cx) = open(table, MarkdownMode::Visual, cx);
+    press_cell(0, 0, cx);
+    assert_eq!(opened(&document, cx), "a\\");
+    document.update_in(cx, |document, window, cx| {
+        document.set_mode(MarkdownMode::Source, window, cx)
+    });
+    assert_eq!(text(&document, cx), table);
+}
+
+const BARE: &str = "alpha | beta\n--- | ---\nc | d\n";
+
+#[gpui::test]
+fn tab_leaves_an_edited_first_cell_without_outer_pipes(cx: &mut TestAppContext) {
+    let (document, cx) = open(BARE, MarkdownMode::Visual, cx);
+    press_cell(0, 0, cx);
+    cx.simulate_input("X");
+    cx.simulate_keystrokes("tab");
+    assert_eq!(opened(&document, cx), "beta");
+    assert_eq!(text(&document, cx), "alphaX | beta\n--- | ---\nc | d\n");
+}
+
+#[gpui::test]
+fn a_neighbour_press_leaves_an_edited_first_cell(cx: &mut TestAppContext) {
+    let (document, cx) = open(BARE, MarkdownMode::Visual, cx);
+    press_cell(0, 0, cx);
+    cx.simulate_input("X");
+    press_cell(0, 1, cx);
+    assert_eq!(opened(&document, cx), "beta");
+}
+
+#[gpui::test]
+fn the_open_cells_padding_lands_at_its_end_in_one_step(cx: &mut TestAppContext) {
+    let (document, cx) = open(WORDS, MarkdownMode::Visual, cx);
+    press_cell(0, 0, cx);
+    cx.simulate_input("X");
+    let x = x_of(&document, 1, cx);
+    press_field(x, MouseButton::Left, cx);
+    assert_eq!(caret(&document, cx), 1);
+    press_cell(0, 0, cx);
+    assert_eq!(caret(&document, cx), 6, "the padding lands at the end");
+    cx.simulate_input("Y");
+    cx.simulate_keystrokes("escape");
+    assert_eq!(
+        text(&document, cx),
+        "| alphaXY | beta |\n| --- | --- |\n| c | d |\n"
+    );
+    let editor = document.read_with(cx, |document, _| document.editor().clone());
+    editor.update(cx, |editor, cx| editor.undo(cx));
+    assert_eq!(text(&document, cx), WORDS);
+}
+
+#[gpui::test]
+fn a_right_press_on_the_open_cells_padding_points_at_its_end(cx: &mut TestAppContext) {
+    let (document, cx) = open(WORDS, MarkdownMode::Visual, cx);
+    let heard = heard(&document, cx);
+    press_cell(0, 0, cx);
+    cx.simulate_input("||");
+    press_cell_with(0, 0, MouseButton::Right, cx);
+    let target = heard.borrow().last().cloned().expect("heard");
+    assert!(target.in_table);
+    assert_eq!(
+        target.at,
+        WORDS.find("alpha").expect("the cell") + "alpha\\|\\|".len()
+    );
+    assert_eq!(opened(&document, cx), "alpha||", "the cell stays open");
+}

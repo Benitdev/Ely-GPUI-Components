@@ -157,27 +157,32 @@ fn guarded(typed: &str) -> String {
     out
 }
 
-/// `typed` as a cell keeps it, its closing pipe intact.
-pub(super) fn kept(typed: &str) -> String {
+/// Whether a pipe follows the cell source ending at `end`.
+pub(super) fn closed(text: &str, end: usize) -> bool {
+    text[end..].starts_with('|')
+}
+
+/// `typed` as a cell keeps it, a `closed` pipe intact.
+pub(super) fn kept(typed: &str, closed: bool) -> String {
     let mut out = guarded(typed);
     let slashes = out.len() - out.trim_end_matches('\\').len();
-    if slashes % 2 == 1 {
+    if closed && slashes % 2 == 1 {
         out.push('\\');
     }
     out
 }
 
-/// Byte `at` of `typed` within `kept(typed)`.
-pub(super) fn kept_at(typed: &str, at: usize) -> usize {
+/// Byte `at` of `typed` within `kept(typed, closed)`.
+pub(super) fn kept_at(typed: &str, at: usize, closed: bool) -> usize {
     match at == typed.len() {
-        true => kept(typed).len(),
+        true => kept(typed, closed).len(),
         false => guarded(&typed[..at]).len(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Aim, CellAt, Move, beside, find, guarded, kept, kept_at};
+    use super::{Aim, CellAt, Move, beside, closed, find, guarded, kept, kept_at};
 
     const TABLE: &str = "intro\n\n| a | **b** |\n| --- | --- |\n| c |  |\n| d | e |\n";
 
@@ -239,15 +244,16 @@ mod tests {
 
     #[test]
     fn a_closing_backslash_keeps_the_next_pipe() {
-        assert_eq!(kept("a\\"), "a\\\\");
-        assert_eq!(kept("a\\\\"), "a\\\\");
-        assert_eq!(kept_at("a\\", 2), 3);
-        assert_eq!(kept_at("a\\b", 2), 2);
+        assert_eq!(kept("a\\", true), "a\\\\");
+        assert_eq!(kept("a\\\\", true), "a\\\\");
+        assert_eq!(kept_at("a\\", 2, true), 3);
+        assert_eq!(kept_at("a\\b", 2, true), 2);
         let text = "|a|b|\n|---|---|\n|c|d|\n";
         let cell = find(text, 0..text.len() - 1, Aim::First).expect("a cell");
+        let shut = closed(text, cell.range.end);
         let written = [
             &text[..cell.range.start],
-            &kept("a\\"),
+            &kept("a\\", shut),
             &text[cell.range.end..],
         ]
         .concat();
@@ -256,7 +262,16 @@ mod tests {
     }
 
     #[test]
+    fn a_backslash_before_padding_stays_single() {
+        let text = "| a\\ | b |\n| --- | --- |\n";
+        let cell = find(text, 0..text.len() - 1, Aim::First).expect("a cell");
+        assert_eq!(&text[cell.range.clone()], "a\\");
+        assert!(!closed(text, cell.range.end));
+        assert_eq!(kept("a\\", false), "a\\");
+    }
+
+    #[test]
     fn typed_pipes_shift_later_bytes() {
-        assert_eq!(kept_at("||x", 2), 4);
+        assert_eq!(kept_at("||x", 2, false), 4);
     }
 }

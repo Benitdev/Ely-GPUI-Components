@@ -175,7 +175,7 @@ impl MarkdownDocument {
         cx.listener(|document, event: &MouseDownEvent, window, cx| {
             window.prevent_default();
             cx.stop_propagation();
-            document.point_open(event.position, cx);
+            document.point_open(Some(event.position), cx);
         })
     }
 
