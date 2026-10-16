@@ -66,7 +66,7 @@ fn open_front_matter_keeps_its_panel(cx: &mut TestAppContext) {
     keeps_its_panel("---\nkey: value\n---\n\nText.\n", cx);
 }
 
-/// Block 0 opens in place, its panel at the closed inset.
+/// Block 0 opens with its panel at the closed inset.
 fn keeps_its_panel(source: &str, cx: &mut TestAppContext) {
     let (closed, open, cx) = closed_then_open(source, cx);
     assert!(
@@ -137,6 +137,8 @@ fn an_open_sixth_heading_stays_muted(cx: &mut TestAppContext) {
         .color,
         fg
     );
+    let code = run("###### Quiet `Code`\n", "Code", cx);
+    assert_eq!(code.color, fg, "code keeps its own color");
 }
 
 /// The open text box's style for `kind`.

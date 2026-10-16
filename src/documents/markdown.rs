@@ -180,7 +180,7 @@ pub fn markdown_highlights(text: &str, cx: &App) -> Vec<(Range<usize>, Highlight
                 },
                 Mark::Code => Highlight {
                     background: Some(colors.sunken),
-                    ..plain
+                    ..Highlight::new(colors.fg)
                 },
                 Mark::Link => Highlight::new(colors.link),
                 Mark::Quote => Highlight::new(colors.fg_muted),
