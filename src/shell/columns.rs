@@ -1,22 +1,48 @@
-use std::rc::Rc;
+use std::{cell::Cell, rc::Rc};
 
 use gpui::{
-    AnyElement, App, DefiniteLength, ElementId, FontWeight, IntoElement, ParentElement, RenderOnce,
+    AnyElement, App, Axis, DefiniteLength, Div, DragMoveEvent, ElementId, EmptyView, EntityId,
+    FontWeight, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, RenderOnce,
     SharedString, Styled, Window, div, prelude::*,
 };
 use smallvec::SmallVec;
 
 use super::chrome::{OnClose, WindowControls, controls_style, drag_region, route_close};
 use crate::{
-    layout::on_axis,
+    layout::{on_axis, resize_handle},
     theme::{ActiveTheme, ControlSize, Platform, TextSize},
     typography::Ellipsis,
 };
+
+type OnResize = Rc<dyn Fn(Pixels, &mut Window, &mut App)>;
+
+/// A width the owner keeps, which a drag on one border moves.
+struct Resize {
+    width: Pixels,
+    min: Pixels,
+    max: Pixels,
+    on_resize: OnResize,
+}
+
+/// The border a column's width is dragged by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+}
+
+struct BorderDrag {
+    owner: EntityId,
+    side: Side,
+    /// The width drawn when the drag set off.
+    start: Rc<Cell<Option<Pixels>>>,
+}
 
 /// One column of a `ColumnShell`: a header that drags the window, then its body.
 pub struct ShellColumn {
     id: ElementId,
     width: Option<DefiniteLength>,
+    resize: Option<Resize>,
     leading: SmallVec<[AnyElement; 2]>,
     title: Option<SharedString>,
     actions: SmallVec<[AnyElement; 2]>,
@@ -29,6 +55,7 @@ impl ShellColumn {
         Self {
             id: id.into(),
             width: None,
+            resize: None,
             leading: SmallVec::new(),
             title: None,
             actions: SmallVec::new(),
@@ -36,9 +63,32 @@ impl ShellColumn {
         }
     }
 
-    /// A set width instead of the rest; it yields before a header's fixed parts.
+    /// A set width instead of the rest; it holds its header's fixed parts and yields when the shell runs short.
     pub fn width(mut self, width: impl Into<DefiniteLength>) -> Self {
         self.width = Some(width.into());
+        self
+    }
+
+    /// A set width the owner keeps: a drag on the border toward the filling column moves it within `min` and `max`, and the owner hears each new width.
+    pub fn resizable(
+        mut self,
+        width: Pixels,
+        min: Pixels,
+        max: Pixels,
+        on_resize: impl Fn(Pixels, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        assert!(
+            min <= max,
+            "shell column {:?}: limits {min:?} to {max:?} run backwards",
+            self.id
+        );
+        self.width = Some(width.into());
+        self.resize = Some(Resize {
+            width,
+            min,
+            max,
+            on_resize: Rc::new(on_resize),
+        });
         self
     }
 
@@ -132,9 +182,19 @@ impl RenderOnce for ColumnShell {
                 .child(controls)
         };
         let room = system && !window.is_fullscreen();
+        // Each border lies toward the column that fills, so a drag on it moves one width.
+        let fill = self
+            .columns
+            .iter()
+            .position(|column| column.width.is_none());
         let mut columns = Vec::with_capacity(count);
         for (ix, column) in self.columns.into_iter().enumerate() {
             let (first, last) = (ix == 0, ix + 1 == count);
+            let side = match fill {
+                Some(fill) if ix > fill => Some(Side::Left),
+                Some(fill) if ix == fill => None,
+                _ => (!last).then_some(Side::Right),
+            };
             let lead = (!system && first && style == Platform::Mac).then(controls);
             let trail = (!system && last && style != Platform::Mac).then(controls);
             let flush = trail.is_some() && style == Platform::Windows;
@@ -157,30 +217,48 @@ impl RenderOnce for ColumnShell {
                 )
                 .children(trail);
             let colors = &cx.theme().colors;
-            columns.push(
-                div()
-                    .flex()
-                    .flex_col()
-                    .h_full()
-                    .map(|box_| match column.width {
-                        Some(width) => box_.w(width),
-                        None => box_.flex_1(),
-                    })
-                    .when(!last, |box_| box_.border_r_1().border_color(colors.border))
-                    .debug_selector(move || format!("column-shell-{ix}"))
-                    .child(header)
-                    .child(
-                        // Absolute, so only the header sets the least width.
-                        div().flex_1().min_h_0().relative().child(
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .flex()
-                                .flex_col()
-                                .children(column.body),
-                        ),
+            let box_ = div()
+                .relative()
+                .flex()
+                .flex_col()
+                .h_full()
+                // A basis, not a width, so the header's fixed parts set the least width.
+                .map(|box_| match column.width {
+                    Some(width) => box_.flex_basis(width),
+                    None => box_.flex_1(),
+                })
+                // A resizing column's handle draws its border.
+                .map(|box_| match (side, column.resize.is_some()) {
+                    (Some(Side::Left), false) => box_.border_l_1(),
+                    (Some(Side::Right), false) => box_.border_r_1(),
+                    _ => box_,
+                })
+                .border_color(colors.border)
+                .debug_selector(move || format!("column-shell-{ix}"))
+                .child(header)
+                .child(
+                    // Absolute, so only the header sets the least width.
+                    div().flex_1().min_h_0().relative().child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .flex_col()
+                            .children(column.body),
                     ),
-            );
+                );
+            columns.push(match column.resize {
+                Some(resize) => {
+                    let side = side.unwrap_or_else(|| {
+                        panic!(
+                            "column shell {:?}: column {ix} resizes, but no border lies toward a filling column",
+                            self.id
+                        )
+                    });
+                    resizing(box_, column.id, ix, side, resize, window, cx)
+                }
+                None => box_,
+            });
         }
         let theme = cx.theme();
         let ground = if self.glass {
@@ -196,6 +274,69 @@ impl RenderOnce for ColumnShell {
             .text_color(theme.colors.fg)
             .children(columns)
     }
+}
+
+/// `box_` with a handle on its `side` border, whose drag moves its width.
+fn resizing(
+    box_: Div,
+    id: ElementId,
+    ix: usize,
+    side: Side,
+    resize: Resize,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
+    let Resize {
+        width,
+        min,
+        max,
+        on_resize,
+    } = resize;
+    let pressed = window.use_keyed_state((id.clone(), "press"), cx, |_, _| None::<Pixels>);
+    let owner = pressed.entity_id();
+    let drag = BorderDrag {
+        owner,
+        side,
+        start: Rc::default(),
+    };
+    let at = pressed.clone();
+    let handle = resize_handle((id, "border"), Axis::Horizontal, cx)
+        .absolute()
+        .top_0()
+        .map(|handle| match side {
+            Side::Left => handle.left_0().justify_start(),
+            Side::Right => handle.right_0().justify_end(),
+        })
+        // Over a header, so a press drags the border, not the window.
+        .occlude()
+        .debug_selector(move || format!("column-shell-border-{ix}"))
+        .on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, _, cx| {
+            at.update(cx, |at, _| *at = Some(event.position.x))
+        })
+        .on_drag(drag, |_, _, _, cx| cx.new(|_| EmptyView));
+    box_.on_drag_move(move |event: &DragMoveEvent<BorderDrag>, window, cx| {
+        let drag = event.drag(cx);
+        if drag.owner != owner {
+            return;
+        }
+        let Some(anchor) = *pressed.read(cx) else {
+            log::error!("column shell: a drag on column {ix} with no press behind it");
+            return;
+        };
+        // The drawn width, which a header's own parts may hold past the owner's.
+        let start = drag.start.get().unwrap_or(event.bounds.size.width);
+        drag.start.set(Some(start));
+        let moved = event.event.position.x - anchor;
+        let next = match drag.side {
+            Side::Left => start - moved,
+            Side::Right => start + moved,
+        }
+        .clamp(min, max);
+        if next != width {
+            on_resize(next, window, cx);
+        }
+    })
+    .child(handle)
 }
 
 /// A header strip at the title bar's height that drags the window.

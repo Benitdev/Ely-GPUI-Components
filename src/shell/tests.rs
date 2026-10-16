@@ -1,3 +1,5 @@
+mod border;
+
 use gpui::{
     AppContext as _, Context, FocusHandle, InteractiveElement, IntoElement, KeyUpEvent, Keystroke,
     ParentElement, Render, TestAppContext, VisualTestContext, Window, div, prelude::*, px, size,
