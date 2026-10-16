@@ -90,9 +90,9 @@ impl MarkdownDocument {
             block.size.height -= self.room;
         }
         let view = self.list.viewport_bounds();
-        // A new layout or a resize moves it too.
-        let heights =
-            [block.size.height, view.size.height].map(|height| f32::from(height).round() as u64);
+        // A new layout, a resize or the ends' room moves it.
+        let heights = [block.size.height, view.size.height, self.room]
+            .map(|height| f32::from(height).round() as u64);
         let moved = (ix, self.edits, self.typed, heights);
         if self.centered == Some(moved) {
             return;

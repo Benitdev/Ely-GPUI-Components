@@ -2,14 +2,14 @@ use gpui::{
     AnyElement, App, ClickEvent, Context, ExternalPaths, FontWeight, InteractiveElement,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Render,
     StatefulInteractiveElement, Styled, StyledText, Window, actions, div, list,
-    prelude::FluentBuilder as _,
+    prelude::FluentBuilder as _, relative,
 };
 
-use super::{MarkdownDocument, edit::Landing};
+use super::{MarkdownDocument, edit::Landing, parse::Block};
 use crate::{
     documents::{
-        MarkdownMode,
-        render::{Hooks, OpenCell, Pointed, draw_nodes, point_lines},
+        MarkdownMode, TargetBlock,
+        render::{HEAVY, Hooks, OpenCell, Pointed, draw_nodes, heading_step, point_lines},
     },
     forms::{self, Down, Up},
     primitives::FocusRing as _,
@@ -72,22 +72,9 @@ impl MarkdownDocument {
         // Focus fades all but the reader's block.
         let faded = self.look.focus && editing_mode(self.mode) && ix != self.current_block(cx);
         let open = self.open.as_ref();
-        let point = Self::point_in_open(cx);
-        let field = |open: &super::Open| {
-            div()
-                .debug_selector(|| "markdown-open".to_string())
-                .on_mouse_down(MouseButton::Right, point)
-                .text_size(body)
-                .px_3()
-                .py_2()
-                .rounded(radius)
-                .bg(colors.sunken)
-                .child(open.input.clone())
-                .into_any_element()
-        };
         let Some(block) = self.parsed.blocks.get(ix) else {
             return match (open, editing) {
-                (Some(open), _) if open.append => field(open),
+                (Some(open), _) if open.append => self.field(open, None, cx),
                 (_, true) => self
                     .pressable(div().id("more").min_h_8(), None, cx)
                     .into_any_element(),
@@ -95,7 +82,7 @@ impl MarkdownDocument {
             };
         };
         if let Some(open) = open.filter(|open| open.cell.is_none() && open.range == block.range) {
-            return field(open);
+            return self.field(open, Some(block), cx);
         }
         // A cell open in this block, typed in place.
         let cell = open.and_then(|open| {
@@ -166,6 +153,56 @@ impl MarkdownDocument {
             true => self.pressable(block, Some(ix), cx).into_any_element(),
             false => block.into_any_element(),
         }
+    }
+
+    /// The open block in its closed frame, size and weight.
+    fn field(
+        &self,
+        open: &super::Open,
+        block: Option<&Block>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let point = Self::point_in_open(cx);
+        let theme = cx.theme();
+        let colors = theme.colors.clone();
+        let body = theme.text_size(TextSize::Base) * self.look.scale;
+        let text = div()
+            .debug_selector(|| "markdown-open-text".to_string())
+            .text_size(body)
+            .line_height(body * 1.6)
+            .text_color(colors.fg);
+        let text = match block.map(|block| (block.kind, block.nodes.is_some())) {
+            Some((TargetBlock::Heading(level), true)) => text
+                .pt_2()
+                .text_size(body * heading_step(level))
+                .line_height(relative(1.3))
+                .font_weight(HEAVY)
+                .when(level == 6, |text| text.text_color(colors.fg_muted)),
+            // Code and math keep their panel.
+            Some((kind @ (TargetBlock::Code | TargetBlock::Math), true)) => text
+                .p_3()
+                .rounded(theme.radius(Radius::Md))
+                .bg(colors.sunken)
+                .when(kind == TargetBlock::Code, |text| {
+                    text.font_family(theme.mono_family.clone())
+                        .text_size(theme.text_size(TextSize::Sm) * self.look.scale)
+                }),
+            // Written as is: mono and muted.
+            Some((_, false)) => text
+                .font_family(theme.mono_family.clone())
+                .line_height(gpui::phi())
+                .text_color(colors.fg_muted),
+            _ => text,
+        };
+        div()
+            .debug_selector(|| "markdown-open".to_string())
+            .on_mouse_down(MouseButton::Right, point)
+            .px_3()
+            .py_1()
+            .border_1()
+            .border_color(gpui::transparent_black())
+            .child(text.child(open.input.clone()))
+            .into_any_element()
     }
 
     /// A right press in the open field points there.

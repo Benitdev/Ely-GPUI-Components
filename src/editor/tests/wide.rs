@@ -52,7 +52,8 @@ fn an_input_method_edit_measures_before_the_next_draw(cx: &mut TestAppContext) {
     let (editor, cx) = editor("(a)", cx);
     cx.run_until_parked();
     editor.update_in(cx, |editor, window, cx| {
-        editor.select([0..0], cx);
+        let start = 0..0;
+        editor.select([start], cx);
         editor.replace_and_mark_text_in_range(None, "测", None, window, cx);
         let text = editor.row_text(0).to_string();
         for (range, _) in editor.styles(0, cx) {

@@ -102,7 +102,18 @@ pub(crate) struct Hooks<'a> {
 }
 
 /// Headings and strong text share one weight.
-const HEAVY: FontWeight = FontWeight::BOLD;
+pub(crate) const HEAVY: FontWeight = FontWeight::BOLD;
+
+/// Typora's heading steps over the body.
+pub(crate) fn heading_step(level: u8) -> f32 {
+    match level {
+        1 => 2.25,
+        2 => 1.75,
+        3 => 1.5,
+        4 => 1.25,
+        _ => 1.0,
+    }
+}
 
 /// How one inline style draws.
 fn highlight(style: &Style, colors: &Palette, rule: Pixels) -> HighlightStyle {
@@ -234,15 +245,8 @@ impl Draw<'_> {
                 .child(self.inline(inline, cx))
                 .into_any_element(),
             Node::Heading(level, inline) => {
-                // Typora's steps over the body; every level bold.
-                let step = match level {
-                    1 => 2.25,
-                    2 => 1.75,
-                    3 => 1.5,
-                    4 => 1.25,
-                    _ => 1.0,
-                };
-                let size = theme.text_size(self.body) * step * self.scale;
+                // Every level bold.
+                let size = theme.text_size(self.body) * heading_step(*level) * self.scale;
                 let ordinal = self.headings.get();
                 self.headings.set(ordinal + 1);
                 let heading = div()

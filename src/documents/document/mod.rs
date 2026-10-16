@@ -117,7 +117,7 @@ pub struct MarkdownDocument {
     /// Typewriter room past each end of the list.
     room: Pixels,
     /// The block, text, typing and heights last centered.
-    centered: Option<(usize, u64, u64, [u64; 2])>,
+    centered: Option<(usize, u64, u64, [u64; 3])>,
     focus: FocusHandle,
     /// A secondary press took focus.
     pointing: bool,
