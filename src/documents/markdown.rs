@@ -83,7 +83,7 @@ pub(crate) fn walk<'a>(node: &'a mdast::Node, out: &mut Vec<&'a mdast::Node>) {
 
 /// The marks over `text`, with the syntax writing each.
 pub fn marks(text: &str) -> Vec<(Range<usize>, Mark)> {
-    let root = tree(text);
+    let root = file_tree(text);
     let mut nodes = Vec::new();
     walk(&root, &mut nodes);
     let mut out = Vec::new();

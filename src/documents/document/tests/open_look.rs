@@ -186,3 +186,10 @@ fn open_code_math_and_front_matter_keep_their_panel(cx: &mut TestAppContext) {
     let front = styled(TargetBlock::FrontMatter, cx).text;
     assert_eq!((front.color, front.font_family), (Some(muted), Some(mono)));
 }
+
+#[gpui::test]
+fn open_front_matter_has_no_runs(cx: &mut TestAppContext) {
+    cx.update(crate::init_for_tests);
+    let runs = cx.update(|cx| markdown_highlights("---\ntitle: R75\n---", cx));
+    assert!(runs.is_empty(), "{runs:?}");
+}
