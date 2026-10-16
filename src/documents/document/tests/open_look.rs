@@ -1,9 +1,17 @@
 //! An open block keeps its place and size (R7.5).
 
-use gpui::{Bounds, Modifiers, Pixels, TestAppContext, VisualTestContext, rems};
+use gpui::{
+    Bounds, Fill, Modifiers, Pixels, StyleRefinement, Styled, TestAppContext, VisualTestContext,
+    rems,
+};
 
 use super::{open, press};
-use crate::documents::MarkdownMode;
+use crate::documents::{TargetBlock, document::visual::open_text};
+use crate::{
+    documents::{MarkdownMode, markdown_highlights, render::HEAVY},
+    forms::Highlight,
+    theme::ActiveTheme,
+};
 
 /// Block 0's bounds closed, then open.
 fn closed_then_open<'a>(
@@ -50,7 +58,17 @@ fn an_open_heading_keeps_its_size(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn an_open_code_block_keeps_its_panel(cx: &mut TestAppContext) {
-    let (closed, open, cx) = closed_then_open("```\nlet x = 1;\n```\n", cx);
+    keeps_its_panel("```\nlet x = 1;\n```\n", cx);
+}
+
+#[gpui::test]
+fn open_front_matter_keeps_its_panel(cx: &mut TestAppContext) {
+    keeps_its_panel("---\nkey: value\n---\n\nText.\n", cx);
+}
+
+/// Block 0 opens in place, its panel at the closed inset.
+fn keeps_its_panel(source: &str, cx: &mut TestAppContext) {
+    let (closed, open, cx) = closed_then_open(source, cx);
     assert!(
         near(closed.top(), open.top()) && near(closed.left(), open.left()),
         "{closed:?} {open:?}"
@@ -70,4 +88,101 @@ fn an_open_code_block_keeps_its_panel(cx: &mut TestAppContext) {
         near(panel.top(), closed.top() + border + y),
         "{panel:?} {closed:?}"
     );
+}
+
+/// The highlight on the run that holds `word`.
+fn run(source: &str, word: &str, cx: &mut TestAppContext) -> Highlight {
+    cx.update(crate::init_for_tests);
+    let at = source.find(word).expect("the word");
+    cx.update(|cx| {
+        markdown_highlights(source, cx)
+            .into_iter()
+            .rfind(|(range, _)| range.start <= at && at < range.end)
+            .expect("a run")
+            .1
+    })
+}
+
+#[gpui::test]
+fn an_open_heading_keeps_its_weight(cx: &mut TestAppContext) {
+    for source in [
+        "# Heavy words
+",
+        "a **Heavy** b
+",
+    ] {
+        assert_eq!(run(source, "Heavy", cx).weight, Some(HEAVY), "{source}");
+    }
+}
+
+#[gpui::test]
+fn an_open_sixth_heading_stays_muted(cx: &mut TestAppContext) {
+    let muted = cx.update(|cx| {
+        crate::init_for_tests(cx);
+        cx.theme().colors.fg_muted
+    });
+    for word in ["Quiet", "Loud"] {
+        let source = "###### Quiet **Loud**
+";
+        assert_eq!(run(source, word, cx).color, muted, "{word}");
+    }
+    let fg = cx.update(|cx| cx.theme().colors.fg);
+    assert_eq!(
+        run(
+            "##### Plain
+",
+            "Plain",
+            cx
+        )
+        .color,
+        fg
+    );
+}
+
+/// The open text box's style for `kind`.
+fn styled(kind: TargetBlock, cx: &mut TestAppContext) -> StyleRefinement {
+    cx.update(crate::init_for_tests);
+    cx.update(|cx| {
+        open_text(Some((kind, true)), 1.0, cx.theme())
+            .style()
+            .clone()
+    })
+}
+
+#[gpui::test]
+fn open_prose_has_no_panel(cx: &mut TestAppContext) {
+    for kind in [
+        TargetBlock::Paragraph,
+        TargetBlock::Heading(2),
+        TargetBlock::List,
+        TargetBlock::Quote,
+    ] {
+        assert_eq!(styled(kind, cx).background, None, "{kind:?}");
+    }
+}
+
+#[gpui::test]
+fn open_code_math_and_front_matter_keep_their_panel(cx: &mut TestAppContext) {
+    let (sunken, muted, mono) = cx.update(|cx| {
+        crate::init_for_tests(cx);
+        let theme = cx.theme();
+        (
+            theme.colors.sunken,
+            theme.colors.fg_muted,
+            theme.mono_family.clone(),
+        )
+    });
+    for kind in [
+        TargetBlock::Code,
+        TargetBlock::Math,
+        TargetBlock::FrontMatter,
+    ] {
+        assert_eq!(
+            styled(kind, cx).background,
+            Some(Fill::from(sunken)),
+            "{kind:?}"
+        );
+    }
+    let front = styled(TargetBlock::FrontMatter, cx).text;
+    assert_eq!((front.color, front.font_family), (Some(muted), Some(mono)));
 }

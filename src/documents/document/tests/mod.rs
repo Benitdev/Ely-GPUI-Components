@@ -210,8 +210,10 @@ fn the_source_colors_markdown(cx: &mut TestAppContext) {
         document.editor().read(cx).line_colors("a **b**", cx)
     });
     assert!(
-        colors.iter().any(|(range, style)| *range == (2..7)
-            && style.font_weight == Some(gpui::FontWeight::SEMIBOLD)),
+        colors
+            .iter()
+            .any(|(range, style)| *range == (2..7)
+                && style.font_weight == Some(gpui::FontWeight::BOLD)),
         "{colors:?}"
     );
 }

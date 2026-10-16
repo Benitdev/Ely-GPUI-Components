@@ -1,10 +1,10 @@
 use std::ops::Range;
 
-use gpui::{App, FontWeight};
+use gpui::App;
 use markdown::{Constructs, ParseOptions, mdast};
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{forms::Highlight, theme::ActiveTheme};
+use crate::{documents::render::HEAVY, forms::Highlight, theme::ActiveTheme};
 
 /// GitHub's flavor, and math between dollars.
 pub(crate) fn options() -> ParseOptions {
@@ -141,10 +141,22 @@ pub fn marks(text: &str) -> Vec<(Range<usize>, Mark)> {
 /// Markdown styled as typed; its syntax recedes.
 pub fn markdown_highlights(text: &str, cx: &App) -> Vec<(Range<usize>, Highlight)> {
     let colors = &cx.theme().colors;
-    let plain = Highlight::new(colors.fg);
-    marks(text)
+    let marks = marks(text);
+    // A sixth-level heading reads muted, as drawn.
+    let muted: Vec<Range<usize>> = marks
+        .iter()
+        .filter(|(_, mark)| *mark == Mark::Heading(6))
+        .map(|(range, _)| range.clone())
+        .collect();
+    marks
         .into_iter()
         .map(|(range, mark)| {
+            let within =
+                |outer: &Range<usize>| outer.start <= range.start && range.end <= outer.end;
+            let plain = Highlight::new(match muted.iter().any(within) {
+                true => colors.fg_muted,
+                false => colors.fg,
+            });
             let range = match mark {
                 Mark::Strike => {
                     let span = &text[range.clone()];
@@ -155,7 +167,7 @@ pub fn markdown_highlights(text: &str, cx: &App) -> Vec<(Range<usize>, Highlight
             };
             let highlight = match mark {
                 Mark::Strong | Mark::Heading(_) => Highlight {
-                    weight: Some(FontWeight::SEMIBOLD),
+                    weight: Some(HEAVY),
                     ..plain
                 },
                 Mark::Emphasis => Highlight {

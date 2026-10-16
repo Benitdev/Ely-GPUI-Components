@@ -1,5 +1,5 @@
 use gpui::{
-    AnyElement, App, ClickEvent, Context, ExternalPaths, FontWeight, InteractiveElement,
+    AnyElement, App, ClickEvent, Context, Div, ExternalPaths, FontWeight, InteractiveElement,
     IntoElement, KeyBinding, MouseButton, MouseDownEvent, ParentElement, Render,
     StatefulInteractiveElement, Styled, StyledText, Window, actions, div, list,
     prelude::FluentBuilder as _, relative,
@@ -13,7 +13,7 @@ use crate::{
     },
     forms::{self, Down, Up},
     primitives::FocusRing as _,
-    theme::{ActiveTheme, Radius, TextSize},
+    theme::{ActiveTheme, Radius, TextSize, Theme},
 };
 
 actions!(markdown_document, [Undo, Redo, Indent, Outdent, Paste]);
@@ -22,6 +22,44 @@ const CONTEXT: &str = "MarkdownDocument";
 
 /// How far a faded block recedes.
 const FADED: f32 = 0.35;
+
+/// The open block's text box: its closed font and panel.
+pub(super) fn open_text(kind: Option<(TargetBlock, bool)>, scale: f32, theme: &Theme) -> Div {
+    let colors = &theme.colors;
+    let body = theme.text_size(TextSize::Base) * scale;
+    let mono = theme.text_size(TextSize::Sm) * scale;
+    let text = div()
+        .debug_selector(|| "markdown-open-text".to_string())
+        .text_size(body)
+        .line_height(body * 1.6)
+        .text_color(colors.fg);
+    match kind {
+        Some((TargetBlock::Heading(level), true)) => text
+            .pt_2()
+            .text_size(body * heading_step(level))
+            .line_height(relative(1.3))
+            .font_weight(HEAVY)
+            .when(level == 6, |text| text.text_color(colors.fg_muted)),
+        // Code, math and front matter keep their panel.
+        Some((kind @ (TargetBlock::Code | TargetBlock::Math | TargetBlock::FrontMatter), true)) => {
+            text.p_3()
+                .rounded(theme.radius(Radius::Md))
+                .bg(colors.sunken)
+                .when(kind != TargetBlock::Math, |text| {
+                    text.font_family(theme.mono_family.clone()).text_size(mono)
+                })
+                .when(kind == TargetBlock::FrontMatter, |text| {
+                    text.text_color(colors.fg_muted)
+                })
+        }
+        // Written as is: mono and muted.
+        Some((_, false)) => text
+            .font_family(theme.mono_family.clone())
+            .line_height(gpui::phi())
+            .text_color(colors.fg_muted),
+        _ => text,
+    }
+}
 
 /// Modes with a reader's block to keep.
 fn editing_mode(mode: MarkdownMode) -> bool {
@@ -163,37 +201,8 @@ impl MarkdownDocument {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let point = Self::point_in_open(cx);
-        let theme = cx.theme();
-        let colors = theme.colors.clone();
-        let body = theme.text_size(TextSize::Base) * self.look.scale;
-        let text = div()
-            .debug_selector(|| "markdown-open-text".to_string())
-            .text_size(body)
-            .line_height(body * 1.6)
-            .text_color(colors.fg);
-        let text = match block.map(|block| (block.kind, block.nodes.is_some())) {
-            Some((TargetBlock::Heading(level), true)) => text
-                .pt_2()
-                .text_size(body * heading_step(level))
-                .line_height(relative(1.3))
-                .font_weight(HEAVY)
-                .when(level == 6, |text| text.text_color(colors.fg_muted)),
-            // Code and math keep their panel.
-            Some((kind @ (TargetBlock::Code | TargetBlock::Math), true)) => text
-                .p_3()
-                .rounded(theme.radius(Radius::Md))
-                .bg(colors.sunken)
-                .when(kind == TargetBlock::Code, |text| {
-                    text.font_family(theme.mono_family.clone())
-                        .text_size(theme.text_size(TextSize::Sm) * self.look.scale)
-                }),
-            // Written as is: mono and muted.
-            Some((_, false)) => text
-                .font_family(theme.mono_family.clone())
-                .line_height(gpui::phi())
-                .text_color(colors.fg_muted),
-            _ => text,
-        };
+        let kind = block.map(|block| (block.kind, block.nodes.is_some()));
+        let text = open_text(kind, self.look.scale, cx.theme());
         div()
             .debug_selector(|| "markdown-open".to_string())
             .on_mouse_down(MouseButton::Right, point)
