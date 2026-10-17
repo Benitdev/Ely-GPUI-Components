@@ -323,10 +323,16 @@ fn resizing(
             log::error!("column shell: a drag on column {ix} with no press behind it");
             return;
         };
-        // The drawn width, which a header's own parts may hold past the owner's.
-        let start = drag.start.get().unwrap_or(event.bounds.size.width);
+        // A header's parts may hold a column wider, a short shell squeeze it narrower.
+        let start = drag
+            .start
+            .get()
+            .unwrap_or(event.bounds.size.width.max(width));
         drag.start.set(Some(start));
         let moved = event.event.position.x - anchor;
+        if moved == Pixels::ZERO {
+            return;
+        }
         let next = match drag.side {
             Side::Left => start - moved,
             Side::Right => start + moved,

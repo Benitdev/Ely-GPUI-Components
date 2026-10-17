@@ -9,6 +9,7 @@ use crate::theme::{Platform, Theme};
 /// Two set columns round a filling one; this view keeps their widths.
 struct Sided {
     platform: Platform,
+    width: Pixels,
     widths: [Pixels; 2],
     heard: Vec<Pixels>,
 }
@@ -31,7 +32,7 @@ impl Render for Sided {
                 },
             )
         };
-        div().w(px(1000.0)).h(px(400.0)).flex().flex_col().child(
+        div().w(self.width).h(px(400.0)).flex().flex_col().child(
             ColumnShell::new("shell")
                 .platform(self.platform)
                 .column(side("left", 0))
@@ -48,6 +49,7 @@ fn sided(
 ) -> (Entity<Sided>, &mut VisualTestContext) {
     let (view, cx) = cx.add_window_view(|_, _| Sided {
         platform,
+        width: px(1000.0),
         widths,
         heard: Vec::new(),
     });
@@ -165,4 +167,38 @@ fn a_resizing_column_needs_a_border_toward_a_filling_one(cx: &mut TestAppContext
     cx.update(Theme::init);
     let (_, cx) = cx.add_window_view(|_, _| Unfilled);
     cx.run_until_parked();
+}
+
+/// A short shell squeezes both columns; a drag moves a border with the pointer, from the owner's width.
+#[gpui::test]
+fn a_squeezed_column_drags_from_the_owner_s_width(cx: &mut TestAppContext) {
+    cx.update(Theme::init);
+    let (view, cx) = cx.add_window_view(|_, _| Sided {
+        platform: Platform::Linux,
+        width: px(700.0),
+        widths: [px(350.0), px(350.0)],
+        heard: Vec::new(),
+    });
+    cx.run_until_parked();
+    let left = column(0, cx);
+    assert!(left.size.width < px(350.0), "{left:?} is squeezed");
+    let border = |ix: usize, cx: &mut VisualTestContext| {
+        let name = ["column-shell-border-0", "", "column-shell-border-2"][ix];
+        cx.debug_bounds(name).expect("a border").center()
+    };
+    drag(border(0, cx), px(0.0), cx);
+    assert_eq!(heard(&view, cx), None, "a drag with no sideways move");
+    drag(border(0, cx), px(20.0), cx);
+    assert_eq!(heard(&view, cx), Some(px(370.0)));
+    assert!(
+        column(0, cx).right() > left.right(),
+        "the left border moves right"
+    );
+    let right = column(2, cx);
+    drag(border(2, cx), px(-20.0), cx);
+    assert_eq!(heard(&view, cx), Some(px(370.0)));
+    assert!(
+        column(2, cx).left() < right.left(),
+        "the right border moves left"
+    );
 }
