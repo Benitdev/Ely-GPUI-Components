@@ -29,6 +29,7 @@ fn handle(id: impl Into<ElementId>, axis: Axis, line: Hsla, cx: &App) -> Statefu
         .flex()
         .justify_center()
         .items_center();
+    // A filled line: gpui paints a border no wider than half its box.
     match axis {
         Axis::Horizontal => base
             .w(hit)
@@ -36,10 +37,10 @@ fn handle(id: impl Into<ElementId>, axis: Axis, line: Hsla, cx: &App) -> Statefu
             .cursor(CursorStyle::ResizeLeftRight)
             .child(
                 div()
+                    .w_px()
                     .h_full()
-                    .border_l_1()
-                    .border_color(line)
-                    .group_hover("resize", |s| s.border_color(lit)),
+                    .bg(line)
+                    .group_hover("resize", |s| s.bg(lit)),
             ),
         Axis::Vertical => base
             .h(hit)
@@ -47,10 +48,10 @@ fn handle(id: impl Into<ElementId>, axis: Axis, line: Hsla, cx: &App) -> Statefu
             .cursor(CursorStyle::ResizeUpDown)
             .child(
                 div()
+                    .h_px()
                     .w_full()
-                    .border_t_1()
-                    .border_color(line)
-                    .group_hover("resize", |s| s.border_color(lit)),
+                    .bg(line)
+                    .group_hover("resize", |s| s.bg(lit)),
             ),
     }
 }

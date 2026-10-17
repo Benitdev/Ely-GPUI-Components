@@ -47,7 +47,7 @@ Ely GPUI Component. A component library for GPUI, in light and dark.
 
 - Colors, control and icon sizes, text sizes, radii, shadows come from `cx.theme()`. No raw `px()` literals inside components.
 - Gaps and padding use gpui's rem scale helpers (`gap_2`, `px_3`). That scale is the spacing system.
-- Borders use gpui's fixed-pixel helpers (`border_1` is 1px). Hairlines do not scale.
+- Borders use gpui's fixed-pixel helpers (`border_1` is 1px). Hairlines do not scale. gpui paints a border no wider than half its box, so a line as thin as its box is a fill, `w_px` or `h_px` with `bg`, as the resize handles draw theirs.
 - One component, one home. Duplicates point to it.
 - Fail fast. No silent fallbacks. Log state changes with `log`.
 - A handler a component needs is an argument of `new`, so leaving it out fails to compile. A state live data or the outside world can reach, a key gone from a list that changed or a failed load, logs an error naming the owner and draws a visible state, nothing chosen or an error line, and the app runs on. An assert on a caller's argument or on a fact true by construction stays; one that runtime data or input can trip is fixed. Chapters move to this as `tasks/panics.md` ticks them.
