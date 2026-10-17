@@ -62,18 +62,25 @@ fn column(ix: usize, cx: &mut VisualTestContext) -> gpui::Bounds<Pixels> {
     cx.debug_bounds(name).expect("a column")
 }
 
-/// Presses at `from`, moves past gpui's drag threshold, then by `by`, and lets go.
-fn drag(from: Point<Pixels>, by: Pixels, cx: &mut VisualTestContext) {
+/// Presses at `from`, moves past gpui's drag threshold, then to each offset `path` names, and lets go.
+fn drag_path(from: Point<Pixels>, path: &[Pixels], cx: &mut VisualTestContext) {
     let none = Modifiers::none();
     cx.simulate_mouse_down(from, MouseButton::Left, none);
     let set_off = from + point(px(0.0), px(4.0));
     cx.simulate_mouse_move(set_off, Some(MouseButton::Left), none);
     cx.run_until_parked();
-    let to = set_off + point(by, px(0.0));
-    cx.simulate_mouse_move(to, Some(MouseButton::Left), none);
-    cx.run_until_parked();
+    let mut to = set_off;
+    for by in path {
+        to = set_off + point(*by, px(0.0));
+        cx.simulate_mouse_move(to, Some(MouseButton::Left), none);
+        cx.run_until_parked();
+    }
     cx.simulate_mouse_up(to, MouseButton::Left, none);
     cx.run_until_parked();
+}
+
+fn drag(from: Point<Pixels>, by: Pixels, cx: &mut VisualTestContext) {
+    drag_path(from, &[by], cx);
 }
 
 fn heard(view: &Entity<Sided>, cx: &mut VisualTestContext) -> Option<Pixels> {
@@ -201,4 +208,57 @@ fn a_squeezed_column_drags_from_the_owner_s_width(cx: &mut TestAppContext) {
         column(2, cx).left() < right.left(),
         "the right border moves left"
     );
+}
+
+/// A drag that comes back where it set off gives the width the owner had, a held or squeezed one too.
+#[gpui::test]
+fn a_drag_back_where_it_set_off_gives_the_width_it_had(cx: &mut TestAppContext) {
+    cx.update(Theme::init);
+    let cases = [
+        (
+            Platform::Linux,
+            px(1000.0),
+            [px(200.0), px(200.0)],
+            0,
+            px(50.0),
+        ),
+        (
+            Platform::Linux,
+            px(1000.0),
+            [px(200.0), px(200.0)],
+            2,
+            px(-50.0),
+        ),
+        (
+            Platform::Windows,
+            px(1000.0),
+            [px(200.0), px(100.0)],
+            2,
+            px(-10.0),
+        ),
+        (
+            Platform::Linux,
+            px(700.0),
+            [px(350.0), px(350.0)],
+            0,
+            px(20.0),
+        ),
+    ];
+    for (platform, width, widths, ix, by) in cases {
+        let (view, cx) = cx.add_window_view(move |_, _| Sided {
+            platform,
+            width,
+            widths,
+            heard: Vec::new(),
+        });
+        cx.run_until_parked();
+        let name = ["column-shell-border-0", "", "column-shell-border-2"][ix];
+        let border = cx.debug_bounds(name).expect("a border").center();
+        let drawn = column(ix, cx);
+        drag_path(border, &[by, px(0.0)], cx);
+        let heard = view.read_with(cx, |view, _| view.heard.clone());
+        assert_eq!(heard.len(), 2, "{platform:?} {ix}: out and back, {heard:?}");
+        assert_eq!(heard[1], widths[ix / 2], "{platform:?} {ix}");
+        assert_eq!(column(ix, cx), drawn, "{platform:?} {ix}: drawn as before");
+    }
 }

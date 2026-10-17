@@ -1,4 +1,4 @@
-use std::{cell::Cell, rc::Rc};
+use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, Axis, DefiniteLength, Div, DragMoveEvent, ElementId, EmptyView, EntityId,
@@ -31,11 +31,17 @@ enum Side {
     Right,
 }
 
+#[derive(Clone, Copy)]
 struct BorderDrag {
     owner: EntityId,
     side: Side,
-    /// The width drawn when the drag set off.
-    start: Rc<Cell<Option<Pixels>>>,
+}
+
+/// Where a press on a border landed; once it moves sideways, the width it sets off from and the owner's then.
+#[derive(Clone, Copy)]
+struct Press {
+    at: Pixels,
+    start: Option<(Pixels, Pixels)>,
 }
 
 /// One column of a `ColumnShell`: a header that drags the window, then its body.
@@ -292,13 +298,9 @@ fn resizing(
         max,
         on_resize,
     } = resize;
-    let pressed = window.use_keyed_state((id.clone(), "press"), cx, |_, _| None::<Pixels>);
+    let pressed = window.use_keyed_state((id.clone(), "press"), cx, |_, _| None::<Press>);
     let owner = pressed.entity_id();
-    let drag = BorderDrag {
-        owner,
-        side,
-        start: Rc::default(),
-    };
+    let drag = BorderDrag { owner, side };
     let at = pressed.clone();
     let handle = resize_handle((id, "border"), Axis::Horizontal, cx)
         .absolute()
@@ -311,33 +313,48 @@ fn resizing(
         .occlude()
         .debug_selector(move || format!("column-shell-border-{ix}"))
         .on_mouse_down(MouseButton::Left, move |event: &MouseDownEvent, _, cx| {
-            at.update(cx, |at, _| *at = Some(event.position.x))
+            at.update(cx, |at, _| {
+                *at = Some(Press {
+                    at: event.position.x,
+                    start: None,
+                })
+            })
         })
         .on_drag(drag, |_, _, _, cx| cx.new(|_| EmptyView));
     box_.on_drag_move(move |event: &DragMoveEvent<BorderDrag>, window, cx| {
-        let drag = event.drag(cx);
-        if drag.owner != owner {
+        let BorderDrag {
+            owner: dragged,
+            side,
+        } = *event.drag(cx);
+        if dragged != owner {
             return;
         }
-        let Some(anchor) = *pressed.read(cx) else {
+        let Some(press) = *pressed.read(cx) else {
             log::error!("column shell: a drag on column {ix} with no press behind it");
             return;
         };
-        // A header's parts may hold a column wider, a short shell squeeze it narrower.
-        let start = drag
-            .start
-            .get()
-            .unwrap_or(event.bounds.size.width.max(width));
-        drag.start.set(Some(start));
-        let moved = event.event.position.x - anchor;
-        if moved == Pixels::ZERO {
-            return;
-        }
-        let next = match drag.side {
-            Side::Left => start - moved,
-            Side::Right => start + moved,
-        }
-        .clamp(min, max);
+        let moved = event.event.position.x - press.at;
+        let (start, kept) = match press.start {
+            Some(start) => start,
+            // A drag that has not moved sideways yet changes nothing.
+            None if moved == Pixels::ZERO => return,
+            // A header's parts may hold a column wider, a short shell squeeze it narrower.
+            None => {
+                let start = (event.bounds.size.width.max(width), width);
+                pressed.update(cx, |held, _| {
+                    *held = Some(Press {
+                        start: Some(start),
+                        ..press
+                    })
+                });
+                start
+            }
+        };
+        let next = match side {
+            _ if moved == Pixels::ZERO => kept,
+            Side::Left => (start - moved).clamp(min, max),
+            Side::Right => (start + moved).clamp(min, max),
+        };
         if next != width {
             on_resize(next, window, cx);
         }
