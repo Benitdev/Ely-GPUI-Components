@@ -2,8 +2,8 @@ use std::rc::Rc;
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ElementId, FontWeight, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Pixels, Point, RenderOnce, Role, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, prelude::*,
+    IntoElement, MouseButton, ParentElement, Pixels, Point, RenderOnce, Role, ScrollHandle,
+    SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, prelude::*,
 };
 
 use crate::{
@@ -108,6 +108,20 @@ impl RenderOnce for Tabs {
             window,
             cx,
         );
+        // A wide strip scrolls; the chosen tab scrolls in once.
+        let scroll = window
+            .use_keyed_state((self.id.clone(), "scroll"), cx, |_, _| ScrollHandle::new())
+            .read(cx)
+            .clone();
+        let followed =
+            window.use_keyed_state(
+                (self.id.clone(), "followed"),
+                cx,
+                |_, _| None::<SharedString>,
+            );
+        let follow = (axis == Axis::Horizontal
+            && followed.read(cx).as_ref() != Some(&self.selected))
+        .then(|| (followed, self.selected.clone(), scroll.clone()));
         let focus = tab_stop((self.id.clone(), "focus").into(), true, window, cx);
         let focused = focus.is_focused(window);
         let tabs = Rc::new(self.tabs);
@@ -236,6 +250,9 @@ impl RenderOnce for Tabs {
             .relative()
             .flex()
             .when(axis == Axis::Vertical, |strip| strip.flex_col())
+            .when(axis == Axis::Horizontal, |strip| {
+                strip.min_w_0().overflow_x_scroll().track_scroll(&scroll)
+            })
             .gap_1()
             .border_color(colors.border)
             .map(|strip| match placement {
@@ -270,10 +287,27 @@ impl RenderOnce for Tabs {
                     key_pick(to, window, cx);
                 }
             })
+            // Items first: a child's index is its tab's.
+            .children(items)
             .child(measure_width(strip_width))
             .child(measure_origin(state, axis))
             .children(indicator)
-            .children(items);
+            .children(follow.map(|(followed, selected, scroll)| {
+                canvas(
+                    move |_, window, cx| {
+                        if scroll.bounds().size.width <= Pixels::ZERO {
+                            return;
+                        }
+                        followed.update(cx, |followed, _| *followed = Some(selected));
+                        if let Some(ix) = chosen {
+                            scroll.scroll_to_item(ix);
+                            window.request_animation_frame();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+            }));
         let panel = self.panel.map(|panel| {
             div().flex_1().min_w_0().child(panel).with_animation(
                 ("tab-panel", turn),
@@ -282,7 +316,7 @@ impl RenderOnce for Tabs {
                 move |panel, t| if turn == 0 { panel } else { panel.opacity(t) },
             )
         });
-        let frame = div().id(self.id).flex().gap_4();
+        let frame = div().id(self.id).flex().min_w_0().gap_4();
         match placement {
             TabPlacement::Top => frame.flex_col().child(strip).children(panel),
             TabPlacement::Bottom => frame.flex_col().children(panel).child(strip),
