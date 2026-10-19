@@ -140,11 +140,11 @@ impl Draw<'_> {
         })
     }
 
-    /// Drawn `inline`; a press finds its byte through `layout`.
+    /// Drawn `inline`; a press finds its byte through `at`.
     pub(super) fn point_text(
         &self,
         element: AnyElement,
-        layout: TextLayout,
+        at: impl Fn(gpui::Point<gpui::Pixels>) -> usize + 'static,
         inline: &Inline,
     ) -> AnyElement {
         if self.hooks.on_point.is_none() {
@@ -152,9 +152,7 @@ impl Draw<'_> {
         }
         let inline = Rc::new(inline.clone());
         self.pointable(element, move |event| {
-            let at = layout
-                .index_for_position(event.position)
-                .unwrap_or_else(|near| near);
+            let at = at(event.position);
             let link = inline.links.iter().find(|(range, _)| range.contains(&at));
             Pointed {
                 link: link.map(|(_, url)| url.clone()),

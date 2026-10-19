@@ -46,7 +46,7 @@ pub(crate) use history::Change;
 pub use history::{PageHistoryDiff, Version, VersionHistory};
 pub use knowledge::{Backlink, Backlinks, Favorite, Favorites, TrashBin, Trashed};
 pub use link::LinkEditor;
-pub use markdown::file_options as markdown_options;
+pub use markdown::file_tree as markdown_tree;
 pub use markdown::markdown_highlights;
 pub use modes::{MarkdownEditor, MarkdownMode};
 pub use pages::{PageCover, PageIcon};

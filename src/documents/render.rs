@@ -3,7 +3,7 @@ use std::{path::Path, rc::Rc, sync::Arc};
 use gpui::{
     AnyElement, App, ElementId, Entity, FontStyle, FontWeight, HighlightStyle, InteractiveText,
     IntoElement, ParentElement, Pixels, RenderOnce, SharedString, StrikethroughStyle, Styled,
-    StyledText, UnderlineStyle, Window, div, prelude::*, relative,
+    StyledText, TextLayout, UnderlineStyle, Window, div, prelude::*, relative,
 };
 
 use super::{
@@ -21,6 +21,7 @@ use crate::{
 };
 
 mod blocks;
+mod math_text;
 mod point;
 mod table;
 
@@ -170,6 +171,38 @@ fn highlight(style: &Style, colors: &Palette, rule: Pixels) -> HighlightStyle {
     }
 }
 
+/// `inline` as text; `hidden` ranges lose their highlight.
+fn drawn_text(
+    inline: &Inline,
+    hidden: &[std::ops::Range<usize>],
+    links: Option<ElementId>,
+    on_link: &Option<OnLink>,
+    cx: &App,
+) -> (AnyElement, TextLayout) {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let rule = theme.underline_thickness();
+    let styles: Vec<_> = (inline.styles.iter())
+        .filter(|(range, _)| !hidden.contains(range))
+        .map(|(range, style)| (range.clone(), highlight(style, colors, rule)))
+        .collect();
+    let styled = StyledText::new(inline.text.clone()).with_highlights(crate::editor::stack(styles));
+    let layout = styled.layout().clone();
+    let drawn = match links {
+        None => styled.into_any_element(),
+        Some(id) => {
+            let (ranges, urls): (Vec<_>, Vec<_>) = inline.links.iter().cloned().unzip();
+            let on_link = on_link.clone();
+            InteractiveText::new(id, styled)
+                .on_click(ranges, move |ix, window, cx| {
+                    open_link(&on_link, &urls[ix], window, cx)
+                })
+                .into_any_element()
+        }
+    };
+    (drawn, layout)
+}
+
 /// Draws nodes under one owner's ids and hooks.
 struct Draw<'a> {
     id: &'a ElementId,
@@ -198,30 +231,20 @@ impl Draw<'_> {
     }
 
     fn inline(&self, inline: &Inline, cx: &App) -> AnyElement {
-        let theme = cx.theme();
-        let colors = &theme.colors;
-        let rule = theme.underline_thickness();
-        let styles: Vec<_> = inline
-            .styles
-            .iter()
-            .map(|(range, style)| (range.clone(), highlight(style, colors, rule)))
-            .collect();
-        let styled =
-            StyledText::new(inline.text.clone()).with_highlights(crate::editor::stack(styles));
-        let layout = styled.layout().clone();
-        let drawn = match inline.links.is_empty() {
-            true => styled.into_any_element(),
-            false => {
-                let (ranges, urls): (Vec<_>, Vec<_>) = inline.links.iter().cloned().unzip();
-                let on_link = self.hooks.on_link.clone();
-                InteractiveText::new(self.key("links"), styled)
-                    .on_click(ranges, move |ix, window, cx| {
-                        open_link(&on_link, &urls[ix], window, cx)
-                    })
-                    .into_any_element()
-            }
-        };
-        self.point_text(drawn, layout, inline)
+        let links = (!inline.links.is_empty()).then(|| self.key("links"));
+        if !inline.styles.iter().any(|(_, style)| *style == Style::Math) {
+            let (drawn, layout) = drawn_text(inline, &[], links, self.hooks.on_link, cx);
+            let at = move |position| {
+                layout
+                    .index_for_position(position)
+                    .unwrap_or_else(|near| near)
+            };
+            return self.point_text(drawn, at, inline);
+        }
+        let on_link = self.hooks.on_link.clone();
+        let (drawn, at) =
+            math_text::MathText::new(self.key("math"), inline.clone(), links, on_link);
+        self.point_text(drawn.into_any_element(), at, inline)
     }
 
     fn nodes(&self, nodes: &[Node], cx: &App) -> Vec<AnyElement> {

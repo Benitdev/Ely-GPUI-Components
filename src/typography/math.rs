@@ -96,7 +96,7 @@ struct Formula {
 }
 
 /// A typeset formula: its picture and logical size.
-type Typeset = Result<(Arc<RenderImage>, Size<Pixels>), MathError>;
+pub(crate) type Typeset = Result<(Arc<RenderImage>, Size<Pixels>), MathError>;
 
 enum Typesetter {}
 
@@ -201,27 +201,39 @@ fn framed(svg: &str, width: f32, height: f32) -> Result<(String, Size<Pixels>), 
     Ok((reframed, size(px(w), px(h))))
 }
 
-impl Latex {
-    /// The asset key this formula draws from in `window`.
-    fn formula(&self, window: &Window, cx: &App) -> (Formula, Pixels) {
-        let theme = cx.theme();
-        let font = theme.text_size(self.size).to_pixels(window.rem_size());
-        let formula = Formula {
-            source: self.source.clone(),
-            display: self.display,
-            rgba: u32::from(theme.colors.fg.to_rgb()),
-            font: (font.as_f32() * 100.0).round() as u32,
-            scale: (window.scale_factor() * 100.0).round() as u32,
-        };
-        (formula, font)
+/// The asset key for `source` at `font` in `window`.
+fn formula(
+    (source, display): (&SharedString, bool),
+    font: Pixels,
+    window: &Window,
+    cx: &App,
+) -> Formula {
+    Formula {
+        source: source.clone(),
+        display,
+        rgba: u32::from(cx.theme().colors.fg.to_rgb()),
+        font: (font.as_f32() * 100.0).round() as u32,
+        scale: (window.scale_factor() * 100.0).round() as u32,
     }
+}
+
+/// `source` typeset at `font` in `window`; None while it loads.
+pub(crate) fn typeset(
+    id: impl Into<ElementId>,
+    (source, display): (&SharedString, bool),
+    font: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<Typeset> {
+    let formula = formula((source, display), font, window, cx);
+    let picture = |typeset: &Typeset| typeset.as_ref().ok().map(|(image, _)| image.clone());
+    hold::<Typesetter>(id, &formula, picture, window, cx)
 }
 
 impl RenderOnce for Latex {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let (formula, font) = self.formula(window, cx);
-        let picture = |typeset: &Typeset| typeset.as_ref().ok().map(|(image, _)| image.clone());
-        match hold::<Typesetter>(self.id, &formula, picture, window, cx) {
+        let font = cx.theme().text_size(self.size).to_pixels(window.rem_size());
+        match typeset(self.id, (&self.source, self.display), font, window, cx) {
             Some(Ok((picture, shape))) => img(picture)
                 .w(shape.width)
                 .h(shape.height)

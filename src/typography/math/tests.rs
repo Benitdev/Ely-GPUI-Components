@@ -114,8 +114,11 @@ fn flush(cx: &mut gpui::VisualTestContext) {
 /// Whether `source`'s picture sits in the asset cache.
 fn cached(source: &str, cx: &mut gpui::VisualTestContext) -> bool {
     cx.update(|window, cx| {
-        let latex = Latex::parse("probe", source).expect("parses");
-        let (formula, _) = latex.formula(window, cx);
+        let font = cx
+            .theme()
+            .text_size(TextSize::Lg)
+            .to_pixels(window.rem_size());
+        let formula = super::formula((&source.to_string().into(), false), font, window, cx);
         cx.has_asset::<Typesetter>(&formula)
     })
 }

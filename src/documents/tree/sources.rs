@@ -32,7 +32,10 @@ pub(super) fn written(node: &Node, source: &str) -> Option<(Range<usize>, Escape
     Some(match node {
         Node::Text(_) => (whole, Escapes::Markdown),
         Node::InlineCode(_) => (inside(source, whole, '`'), Escapes::Plain),
-        Node::InlineMath(_) => (inside(source, whole, '$'), Escapes::Plain),
+        Node::InlineMath(_) => (
+            crate::documents::markdown::math_inside(source, whole),
+            Escapes::Plain,
+        ),
         _ => (whole, Escapes::Plain),
     })
 }

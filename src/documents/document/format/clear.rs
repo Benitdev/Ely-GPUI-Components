@@ -5,7 +5,7 @@ use std::ops::Range;
 use markdown::mdast::Node;
 
 use super::{Change, EditRefusal, after, block, cut, holder, marks, room};
-use crate::documents::{markdown::span, tree::inside};
+use crate::documents::markdown::{math_inside, span};
 
 /// The backslashes of escapes in a text node's span.
 fn escapes(text: &str, whole: Range<usize>) -> Vec<Range<usize>> {
@@ -33,7 +33,7 @@ fn meta(node: &Node, text: &str, autolinks: &[Range<usize>]) -> Vec<Range<usize>
         Node::Text(_) if holder(autolinks, &whole).is_some() => Vec::new(),
         Node::Text(_) => escapes(text, whole),
         Node::InlineMath(_) => {
-            let inner = inside(text, whole.clone(), '$');
+            let inner = math_inside(text, whole.clone());
             vec![whole.start..inner.start, inner.end..whole.end]
         }
         Node::FootnoteReference(_) => vec![whole.start..whole.start + 2, whole.end - 1..whole.end],

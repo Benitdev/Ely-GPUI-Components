@@ -416,3 +416,41 @@ fn the_first_shortcode_decides_its_text_node() {
         assert_eq!(line(source).text, shown, "{source:?}");
     }
 }
+
+#[test]
+fn latex_delimiters_read_as_math() {
+    assert_eq!(parse(r"\[c = 1\]"), [Node::Math("c = 1".into())]);
+    assert_eq!(parse("\\[\nc = 1\n\\]"), [Node::Math("c = 1".into())]);
+    let Node::Paragraph(inline) = &parse(r"so \(c\) holds")[0] else {
+        panic!("inline math stays in its paragraph")
+    };
+    assert_eq!(inline.text, "so c holds");
+    assert_eq!(inline.styles, [(3..4, Style::Math)]);
+    let Node::Paragraph(alone) = &parse(r"\(c\)")[0] else {
+        panic!("a lone formula stays inline")
+    };
+    assert_eq!(alone.styles, [(0..1, Style::Math)]);
+}
+
+#[test]
+fn latex_delimiters_leave_code_escapes_and_open_pairs() {
+    let text = |source: &str| match &parse(source)[0] {
+        Node::Paragraph(inline) => (inline.text.clone(), inline.styles.clone()),
+        other => panic!("a paragraph, not {other:?}"),
+    };
+    assert_eq!(text(r"`\(c\)`").1, [(0..5, Style::Code)], "code stays code");
+    assert_eq!(
+        text(r"\\(c\\)"),
+        (r"\(c\)".into(), Vec::new()),
+        "escaped backslashes"
+    );
+    assert_eq!(text(r"a \(c").0, "a (c", "no closing, no formula");
+    let split = parse("a \\(c\n\nd\\) e");
+    assert!(
+        split.iter().all(|node| match node {
+            Node::Paragraph(inline) => inline.styles.is_empty(),
+            _ => false,
+        }),
+        "a blank line ends the formula: {split:?}"
+    );
+}
