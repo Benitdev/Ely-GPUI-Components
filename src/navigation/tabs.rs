@@ -182,6 +182,7 @@ impl RenderOnce for Tabs {
                 let value = tab.value.clone();
                 div()
                     .id(("tab", ix))
+                    .debug_selector(move || format!("tab-{ix}"))
                     .role(Role::Tab)
                     .aria_selected(on)
                     .aria_label(tab.label.clone())
@@ -231,7 +232,10 @@ impl RenderOnce for Tabs {
                     .when(compact, |item| {
                         item.tooltip(Tooltip::text(tab.label.clone()))
                     })
-                    .when(!compact, |item| item.child(tab.label.clone()))
+                    .when(axis == Axis::Horizontal, |item| item.max_w_full())
+                    .when(!compact, |item| {
+                        item.child(div().min_w_0().truncate().child(tab.label.clone()))
+                    })
                     .when_some(tab.note.clone().filter(|_| !compact), |item, note| {
                         item.child(div().text_color(colors.fg_subtle).child(note))
                     })
