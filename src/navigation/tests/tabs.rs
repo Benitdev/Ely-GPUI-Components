@@ -184,6 +184,7 @@ fn tabs_whose_choice_closed_mark_none_and_arrows_start_at_the_ends(cx: &mut Test
 struct Sheets {
     chosen: SharedString,
     clicked: Option<SharedString>,
+    width: f32,
 }
 
 impl Render for Sheets {
@@ -191,7 +192,7 @@ impl Render for Sheets {
         let view = cx.entity();
         let tabs = (0..30).map(|ix| Choice::new(format!("s{ix}"), format!("Sheet {ix}")));
         div()
-            .w(px(300.0))
+            .w(px(self.width))
             .child(
                 Tabs::new("sheets", tabs, self.chosen.clone()).on_change(move |value, _, cx| {
                     view.update(cx, |view, _| view.clicked = Some(value.clone()))
@@ -216,6 +217,7 @@ fn a_wide_strip_scrolls_its_chosen_tab_in_and_the_wheel_reaches_the_rest(cx: &mu
     let (view, cx) = cx.add_window_view(|_, _| Sheets {
         chosen: "s29".into(),
         clicked: None,
+        width: 300.0,
     });
     settle(cx);
     assert!(
@@ -241,4 +243,25 @@ fn a_wide_strip_scrolls_its_chosen_tab_in_and_the_wheel_reaches_the_rest(cx: &mu
     });
     settle(cx);
     assert!(picked_at(10.0, &view, cx) > 15, "a new choice scrolls in");
+}
+
+#[gpui::test]
+fn a_strip_that_narrows_keeps_its_chosen_tab_in_view(cx: &mut TestAppContext) {
+    setup(cx);
+    let (view, cx) = cx.add_window_view(|_, _| Sheets {
+        chosen: "s29".into(),
+        clicked: None,
+        width: 700.0,
+    });
+    settle(cx);
+    view.update(cx, |view, cx| {
+        view.width = 250.0;
+        cx.notify();
+    });
+    settle(cx);
+    assert!(picked_at(10.0, &view, cx) > 25, "the strip shows its end");
+    view.update(cx, |view, _| view.clicked = None);
+    click_at(245.0, cx);
+    let clicked = view.read_with(cx, |view, _| view.clicked.clone());
+    assert_eq!(clicked, None, "the chosen tab ends the strip");
 }

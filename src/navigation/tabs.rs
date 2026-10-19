@@ -108,20 +108,16 @@ impl RenderOnce for Tabs {
             window,
             cx,
         );
-        // A wide strip scrolls; the chosen tab scrolls in once.
+        // The chosen tab scrolls in per choice and width.
         let scroll = window
             .use_keyed_state((self.id.clone(), "scroll"), cx, |_, _| ScrollHandle::new())
             .read(cx)
             .clone();
-        let followed =
-            window.use_keyed_state(
-                (self.id.clone(), "followed"),
-                cx,
-                |_, _| None::<SharedString>,
-            );
-        let follow = (axis == Axis::Horizontal
-            && followed.read(cx).as_ref() != Some(&self.selected))
-        .then(|| (followed, self.selected.clone(), scroll.clone()));
+        let followed = window.use_keyed_state((self.id.clone(), "followed"), cx, |_, _| {
+            None::<(SharedString, Pixels)>
+        });
+        let follow =
+            (axis == Axis::Horizontal).then(|| (followed, self.selected.clone(), scroll.clone()));
         let focus = tab_stop((self.id.clone(), "focus").into(), true, window, cx);
         let focused = focus.is_focused(window);
         let tabs = Rc::new(self.tabs);
@@ -295,10 +291,11 @@ impl RenderOnce for Tabs {
             .children(follow.map(|(followed, selected, scroll)| {
                 canvas(
                     move |_, window, cx| {
-                        if scroll.bounds().size.width <= Pixels::ZERO {
+                        let now = (selected, scroll.bounds().size.width);
+                        if now.1 <= Pixels::ZERO || followed.read(cx).as_ref() == Some(&now) {
                             return;
                         }
-                        followed.update(cx, |followed, _| *followed = Some(selected));
+                        followed.update(cx, |followed, _| *followed = Some(now));
                         if let Some(ix) = chosen {
                             scroll.scroll_to_item(ix);
                             window.request_animation_frame();
