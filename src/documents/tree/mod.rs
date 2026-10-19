@@ -6,7 +6,7 @@ use super::markdown::{span, tree, walk};
 
 mod blocks;
 mod emoji;
-mod html;
+pub(crate) mod html;
 mod html_block;
 mod sources;
 mod stack;
@@ -318,7 +318,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// Text split at its images; lone `$$` or `\[` math is block.
+    /// Text splits at images; a lone formula is block.
     fn paragraph(&self, node: &mdast::Node, children: &[mdast::Node], out: &mut Vec<Node>) {
         if let [mdast::Node::InlineMath(math)] = children
             && ["$$", "\\["]

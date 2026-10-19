@@ -1,4 +1,4 @@
-use std::{path::Path, rc::Rc, sync::Arc};
+use std::{ops::Range, path::Path, rc::Rc, sync::Arc};
 
 use gpui::{
     AnyElement, App, ElementId, Entity, FontStyle, FontWeight, HighlightStyle, InteractiveText,
@@ -171,10 +171,13 @@ fn highlight(style: &Style, colors: &Palette, rule: Pixels) -> HighlightStyle {
     }
 }
 
-/// `inline` as text; `hidden` ranges lose their highlight.
+/// Highlights laid over a text's own.
+type Over = Vec<(Range<usize>, HighlightStyle)>;
+
+/// `inline` as text; hidden ranges lose highlight, `over` adds some.
 fn drawn_text(
     inline: &Inline,
-    hidden: &[std::ops::Range<usize>],
+    (hidden, over): (&[Range<usize>], Over),
     links: Option<ElementId>,
     on_link: &Option<OnLink>,
     cx: &App,
@@ -185,6 +188,7 @@ fn drawn_text(
     let styles: Vec<_> = (inline.styles.iter())
         .filter(|(range, _)| !hidden.contains(range))
         .map(|(range, style)| (range.clone(), highlight(style, colors, rule)))
+        .chain(over)
         .collect();
     let styled = StyledText::new(inline.text.clone()).with_highlights(crate::editor::stack(styles));
     let layout = styled.layout().clone();
@@ -233,7 +237,8 @@ impl Draw<'_> {
     fn inline(&self, inline: &Inline, cx: &App) -> AnyElement {
         let links = (!inline.links.is_empty()).then(|| self.key("links"));
         if !inline.styles.iter().any(|(_, style)| *style == Style::Math) {
-            let (drawn, layout) = drawn_text(inline, &[], links, self.hooks.on_link, cx);
+            let (drawn, layout) =
+                drawn_text(inline, (&[], Vec::new()), links, self.hooks.on_link, cx);
             let at = move |position| {
                 layout
                     .index_for_position(position)

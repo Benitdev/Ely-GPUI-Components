@@ -193,7 +193,7 @@ fn framed(svg: &str, width: f32, height: f32) -> Result<(String, Size<Pixels>), 
     Ok((wrapped(svg, [left, top, w, h])?, size(px(w), px(h))))
 }
 
-/// `svg`'s drawing under a root viewing `[left, top, w, h]` in px.
+/// `svg` drawn in a px root viewing `[left, top, w, h]`.
 fn wrapped(svg: &str, [left, top, w, h]: [f32; 4]) -> Result<String, MathError> {
     let open = svg
         .find('>')

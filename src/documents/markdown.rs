@@ -1,4 +1,6 @@
-use std::{borrow::Cow, ops::Range};
+use std::ops::Range;
+
+mod tex;
 
 use gpui::App;
 use markdown::{Constructs, ParseOptions, mdast};
@@ -24,68 +26,11 @@ pub(crate) fn tree(text: &str) -> mdast::Node {
 }
 
 fn parsed(text: &str, options: &ParseOptions) -> mdast::Node {
-    let text = tex_math(text, options);
-    markdown::to_mdast(&text, options).expect("markdown without MDX always parses")
-}
-
-/// `\(` and `\[` delimiters as `$`, byte for byte.
-fn tex_math<'a>(text: &'a str, options: &ParseOptions) -> Cow<'a, str> {
-    if !text.contains("\\(") && !text.contains("\\[") {
-        return Cow::Borrowed(text);
-    }
-    let root = markdown::to_mdast(text, options).expect("markdown without MDX always parses");
-    let mut nodes = Vec::new();
-    walk(&root, &mut nodes);
-    let mut kept = vec![false; text.len()];
-    for node in nodes {
-        use mdast::Node::{Code, Html, InlineCode, InlineMath, Math, Toml, Yaml};
-        if matches!(
-            node,
-            Code(_) | InlineCode(_) | Math(_) | InlineMath(_) | Html(_) | Yaml(_) | Toml(_)
-        ) {
-            kept[span(node)].fill(true);
-        }
-    }
-    let bytes = text.as_bytes();
-    let mut out = bytes.to_vec();
-    let mut open: Option<(usize, u8)> = None;
-    let mut at = 0;
-    while at + 1 < bytes.len() {
-        match bytes[at] {
-            // A blank line ends a paragraph and its formula.
-            b'\n' if blank_after(&bytes[at + 1..]) => open = None,
-            b'\\' if !kept[at] => {
-                match (bytes[at + 1], open) {
-                    (b'(', None) => open = Some((at, b')')),
-                    (b'[', None) => open = Some((at, b']')),
-                    (close, Some((start, wanted)))
-                        if close == wanted && at > start + 2 && !text[start..at].contains('$') =>
-                    {
-                        out[start..start + 2].copy_from_slice(b"$ ");
-                        out[at..at + 2].copy_from_slice(b" $");
-                        open = None;
-                    }
-                    _ => {}
-                }
-                // An escaped backslash escapes nothing after it.
-                at += 2;
-                continue;
-            }
-            _ => {}
-        }
-        at += 1;
-    }
-    match out == bytes {
-        true => Cow::Borrowed(text),
-        false => Cow::Owned(String::from_utf8(out).expect("ASCII swaps keep UTF-8")),
-    }
-}
-
-/// Whether the line `rest` starts holds only white space.
-fn blank_after(rest: &[u8]) -> bool {
-    rest.iter()
-        .take_while(|byte| **byte != b'\n')
-        .all(u8::is_ascii_whitespace)
+    let swapped = tex::swapped(text, options);
+    let mut root =
+        markdown::to_mdast(&swapped.text, options).expect("markdown without MDX always parses");
+    tex::mend(&mut root, &swapped);
+    root
 }
 
 /// An inline formula's TeX: inside `$` runs or `\(` pairs.

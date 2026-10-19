@@ -3,14 +3,15 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
 use gpui::{
-    AnyElement, App, Bounds, Corners, Element, ElementId, GlobalElementId, InspectorElementId,
-    IntoElement, LayoutId, Pixels, Point, RenderImage, SharedString, Size, TextLayout,
-    TextStyleRefinement, Window, point,
+    AnyElement, App, Bounds, Corners, Element, ElementId, GlobalElementId, HighlightStyle,
+    InspectorElementId, IntoElement, LayoutId, Pixels, Point, RenderImage, SharedString, Size,
+    TextLayout, TextStyleRefinement, Window, point,
 };
 
 use super::{OnLink, drawn_text};
 use crate::{
     documents::tree::{Inline, Style},
+    theme::ActiveTheme,
     typography::typeset,
 };
 
@@ -36,6 +37,8 @@ pub(super) struct MathText {
     text: Option<AnyElement>,
     /// Each picture, its size, and the drawn span it covers.
     pictures: Vec<(Arc<RenderImage>, Size<Pixels>, Range<usize>)>,
+    /// One glue character's width.
+    glue: Pixels,
 }
 
 impl MathText {
@@ -65,6 +68,7 @@ impl MathText {
             shown,
             text: None,
             pictures: Vec::new(),
+            glue: Pixels::ZERO,
         };
         (text, at)
     }
@@ -100,14 +104,14 @@ fn back(swaps: &[Swap], at: usize) -> usize {
     (at as isize + shift) as usize
 }
 
-/// `inline` with each swapped span drawn as `glue[ix]` glue.
-fn shown(inline: &Inline, swaps: &mut [Swap], glue: &[usize]) -> Inline {
+/// `inline` with each swapped span drawn as `drawn_as[ix]`.
+fn shown(inline: &Inline, swaps: &mut [Swap], drawn_as: &[String]) -> Inline {
     let mut text = String::new();
     let mut from = 0;
-    for ((written, drawn), count) in swaps.iter_mut().zip(glue) {
+    for ((written, drawn), with) in swaps.iter_mut().zip(drawn_as) {
         text.push_str(&inline.text[from..written.start]);
         let start = text.len();
-        text.extend(std::iter::repeat_n(GLUE, *count));
+        text.push_str(with);
         *drawn = start..text.len();
         from = written.end;
     }
@@ -166,9 +170,8 @@ impl Element for MathText {
             .map(|(range, _)| range.clone())
             .collect();
         maths.sort_by_key(|range| range.start);
-        let mut swaps = Vec::new();
-        let mut counts = Vec::new();
-        let mut pictures = Vec::new();
+        let (mut swaps, mut drawn_as) = (Vec::new(), Vec::new());
+        let (mut pictures, mut errors) = (Vec::new(), Vec::new());
         for (ix, range) in maths.into_iter().enumerate() {
             let source = SharedString::from(self.inline.text[range.clone()].to_string());
             match typeset(
@@ -179,22 +182,42 @@ impl Element for MathText {
                 cx,
             ) {
                 Some(Ok((image, size))) => {
-                    counts.push((size.width / width).ceil().max(1.0) as usize);
-                    pictures.push((image, size));
+                    let count = (size.width / width).ceil().max(1.0) as usize;
+                    drawn_as.push(GLUE.to_string().repeat(count));
+                    pictures.push((image, size, swaps.len()));
                     swaps.push((range, 0..0));
                 }
                 // The formula is the user's text: not logged.
-                Some(Err(_)) => log::warn!("markdown: an inline formula shows as TeX, unset"),
+                Some(Err(error)) => {
+                    log::warn!("markdown: an inline formula shows as TeX, unset");
+                    drawn_as.push(format!(" ({error})"));
+                    errors.push(swaps.len());
+                    swaps.push((range.end..range.end, 0..0));
+                }
                 None => {}
             }
         }
-        let inline = shown(&self.inline, &mut swaps, &counts);
-        let hidden: Vec<Range<usize>> = swaps.iter().map(|(_, drawn)| drawn.clone()).collect();
-        let (mut text, layout) =
-            drawn_text(&inline, &hidden, self.links.clone(), &self.on_link, cx);
+        let inline = shown(&self.inline, &mut swaps, &drawn_as);
+        let hidden: Vec<Range<usize>> = (pictures.iter())
+            .map(|(_, _, ix)| swaps[*ix].1.clone())
+            .collect();
+        let danger = HighlightStyle {
+            color: Some(cx.theme().colors.danger),
+            ..HighlightStyle::default()
+        };
+        let said = (errors.iter())
+            .map(|ix| (swaps[*ix].1.clone(), danger))
+            .collect();
+        let (mut text, layout) = drawn_text(
+            &inline,
+            (&hidden, said),
+            self.links.clone(),
+            &self.on_link,
+            cx,
+        );
         let tallest = pictures
             .iter()
-            .map(|(_, size)| size.height)
+            .map(|(_, size, _)| size.height)
             .fold(Pixels::ZERO, Pixels::max);
         // A tall formula opens the paragraph's lines.
         let taller = (tallest > style.line_height_in_pixels(rem)).then(|| TextStyleRefinement {
@@ -202,9 +225,10 @@ impl Element for MathText {
             ..TextStyleRefinement::default()
         });
         let id = window.with_text_style(taller, |window| text.request_layout(window, cx));
-        self.pictures = (pictures.into_iter().zip(&hidden))
-            .map(|((image, size), drawn)| (image, size, drawn.clone()))
+        self.pictures = (pictures.into_iter().zip(hidden))
+            .map(|((image, size, _), drawn)| (image, size, drawn))
             .collect();
+        self.glue = width;
         *self.shown.borrow_mut() = Some(Shown { layout, swaps });
         self.text = Some(text);
         (id, ())
@@ -244,17 +268,8 @@ impl Element for MathText {
         };
         let line = layout.line_height();
         for (image, size, drawn) in &self.pictures {
-            let (Some(start), Some(end)) = (
-                layout.position_for_index(drawn.start),
-                layout.position_for_index(drawn.end),
-            ) else {
+            let Some((start, room)) = place(layout, drawn, self.glue) else {
                 continue;
-            };
-            // Glue at a line's end ends there.
-            let room = if end.y == start.y {
-                end.x - start.x
-            } else {
-                size.width
             };
             let origin = start + point((room - size.width) / 2.0, (line - size.height) / 2.0);
             let bounds = Bounds {
@@ -270,6 +285,22 @@ impl Element for MathText {
     }
 }
 
+/// Where glue `drawn` starts, and how wide it runs.
+fn place(
+    layout: &TextLayout,
+    drawn: &Range<usize>,
+    glue: Pixels,
+) -> Option<(Point<Pixels>, Pixels)> {
+    let last = layout.position_for_index(drawn.end - GLUE.len_utf8())?;
+    let first = layout.position_for_index(drawn.start)?;
+    // A wrap's index reads as the previous line's end.
+    let start = match first.y == last.y {
+        true => first,
+        false => point(layout.bounds().origin.x, last.y),
+    };
+    Some((start, last.x + glue - start.x))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -282,7 +313,7 @@ mod tests {
             ..Inline::default()
         };
         let mut swaps = vec![(2..5, 0..0)];
-        let drawn = shown(&inline, &mut swaps, &[4]);
+        let drawn = shown(&inline, &mut swaps, &[GLUE.to_string().repeat(4)]);
         assert_eq!(drawn.text, format!("a {} b", GLUE.to_string().repeat(4)));
         let glue = GLUE.len_utf8() * 4;
         assert_eq!(swaps[0].1, 2..2 + glue);
@@ -296,60 +327,107 @@ mod tests {
         assert_eq!(forward(&swaps, 6), 3 + glue);
     }
 
-    type Found = Rc<
-        RefCell<
-            Option<(
-                Rc<RefCell<Option<Shown>>>,
-                Box<dyn Fn(Point<Pixels>) -> usize>,
-            )>,
-        >,
-    >;
+    type Read = Box<dyn Fn(Point<Pixels>) -> usize>;
+    type Found = Rc<RefCell<Option<(Rc<RefCell<Option<Shown>>>, Read)>>>;
 
-    struct Probe(Found);
+    /// Draws `text` with `math` a formula, `width` wide.
+    struct Probe {
+        text: &'static str,
+        math: Range<usize>,
+        width: f32,
+        found: Found,
+    }
 
     impl gpui::Render for Probe {
         fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
             use gpui::{ParentElement as _, Styled as _};
             let inline = Inline {
-                text: "a x^2 b".into(),
-                styles: vec![(2..5, Style::Math)],
+                text: self.text.into(),
+                styles: vec![(self.math.clone(), Style::Math)],
                 ..Inline::default()
             };
             let (text, at) = MathText::new("probe".into(), inline, None, None);
-            *self.0.borrow_mut() = Some((text.shown.clone(), Box::new(at)));
-            gpui::div().text_size(gpui::px(16.0)).child(text)
+            *self.found.borrow_mut() = Some((text.shown.clone(), Box::new(at)));
+            let shell = gpui::div()
+                .w(gpui::px(self.width))
+                .text_size(gpui::px(16.0));
+            shell.child(text)
         }
     }
 
-    #[gpui::test]
-    fn a_formula_draws_over_glue_and_reads_back(cx: &mut gpui::TestAppContext) {
+    fn laid(
+        text: &'static str,
+        math: Range<usize>,
+        width: f32,
+        cx: &mut gpui::TestAppContext,
+    ) -> Found {
         cx.update(crate::theme::Theme::init);
         let found = Found::default();
         let held = found.clone();
-        let (_, cx) = cx.add_window_view(move |_, _| Probe(held));
+        let (_, cx) = cx.add_window_view(move |_, _| Probe {
+            text,
+            math,
+            width,
+            found: held,
+        });
         for _ in 0..4 {
             cx.run_until_parked();
             cx.update(|window, _| window.refresh());
         }
+        found
+    }
+
+    #[gpui::test]
+    fn a_formula_draws_over_glue_and_reads_back(cx: &mut gpui::TestAppContext) {
+        let found = laid("a x^2 b", 2..5, 400.0, cx);
         let found = found.borrow();
         let (shown, at) = found.as_ref().expect("drawn");
         let shown = shown.borrow();
         let Shown { layout, swaps } = shown.as_ref().expect("laid out");
         assert_eq!(swaps.len(), 1, "the formula typeset in place");
-        let drawn = swaps[0].1.clone();
-        let (start, end) = (
-            layout.position_for_index(drawn.start),
-            layout.position_for_index(drawn.end),
-        );
-        let (start, end) = (start.expect("its start"), end.expect("its end"));
-        assert!(
-            end.x - start.x > gpui::px(10.0),
-            "glue holds the picture's width"
-        );
-        let middle = point(
-            (start.x + end.x) / 2.0,
-            start.y + layout.line_height() / 2.0,
-        );
+        let drawn = &swaps[0].1;
+        let at_x = |ix| layout.position_for_index(ix).expect("on its line").x;
+        let glue = at_x(drawn.end) - at_x(drawn.end - GLUE.len_utf8());
+        let (start, room) = place(layout, drawn, glue).expect("placed");
+        assert!(room > gpui::px(10.0), "glue holds the picture's width");
+        let middle = point(start.x + room / 2.0, start.y + layout.line_height() / 2.0);
         assert_eq!(at(middle), 2, "a press on the picture is the formula");
+    }
+
+    #[gpui::test]
+    fn a_formula_wrapped_whole_draws_on_its_line(cx: &mut gpui::TestAppContext) {
+        let text = "aaaaaaaaaa x^2+y^2=r^2 tail";
+        let found = laid(text, 11..22, 160.0, cx);
+        let found = found.borrow();
+        let (shown, at) = found.as_ref().expect("drawn");
+        let shown = shown.borrow();
+        let Shown { layout, swaps } = shown.as_ref().expect("laid out");
+        let drawn = &swaps[0].1;
+        let line = layout.line_height();
+        let last = layout.position_for_index(drawn.end - GLUE.len_utf8());
+        assert_eq!(last.expect("its glue").y, layout.bounds().top() + line);
+        let (start, _) = place(layout, drawn, gpui::px(0.0)).expect("placed");
+        assert_eq!(
+            start,
+            point(layout.bounds().left(), layout.bounds().top() + line),
+            "the picture starts the second line"
+        );
+        assert_eq!(at(start + point(gpui::px(2.0), line / 2.0)), 11);
+    }
+
+    #[gpui::test]
+    fn a_failed_formula_says_why_after_its_tex(cx: &mut gpui::TestAppContext) {
+        let found = laid("a x^2^3 b", 2..7, 400.0, cx);
+        let found = found.borrow();
+        let (shown, _) = found.as_ref().expect("drawn");
+        let shown = shown.borrow();
+        let Shown { layout, swaps } = shown.as_ref().expect("laid out");
+        assert_eq!(swaps[0].0, 7..7, "the TeX stays; the reason follows");
+        let text = layout.wrapped_text();
+        assert!(
+            text.starts_with("a x^2^3 (") && text.ends_with(") b"),
+            "{text:?}"
+        );
+        assert!(text.contains(" at "), "where RaTeX stopped: {text:?}");
     }
 }
