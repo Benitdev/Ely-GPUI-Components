@@ -191,7 +191,11 @@ struct Sheets {
 impl Render for Sheets {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity();
-        let tail = if self.long { "W".repeat(40) } else { String::new() };
+        let tail = if self.long {
+            "W".repeat(40)
+        } else {
+            String::new()
+        };
         let tabs = (0..30).map(|ix| Choice::new(format!("s{ix}"), format!("Sheet {ix}{tail}")));
         div()
             .w(px(self.width))

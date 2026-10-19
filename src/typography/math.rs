@@ -166,7 +166,9 @@ fn laid(formula: &Formula) -> Result<(String, f32, f32), MathError> {
         (list.width * font, (list.height + list.depth) * font, svg)
     })?;
     let (width, height, svg) = typeset;
-    Ok((svg, width as f32, height as f32))
+    let (width, height) = (width as f32, height as f32);
+    // RaTeX sizes its svg in pt; px keeps one unit.
+    Ok((wrapped(&svg, [0.0, 0.0, width, height])?, width, height))
 }
 
 /// Runs RaTeX's layout; a panic becomes an error.
@@ -187,18 +189,22 @@ fn framed(svg: &str, width: f32, height: f32) -> Result<(String, Size<Pixels>), 
     let top = ink.top().min(0.0);
     let right = ink.right().max(width);
     let bottom = ink.bottom().max(height);
+    let (w, h) = (right - left, bottom - top);
+    Ok((wrapped(svg, [left, top, w, h])?, size(px(w), px(h))))
+}
+
+/// `svg`'s drawing under a root viewing `[left, top, w, h]` in px.
+fn wrapped(svg: &str, [left, top, w, h]: [f32; 4]) -> Result<String, MathError> {
     let open = svg
         .find('>')
         .ok_or_else(|| MathError::said("RaTeX wrote no svg tag"))?;
     let close = svg
         .rfind("</svg>")
         .ok_or_else(|| MathError::said("RaTeX left the svg open"))?;
-    let (w, h) = (right - left, bottom - top);
-    let reframed = format!(
+    Ok(format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"{left} {top} {w} {h}\" width=\"{w}\" height=\"{h}\">{}</svg>",
         &svg[open + 1..close]
-    );
-    Ok((reframed, size(px(w), px(h))))
+    ))
 }
 
 /// The asset key for `source` at `font` in `window`.

@@ -256,3 +256,18 @@ fn drawn_fallback_text_stays_inside_the_frame() {
         );
     }
 }
+
+#[test]
+fn a_picture_spans_its_formula_not_a_point_rescale() {
+    let formula = super::Formula {
+        source: "x^2+y^2=r^2".into(),
+        display: false,
+        rgba: 0xff,
+        font: 1600,
+        scale: 100,
+    };
+    let (_, width, _) = super::laid(&formula).expect("laid");
+    let (_, shape) = super::svg(&formula).expect("framed");
+    let ratio = shape.width.as_f32() / width;
+    assert!((0.95..1.05).contains(&ratio), "{} for {width}", shape.width);
+}
