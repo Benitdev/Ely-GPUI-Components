@@ -72,7 +72,7 @@ pub(super) fn swapped<'a>(text: &'a str, options: &ParseOptions) -> Swapped<'a> 
 fn keep(container: &mdast::Node, text: &str, kept: &mut [bool]) {
     let mut nodes = Vec::new();
     walk(container, &mut nodes);
-    // Open code tags, and where the outermost one's text starts.
+    // Open styled tags, and where code text last started.
     let (mut open, mut from) = (Vec::new(), 0);
     for node in &nodes[1..] {
         use mdast::Node::*;
@@ -97,28 +97,51 @@ fn keep(container: &mdast::Node, text: &str, kept: &mut [bool]) {
                 let Some(tag) = html::tag(&text[whole.clone()]) else {
                     continue;
                 };
-                if html::inline_style(&tag.name) != Some(Style::Code) {
+                if html::inline_style(&tag.name).is_none() {
                     continue;
                 }
-                if !tag.closing {
-                    if open.is_empty() {
-                        from = whole.end;
+                let was = coded(&open);
+                match tag.closing {
+                    true => end(&mut open, &tag.name),
+                    false => {
+                        if tag.name == "a" {
+                            end(&mut open, "a");
+                        }
+                        open.push(tag.name);
                     }
-                    open.push(tag.name);
-                } else if let Some(ix) = open.iter().rposition(|name| *name == tag.name) {
-                    open.remove(ix);
-                    if open.is_empty() {
-                        kept[from..whole.start].fill(true);
-                    }
+                }
+                match (was, coded(&open)) {
+                    (false, true) => from = whole.end,
+                    (true, false) => kept[from..whole.start].fill(true),
+                    _ => {}
                 }
             }
             _ => {}
         }
     }
     // An unclosed `<code>` runs to its block's end.
-    if !open.is_empty() {
+    if coded(&open) {
         kept[from..span(container).end].fill(true);
     }
+}
+
+/// Whether an open tag shows its text as code.
+fn coded(open: &[String]) -> bool {
+    (open.iter()).any(|name| html::inline_style(name) == Some(Style::Code))
+}
+
+/// Ends the innermost `name` as the reader does: inner tags close.
+fn end(open: &mut Vec<String>, name: &str) {
+    let Some(at) = open.iter().rposition(|opened| opened == name) else {
+        return;
+    };
+    let closed = open.split_off(at);
+    open.extend(
+        closed
+            .into_iter()
+            .skip(1)
+            .filter(|name| html::reopens(name)),
+    );
 }
 
 /// Pairs and bare dollars in `within`; pairs cross nothing kept.

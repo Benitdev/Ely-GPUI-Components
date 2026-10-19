@@ -86,6 +86,27 @@ fn code_and_tags_stay_literal() {
     untouched(r"a <code><code>\(x\)</code> \(y\)</code> b");
     untouched(r"a <kbd><code>\(x\)</code> \(y\)</kbd> b");
     assert_eq!(tex(r"<code>a</code> \(x\)"), ["x"], "after code, prose");
+    for crossed in [
+        r"a <code><kbd>x</code> \(y\) b",
+        r"a <b><kbd>x</b> \(y\) b",
+        r"a <code><b>x</code> \(y\)</b> b",
+    ] {
+        assert_eq!(
+            tex(crossed),
+            ["y"],
+            "a crossed close ends code: {crossed:?}"
+        );
+    }
+    untouched(r"a <b><code>x</b> \(y\) b");
+    let reopened = crate::documents::tree::parse(r"a <b><code>x</b> \(y\) b");
+    let crate::documents::tree::Node::Paragraph(inline) = &reopened[0] else {
+        panic!("a paragraph: {reopened:?}");
+    };
+    let code = crate::documents::tree::Style::Code;
+    assert!(
+        (inline.styles.iter()).any(|(range, style)| *style == code && range.contains(&6)),
+        "the reader reopens code over (y): {inline:?}"
+    );
     untouched(r"`\(x\)`");
     untouched(r"\(a `b` c\)");
     assert_eq!(tex(r"<b>\(x\)</b>"), ["x"], "other tags hold prose");
