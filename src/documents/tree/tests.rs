@@ -421,6 +421,12 @@ fn the_first_shortcode_decides_its_text_node() {
 fn latex_delimiters_read_as_math() {
     assert_eq!(parse(r"\[c = 1\]"), [Node::Math("c = 1".into())]);
     assert_eq!(parse("\\[\nc = 1\n\\]"), [Node::Math("c = 1".into())]);
+    for indent in [" ", "  ", "   "] {
+        let source = format!(r"{indent}\[c = 1\]");
+        assert_eq!(parse(&source), [Node::Math("c = 1".into())], "{source:?}");
+        let source = format!("{indent}$$c = 1$$");
+        assert_eq!(parse(&source), [Node::Math("c = 1".into())], "{source:?}");
+    }
     let Node::Paragraph(inline) = &parse(r"so \(c\) holds")[0] else {
         panic!("inline math stays in its paragraph")
     };

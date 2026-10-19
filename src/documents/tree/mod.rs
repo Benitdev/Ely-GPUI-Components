@@ -323,7 +323,7 @@ impl<'a> Reader<'a> {
         if let [mdast::Node::InlineMath(math)] = children
             && ["$$", "\\["]
                 .iter()
-                .any(|open| self.source[span(node)].starts_with(open))
+                .any(|open| self.source[span(&children[0])].starts_with(open))
         {
             return out.push(Node::Math(math.value.trim().to_string()));
         }

@@ -72,7 +72,8 @@ pub(super) fn swapped<'a>(text: &'a str, options: &ParseOptions) -> Swapped<'a> 
 fn keep(container: &mdast::Node, text: &str, kept: &mut [bool]) {
     let mut nodes = Vec::new();
     walk(container, &mut nodes);
-    let mut code: Option<(String, usize)> = None;
+    // Open code tags, and where the outermost one's text starts.
+    let (mut open, mut from) = (Vec::new(), 0);
     for node in &nodes[1..] {
         use mdast::Node::*;
         let whole = span(node);
@@ -96,22 +97,26 @@ fn keep(container: &mdast::Node, text: &str, kept: &mut [bool]) {
                 let Some(tag) = html::tag(&text[whole.clone()]) else {
                     continue;
                 };
-                match &code {
-                    Some((name, from)) if tag.closing && tag.name == *name => {
-                        kept[*from..whole.start].fill(true);
-                        code = None;
+                if html::inline_style(&tag.name) != Some(Style::Code) {
+                    continue;
+                }
+                if !tag.closing {
+                    if open.is_empty() {
+                        from = whole.end;
                     }
-                    None if !tag.closing && html::inline_style(&tag.name) == Some(Style::Code) => {
-                        code = Some((tag.name, whole.end));
+                    open.push(tag.name);
+                } else if let Some(ix) = open.iter().rposition(|name| *name == tag.name) {
+                    open.remove(ix);
+                    if open.is_empty() {
+                        kept[from..whole.start].fill(true);
                     }
-                    _ => {}
                 }
             }
             _ => {}
         }
     }
     // An unclosed `<code>` runs to its block's end.
-    if let Some((_, from)) = code {
+    if !open.is_empty() {
         kept[from..span(container).end].fill(true);
     }
 }
@@ -241,7 +246,7 @@ fn written_tex(value: &str, pair: &Pair, swapped: &Swapped, at: &Position) -> St
     tex.replace(char::from(swapped.stand_in), "$")
 }
 
-/// Restores a text's dollars; drops a parting space at its ends.
+/// Restores a text's dollars; drops parting spaces.
 fn trim(node: &mut mdast::Node, swapped: &Swapped) {
     let mdast::Node::Text(text) = node else {
         return;

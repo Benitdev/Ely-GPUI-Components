@@ -83,6 +83,9 @@ fn code_and_tags_stay_literal() {
     untouched(r"a <code>\(x\)</code> b");
     untouched(r"a <kbd>\(x\)</kbd> b");
     untouched(r"a <code>\(x\) b");
+    untouched(r"a <code><code>\(x\)</code> \(y\)</code> b");
+    untouched(r"a <kbd><code>\(x\)</code> \(y\)</kbd> b");
+    assert_eq!(tex(r"<code>a</code> \(x\)"), ["x"], "after code, prose");
     untouched(r"`\(x\)`");
     untouched(r"\(a `b` c\)");
     assert_eq!(tex(r"<b>\(x\)</b>"), ["x"], "other tags hold prose");
