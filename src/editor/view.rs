@@ -102,11 +102,14 @@ impl CodeEditor {
                         .w(self.frame.advance * (self.gutter_columns() + 1) as f32),
                 )
                 .child(
-                    div()
-                        .line_height(self.frame.line)
-                        .whitespace_nowrap()
-                        .text_color(colors.syntax.variable)
-                        .child(StyledText::new(text).with_highlights(styles)),
+                    div().flex_1().min_w_0().overflow_hidden().child(
+                        div()
+                            .ml(-self.pan.x)
+                            .line_height(self.frame.line)
+                            .whitespace_nowrap()
+                            .text_color(colors.syntax.variable)
+                            .child(StyledText::new(text).with_highlights(styles)),
+                    ),
                 )
         });
         Some(
@@ -275,6 +278,7 @@ impl Render for CodeEditor {
         self.metrics.advance = advance;
         self.metrics.line = line;
         self.metrics.size = pixels;
+        self.settle_pan(window, cx);
         // Typewriter: the caret's row centers as it moves.
         let centered = (self.primary_row(), self.metrics.height, line);
         if self.options.typewriter && self.centered != Some(centered) {

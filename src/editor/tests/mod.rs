@@ -1,5 +1,6 @@
 mod chinese;
 mod history;
+mod pan;
 mod stale;
 mod wide;
 

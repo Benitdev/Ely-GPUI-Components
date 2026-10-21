@@ -112,7 +112,12 @@ impl CodeEditor {
     }
 
     /// A line as drawn and laid out.
-    fn measured(&self, line: usize, window: &Window, cx: &Context<Self>) -> (Shown, Measured) {
+    pub(super) fn measured(
+        &self,
+        line: usize,
+        window: &Window,
+        cx: &Context<Self>,
+    ) -> (Shown, Measured) {
         let text = self.row_text(line);
         let shown = Shown::new(text, self.notes(line, cx), self.styles(line, cx));
         let family = cx.theme().mono_family.clone();

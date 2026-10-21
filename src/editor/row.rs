@@ -21,7 +21,8 @@ impl CodeEditor {
             .id(("editor-row", ix))
             .w_full()
             .h(self.frame.line)
-            .flex();
+            .flex()
+            .on_scroll_wheel(cx.listener(|editor, event, _, cx| editor.wheel(event, cx)));
         let caret = self.buffer.line_of(self.primary().head);
         let base = match self.frame.rows[ix] {
             Row::Line(line) => base.debug_selector(move || format!("editor-line-{line}")),
@@ -74,16 +75,18 @@ impl CodeEditor {
             .collect();
         base.child(gutter)
             .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .pl(self.frame.advance * (indent + 1) as f32)
-                    .font_family(theme.font_family.clone())
-                    .text_size(theme.text_size(TextSize::Xs))
-                    .text_color(colors.fg_subtle)
-                    .children(items),
+                div().flex_1().min_w_0().h_full().overflow_hidden().child(
+                    div()
+                        .h_full()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
+                        .ml(self.frame.advance * (indent + 1) as f32 - self.pan.x)
+                        .font_family(theme.font_family.clone())
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(colors.fg_subtle)
+                        .children(items),
+                ),
             )
             .into_any_element()
     }
@@ -103,12 +106,16 @@ impl CodeEditor {
                 div()
                     .flex_1()
                     .h_full()
-                    .pl(self.frame.advance)
+                    .overflow_hidden()
                     .bg(colors.danger.opacity(0.08))
-                    .line_height(self.frame.line)
-                    .whitespace_nowrap()
-                    .text_color(colors.fg_muted)
-                    .child(text),
+                    .child(
+                        div()
+                            .ml(self.frame.advance - self.pan.x)
+                            .line_height(self.frame.line)
+                            .whitespace_nowrap()
+                            .text_color(colors.fg_muted)
+                            .child(text),
+                    ),
             )
             .into_any_element()
     }
@@ -137,14 +144,15 @@ impl CodeEditor {
         });
         base.child(self.gutter(Cell::Blank, ix, cx))
             .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .pl(self.frame.advance)
-                    .line_height(self.frame.line)
-                    .whitespace_nowrap()
-                    .child(div().italic().text_color(colors.fg_subtle).child(text))
-                    .children(rest),
+                div().flex_1().min_w_0().overflow_hidden().child(
+                    div()
+                        .flex()
+                        .ml(self.frame.advance - self.pan.x)
+                        .line_height(self.frame.line)
+                        .whitespace_nowrap()
+                        .child(div().italic().text_color(colors.fg_subtle).child(text))
+                        .children(rest),
+                ),
             )
             .into_any_element()
     }

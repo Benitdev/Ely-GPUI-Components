@@ -126,6 +126,8 @@ pub struct CodeEditor {
     /// The text before an input method's composition began, while it runs.
     pub(crate) composing: Option<Snapshot>,
     pub(crate) metrics: Metrics,
+    /// How far the code is panned sideways.
+    pub(crate) pan: super::pan::Pan,
     /// The caret row, view and line heights last centered.
     pub(crate) centered: Option<(usize, Pixels, Pixels)>,
     /// Typewriter room rows at each end.
@@ -215,6 +217,7 @@ impl CodeEditor {
             marked: None,
             composing: None,
             metrics: Metrics::default(),
+            pan: Default::default(),
             centered: None,
             pad: 0,
             dragging: false,

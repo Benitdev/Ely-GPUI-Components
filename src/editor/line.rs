@@ -172,9 +172,10 @@ impl CodeEditor {
             advance,
             window,
         );
-        // Text where laid out; rulers and guides on grid.
-        let x = |column: usize| advance + measured.x(column);
-        let grid = |column: usize| advance * (column + 1) as f32;
+        // Text where laid out; rulers and guides on grid; both panned.
+        let pan = self.pan.x;
+        let x = |column: usize| advance + measured.x(column) - pan;
+        let grid = |column: usize| advance * (column + 1) as f32 - pan;
         let focused = self.focus.is_focused(window);
         let primary = self.primary();
         let current = primary.is_empty() && self.buffer.line_of(primary.head) == line;
@@ -352,6 +353,7 @@ impl CodeEditor {
                             if editor.metrics.left != origin {
                                 editor.metrics.left = origin;
                             }
+                            editor.pan.width = bounds.size.width;
                         });
                     },
                     |_, _, _, _| {},

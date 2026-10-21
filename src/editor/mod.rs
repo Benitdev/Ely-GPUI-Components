@@ -18,6 +18,7 @@ mod layout;
 mod line;
 mod measure;
 mod moves;
+mod pan;
 mod preview;
 mod problems;
 mod prose;
