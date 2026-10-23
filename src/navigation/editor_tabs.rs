@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use gpui::{
     AnyElement, App, ElementId, EntityId, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, Pixels, RenderOnce, Role, ScrollHandle, SharedString,
+    ParentElement, Pixels, Point, RenderOnce, Role, ScrollHandle, SharedString,
     StatefulInteractiveElement, Styled, Window, canvas, div, prelude::*,
 };
 
@@ -69,6 +69,7 @@ struct TabDrag {
 
 type OnTab = Rc<dyn Fn(&SharedString, &mut Window, &mut App)>;
 type OnReorder = Rc<dyn Fn(usize, usize, &mut Window, &mut App)>;
+type OnMenu = Rc<dyn Fn(&SharedString, Point<Pixels>, &mut Window, &mut App)>;
 
 /// Document tabs: close, pin, drag to reorder, keep a preview. Every tab is listed at the end.
 #[derive(IntoElement)]
@@ -81,6 +82,7 @@ pub struct EditorTabs {
     on_pin: Option<OnTab>,
     on_keep: Option<OnTab>,
     on_reorder: Option<OnReorder>,
+    on_menu: Option<OnMenu>,
 }
 
 impl EditorTabs {
@@ -94,6 +96,7 @@ impl EditorTabs {
             on_pin: None,
             on_keep: None,
             on_reorder: None,
+            on_menu: None,
         }
     }
 
@@ -143,6 +146,16 @@ impl EditorTabs {
         handler: impl Fn(usize, usize, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_reorder = Some(Rc::new(handler));
+        self
+    }
+
+    /// A right click on a tab, with the window point it landed on, where
+    /// the caller opens its menu.
+    pub fn on_menu(
+        mut self,
+        handler: impl Fn(&SharedString, Point<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_menu = Some(Rc::new(handler));
         self
     }
 }
@@ -245,6 +258,7 @@ impl RenderOnce for EditorTabs {
                         .into_any_element()
                 };
                 let reorder = self.on_reorder.clone();
+                let menu = self.on_menu.clone().map(|menu| (menu, tab.id.clone()));
                 let (title, icon, edge) = (tab.title.clone(), tab.icon, colors.focus);
                 div()
                     .id(tab.id.clone())
@@ -285,6 +299,13 @@ impl RenderOnce for EditorTabs {
                     .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
                         run(&close, "close", &middle_id, window, cx)
+                    })
+                    .when_some(menu, |el, (menu, menu_id)| {
+                        el.on_mouse_down(MouseButton::Right, move |event, window, cx| {
+                            cx.stop_propagation();
+                            log::info!("editor tabs: menu {menu_id}");
+                            menu(&menu_id, event.position, window, cx);
+                        })
                     })
                     .on_click(move |event, window, cx| {
                         if preview && event.click_count() == 2 {
