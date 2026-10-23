@@ -150,7 +150,6 @@ impl RenderOnce for MultiSelect {
             .track_focus(&focus)
             .relative()
             .flex()
-            .flex_wrap()
             .items_center()
             .gap_1()
             .min_h(theme.control_height(self.size))
@@ -194,17 +193,28 @@ impl RenderOnce for MultiSelect {
                     Picker::show(&keys, false, at, cx);
                 }
             })
-            .children(chips)
-            .when(selected.is_empty(), |field| {
-                field.child(
-                    div()
-                        .pl_2()
-                        .text_color(colors.fg_subtle)
-                        .child(self.placeholder),
-                )
-            })
+            // The chips wrap in a box of their own, so a long one shortens
+            // to fit and the chevron stays on the first row.
             .child(
-                div().ml_auto().child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .min_w_0()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_1()
+                    .children(chips)
+                    .when(selected.is_empty(), |field| {
+                        field.child(
+                            div()
+                                .pl_2()
+                                .text_color(colors.fg_subtle)
+                                .child(self.placeholder),
+                        )
+                    }),
+            )
+            .child(
+                div().flex_none().child(
                     Icon::new(IconName::ChevronsUpDown)
                         .size(IconSize::Xs)
                         .color(colors.fg_subtle),
